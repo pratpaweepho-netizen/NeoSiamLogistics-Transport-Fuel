@@ -29,6 +29,7 @@
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
     <!-- XLSX for Excel Export -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<link rel="stylesheet" href="/index.css">
 </head>
 <body class="bg-base-100 text-gray-300 font-sans">
     <div id="app-container">
@@ -133,6 +134,9 @@
             initialize: () => {
                 firebase.initializeApp(firebaseConfig);
                 database = firebase.database();
+
+                // Initial render to show UI immediately, so the app is responsive from the start.
+                renderApp();
                 
                 const MIGRATION_KEY = 'dataMigration/routesMigrated_20240801';
                 
@@ -350,7 +354,7 @@
 10 ล้อ	สาย 3	สหพัฒน์	400	-	-	-	-	-	-	400	-
 10 ล้อ	สาย 3	HiQ , ล่ำสูง , CP Consumer , กทม. , เทควา , NEO C	400	-	-	-	-	-	-	400	-
 10 ล้อ	สหพัฒน์	กำแพงเพชร	35	-	-	-	-	-	-	35	-
-10 ล้อ	สหพัฒน์	นครสวรรค์	35	-	-	-	-	-	-	35	-
+10 ล้อ	สหพัฒน์	นครsวรรค์	35	-	-	-	-	-	-	35	-
 10 ล้อ	สหพัฒน์	พิจิตร	35	-	-	-	-	-	-	35	-
 10 ล้อ	สหพัฒน์	พิษณุโลก	35	-	-	-	-	-	-	35	-
 10 ล้อ	สหพัฒน์	นครปฐม	435	-	-	-	-	-	400	35	-
@@ -944,7 +948,7 @@
 6 ล้อ isuzu + หางตู้	พิษณุโลก	กำแพงเพชร	30	30	-	-	-	-	-	-	-
 6 ล้อ isuzu + หางตู้	แม่สอด	กทม	160	-	-	-	160	-	-	-	-
 6 ล้อ isuzu + หางตู้	อุทัยธานี	กทม	90	90	-	-	-	-	-	-	-
-6 ล้อ isuzu + หางตู้	กทม	พิษณุโลก_ตัดลูกนครสวรรค์	210	-	50	-	160	-	-	-	-`;
+6 ล้อ isuzu + หางตู้	กทม	พิษณุโลก_ตัดลูกนครสวรรค์	210	-	50	-	160	-	-	-	-`
 
                 const routes = [];
                 const lines = rawData.trim().split('\n');
@@ -1051,7 +1055,7 @@
             addRoute: (routeData) => database.ref('routes').push(routeData),
             updateRoute: (updatedRoute) => {
                 const { id, ...data } = updatedRoute;
-                database.ref(`routes/${id}`).set(data);
+                return database.ref(`routes/${id}`).set(data);
             },
             deleteRoute: (routeId) => database.ref(`routes/${routeId}`).remove().catch(error => {
                 console.error("Error deleting route:", error);
@@ -1061,7 +1065,7 @@
             addFuelRecord: (record) => database.ref('fuelRecords').push(record),
             updateFuelRecord: (updatedRecord) => {
                 const { id, ...data } = updatedRecord;
-                database.ref(`fuelRecords/${id}`).set(data);
+                return database.ref(`fuelRecords/${id}`).set(data);
             },
             deleteFuelRecord: (recordId) => database.ref(`fuelRecords/${recordId}`).remove().catch(error => {
                 console.error("Error deleting fuel record:", error);
@@ -1071,7 +1075,7 @@
             addVehicle: (vehicleData) => database.ref('vehicles').push(vehicleData),
             updateVehicle: (updatedVehicle) => {
                 const { id, ...data } = updatedVehicle;
-                database.ref(`vehicles/${id}`).set(data);
+                return database.ref(`vehicles/${id}`).set(data);
             },
             deleteVehicle: (vehicleId) => database.ref(`vehicles/${vehicleId}`).remove().catch(error => {
                 console.error("Error deleting vehicle:", error);
@@ -1113,6 +1117,35 @@
         // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         // 4. RENDER FUNCTIONS (UI Generation)
         // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+        // --- Render Helpers ---
+        const renderRouteDistributionRow = (item, index, unit) => {
+            const unitText = unit === 'Liters' ? 'ลิตร' : 'บาท';
+            const gasStationOptions = Object.entries(GAS_STATION_FRIENDLY_NAMES)
+                .map(([key, name]) => `<option value="${key}" ${item.stationKey === key ? 'selected' : ''}>${name}</option>`)
+                .join('');
+            return `
+                <div class="distribution-row grid grid-cols-12 gap-2 items-center mb-2" data-index="${index}" data-unit="${unit}">
+                    <div class="col-span-6">
+                        <select data-field="stationKey" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent">
+                            <option value="">เลือกปั๊มน้ำมัน</option>
+                            ${gasStationOptions}
+                        </select>
+                    </div>
+                    <div class="col-span-5">
+                        <input type="number" data-field="amount" value="${item.amount || ''}" placeholder="${unitText}" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent" />
+                    </div>
+                    <div class="col-span-1 flex justify-center">
+                        <button type="button" data-action="remove-distribution" class="text-red-500 hover:text-red-400 p-2 rounded-full transition-colors">${ICONS.Trash}</button>
+                    </div>
+                </div>
+            `;
+        };
+
+        const renderEditDistributionRow = (item, index, unit) => {
+            // This is identical to renderRouteDistributionRow
+            return renderRouteDistributionRow(item, index, unit);
+        };
         
         const renderApp = () => {
             const appContainer = document.getElementById('app-container');
@@ -1299,8 +1332,25 @@
             const stationKeys = logisticsService.getAllGasStationKeys();
             const friendlyNames = logisticsService.getAllGasStationFriendlyNames();
 
+            // OPTIMIZATION: Group records by station in a single pass to prevent lag on filtering.
+            const stationRecordsGroup = {};
+            stationKeys.forEach(key => { stationRecordsGroup[key] = []; });
+
+            filteredRecords.forEach(record => {
+                const allStationKeysInRecord = new Set([
+                    ...Object.keys(record.fuelDistributionLiters || {}),
+                    ...Object.keys(record.fuelDistributionBaht || {})
+                ]);
+                
+                allStationKeysInRecord.forEach(key => {
+                    if (stationRecordsGroup[key]) {
+                        stationRecordsGroup[key].push(record);
+                    }
+                });
+            });
+
             const stationTablesHtml = stationKeys.map(key => {
-                const stationRecords = filteredRecords.filter(record => (record.fuelDistributionLiters?.[key] > 0) || (record.fuelDistributionBaht?.[key] > 0));
+                const stationRecords = stationRecordsGroup[key];
                 
                 const tableRows = stationRecords.map(record => {
                     const amountLiters = record.fuelDistributionLiters?.[key] || 0;
@@ -1446,13 +1496,39 @@
                 return (a.destination || '').localeCompare(b.destination || '', 'th');
             });
 
-            const tableRows = filteredRoutes.map(route => `
+            const tableColumns = [
+                { key: 'nissan_singburi', units: ['Liters'] },
+                { key: 'jittamas_bangpain', units: ['Liters', 'Baht'] },
+                { key: 'srinakorn_klongklung', units: ['Liters'] },
+                { key: 'daopaisan_nakhonsawan', units: ['Liters'] },
+                { key: 'ekawitat_nonthaburi', units: ['Liters'] },
+                { key: 'daourai_sai3', units: ['Liters'] },
+                { key: 'tekyong_chonburi', units: ['Liters', 'Baht'] }
+            ];
+
+            const tableRows = filteredRoutes.map(route => {
+                const stationCells = tableColumns.map(col => {
+                    return col.units.map(unit => {
+                        const value = (unit === 'Liters') 
+                            ? route.gasStationsLiters?.[col.key] 
+                            : route.gasStationsBaht?.[col.key];
+                        return `<td class="p-3 text-right font-mono border-r border-slate-700">${formatZeroAsEmpty(value)}</td>`;
+                    }).join('');
+                }).join('');
+
+                const totalLitersText = formatZeroAsEmpty(route.totalLiters);
+                const totalBahtText = formatZeroAsEmpty(route.totalBaht);
+
+                return `
                 <tr key="${route.id}" class="border-b border-slate-600 hover:bg-slate-700/20">
-                    <td class="p-3">${route.vehicleType}</td>
-                    <td class="p-3">${route.origin}</td>
-                    <td class="p-3">${route.destination}</td>
-                    <td class="p-3 text-right font-semibold text-accent">${formatZeroAsEmpty(route.totalLiters)}</td>
-                    <td class="p-3 text-right font-semibold text-accent">${formatZeroAsEmpty(route.totalBaht)}</td>
+                    <td class="p-3 border-r border-slate-700">${route.vehicleType}</td>
+                    <td class="p-3 border-r border-slate-700">${route.origin}</td>
+                    <td class="p-3 border-r border-slate-700">${route.destination}</td>
+                    <td class="p-3 text-right font-semibold text-accent border-r border-slate-700">
+                        ${totalLitersText ? `<div>${totalLitersText} L</div>` : ''}
+                        ${totalBahtText ? `<div>${totalBahtText} B</div>` : ''}
+                    </td>
+                    ${stationCells}
                     <td class="p-3 text-center">
                         <div class="flex justify-center gap-2">
                             <button data-action="edit-route" data-id="${route.id}" class="text-blue-400 hover:text-blue-300 p-2 rounded-full transition-colors">${ICONS.Pencil}</button>
@@ -1460,14 +1536,36 @@
                         </div>
                     </td>
                 </tr>
-            `).join('');
+            `}).join('');
 
             return renderCard(`
                 <div class="overflow-x-auto">
-                    <table class="w-full text-left">
-                        <thead class="bg-slate-800 text-sm text-gray-400 uppercase">
+                    <table class="w-full text-left table-fixed">
+                        <thead class="bg-slate-800 text-sm text-gray-400 uppercase sticky top-0 z-10">
                             <tr>
-                                <th class="p-3">ประเภทรถ</th><th class="p-3">ต้นทาง</th><th class="p-3">ปลายทาง</th><th class="p-3 text-right">จำนวน ลิตร</th><th class="p-3 text-right">จำนวน บาท</th><th class="p-3 text-center">จัดการ</th>
+                                <th rowspan="2" class="p-3 border-r border-slate-600 align-middle w-32">ประเภทรถ</th>
+                                <th rowspan="2" class="p-3 border-r border-slate-600 align-middle w-40">ต้นทาง</th>
+                                <th rowspan="2" class="p-3 border-r border-slate-600 align-middle w-40">ปลายทาง</th>
+                                <th rowspan="2" class="p-3 text-right border-r border-slate-600 align-middle w-28">จำนวน<br>น้ำมัน</th>
+                                <th class="p-3 text-center border-b border-r border-slate-600">${GAS_STATION_FRIENDLY_NAMES.nissan_singburi}</th>
+                                <th colspan="2" class="p-3 text-center border-b border-r border-slate-600">${GAS_STATION_FRIENDLY_NAMES.jittamas_bangpain}</th>
+                                <th class="p-3 text-center border-b border-r border-slate-600">${GAS_STATION_FRIENDLY_NAMES.srinakorn_klongklung}</th>
+                                <th class="p-3 text-center border-b border-r border-slate-600">${GAS_STATION_FRIENDLY_NAMES.daopaisan_nakhonsawan}</th>
+                                <th class="p-3 text-center border-b border-r border-slate-600">${GAS_STATION_FRIENDLY_NAMES.ekawitat_nonthaburi}</th>
+                                <th class="p-3 text-center border-b border-r border-slate-600">${GAS_STATION_FRIENDLY_NAMES.daourai_sai3}</th>
+                                <th colspan="2" class="p-3 text-center border-b border-r border-slate-600">${GAS_STATION_FRIENDLY_NAMES.tekyong_chonburi}</th>
+                                <th rowspan="2" class="p-3 text-center align-middle w-24">จัดการ</th>
+                            </tr>
+                            <tr>
+                                <th class="p-2 text-center bg-yellow-600/80 text-white border-r border-slate-600">ลิตร</th>
+                                <th class="p-2 text-center bg-yellow-600/80 text-white border-r border-slate-600">ลิตร</th>
+                                <th class="p-2 text-center bg-yellow-600/80 text-white border-r border-slate-600">บาท</th>
+                                <th class="p-2 text-center bg-yellow-600/80 text-white border-r border-slate-600">ลิตร</th>
+                                <th class="p-2 text-center bg-yellow-600/80 text-white border-r border-slate-600">ลิตร</th>
+                                <th class="p-2 text-center bg-yellow-600/80 text-white border-r border-slate-600">ลิตร</th>
+                                <th class="p-2 text-center bg-yellow-600/80 text-white border-r border-slate-600">ลิตร</th>
+                                <th class="p-2 text-center bg-yellow-600/80 text-white border-r border-slate-600">ลิตร</th>
+                                <th class="p-2 text-center bg-yellow-600/80 text-white border-r border-slate-600">บาท</th>
                             </tr>
                         </thead>
                         <tbody id="routes-table-body">${tableRows}</tbody>
@@ -1617,6 +1715,10 @@
                 </div>
              `;
              modalContainer.classList.remove('hidden');
+             const authForm = document.getElementById('auth-form');
+             if (authForm) {
+                 authForm.addEventListener('submit', handleAuthSubmit);
+             }
         }
 
         const renderRouteFormContent = (route) => {
@@ -1738,333 +1840,349 @@
                     
                     <div>
                         <label class="block text-sm font-medium text-gray-400 mb-1">หมายเหตุ</label>
-                        <textarea name="notes" placeholder="หมายเหตุเพิ่มเติม" rows="3" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white">${record.notes || ''}</textarea>
+                        <textarea name="notes" placeholder="หมายเหตุเพิ่มเติมเกี่ยวกับการเดินทาง" rows="3" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white">${record.notes || ''}</textarea>
                     </div>
+
                     <footer class="flex justify-end gap-4 pt-4">
                         <button type="button" data-action="close-modal" class="bg-slate-600 hover:bg-slate-500 text-white font-bold py-2 px-4 rounded-lg transition">ยกเลิก</button>
-                        <button type="submit" class="bg-primary hover:bg-secondary text-white font-bold py-2 px-6 rounded-lg transition">บันทึกข้อมูล</button>
+                        <button type="submit" class="bg-primary hover:bg-secondary text-white font-bold py-2 px-6 rounded-lg transition">บันทึกการเปลี่ยนแปลง</button>
                     </footer>
                 </form>
              `;
         };
-        
         // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         // 5. EVENT LISTENERS & HANDLERS
         // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         
+        let isMainListenerAttached = false;
+
         const attachEventListeners = () => {
-            // Global listeners
-            document.querySelectorAll('.nav-button').forEach(btn => btn.addEventListener('click', handleNavClick));
-            
-            const modalContainer = document.getElementById('modal-container');
-            if (modalContainer) {
-                modalContainer.addEventListener('click', handleModalClick);
-                modalContainer.addEventListener('submit', handleModalFormSubmit);
-            }
-            
-            const authModalContainer = document.getElementById('auth-modal-container');
-            if(authModalContainer) {
-                authModalContainer.addEventListener('click', handleModalClick);
-                authModalContainer.addEventListener('submit', (e) => {
-                    if (e.target.id === 'auth-form') handleAuthSubmit(e);
-                });
+            const container = document.getElementById('app-container');
+            if (!container) return;
+
+            // Use event delegation for dynamic elements, but only attach it once.
+            if (!isMainListenerAttached) {
+                container.addEventListener('click', handleAppClick);
+                isMainListenerAttached = true;
             }
 
-            // View-specific listeners
-            if (appState.view === 'form') attachFormListeners();
-            if (appState.view === 'dashboard') attachDashboardListeners();
-            if (appState.view === 'data') attachDataManagementListeners();
-            if (appState.view === 'vehicles') attachVehicleManagementListeners();
+            // Attach listeners for specific elements within the current view
+            if (appState.view === 'form') {
+                attachFormListeners();
+            } else if (appState.view === 'dashboard') {
+                attachDashboardListeners();
+            } else if (appState.view === 'data') {
+                attachDataManagementListeners();
+            } else if (appState.view === 'vehicles') {
+                attachVehicleManagementListeners();
+            }
+        };
+
+        const handleAppClick = (e) => {
+            const target = e.target.closest('[data-action], .nav-button');
+            if (!target) return;
+
+            const action = target.dataset.action;
+            const id = target.dataset.id;
+            
+            // --- Global Actions ---
+            if (target.classList.contains('nav-button')) {
+                const view = target.dataset.view;
+                if (['data', 'vehicles'].includes(view) && !appState.isAuthenticated) {
+                    openAuthModal();
+                    // Store the intended view to navigate to after successful authentication
+                    appState.pendingView = view; 
+                } else {
+                    appState.view = view;
+                    renderApp();
+                }
+            }
+            if (action === 'close-modal') closeModal();
+
+            // --- Authentication Actions ---
+             if (action === 'auth-confirm') {
+                 // Logic handled by form submission
+             }
+
+            // --- Route Actions ---
+            if (action === 'add-new-route') handleAddNewRoute();
+            if (action === 'edit-route') handleEditRoute(id);
+            if (action === 'delete-route') handleDeleteRoute(id);
+            if (action === 'add-route-distribution') handleAddRouteDistribution(target);
+
+            // --- Fuel Record Actions ---
+            if (action === 'edit-fuel-record') handleEditFuelRecord(id);
+            if (action === 'delete-fuel-record') handleDeleteFuelRecord(id);
+            if (action === 'add-edit-distribution') handleAddEditDistribution(target);
+
+             // --- Vehicle Actions ---
+            if (action === 'add-new-vehicle') handleAddNewVehicle();
+            if (action === 'edit-vehicle') handleEditVehicle(id);
+            if (action === 'delete-vehicle') handleDeleteVehicle(id);
+
+            // --- Common Form Actions ---
+            if (action === 'remove-distribution') {
+                const row = e.target.closest('.distribution-row');
+                if (row) row.remove();
+
+                // If in main form, update totals
+                if (document.getElementById('fuel-record-form')) {
+                    updateTotalAmount('liters');
+                    updateTotalAmount('baht');
+                }
+            }
         };
         
-        const handleNavClick = (e) => {
-            const targetView = e.currentTarget.dataset.view;
-            if (['data', 'vehicles'].includes(targetView) && !appState.isAuthenticated) {
-                appState.viewAfterAuth = targetView;
-                openAuthModal();
-                return;
-            }
-            appState.view = targetView;
-            renderApp();
-        };
-        
-        const handleModalClick = (e) => {
-            const actionButton = e.target.closest('button[data-action]');
-
-            if (actionButton) {
-                const { action, unit } = actionButton.dataset;
-                if (action === 'close-modal') {
-                    closeModalAndResetView();
-                }
-                if (action === 'add-route-distribution') {
-                    handleAddRouteDistributionRow(unit);
-                }
-                if (action === 'add-edit-distribution') {
-                    handleAddEditDistributionRow(unit);
-                }
-                if (action === 'remove-distribution') {
-                    actionButton.closest('.distribution-row').remove();
-                }
-            }
-
-            // Check if the click is on the dark overlay background itself
-            if (e.target.classList.contains('bg-opacity-70')) {
-                closeModalAndResetView();
-            }
-        };
-
-        const closeModalAndResetView = () => {
-            const isAuthModalOpen = !document.getElementById('auth-modal-container').classList.contains('hidden');
-            
-            closeModal();
-
-            if (isAuthModalOpen && !appState.isAuthenticated) {
-                appState.view = 'form';
-                renderApp();
-            }
-        };
-        
-        const handleAuthSubmit = (e) => {
-            e.preventDefault();
-            const password = document.getElementById('password').value;
-            const errorEl = document.getElementById('auth-error');
-            if (password === 'neosiam') {
-                appState.isAuthenticated = true;
-                appState.view = appState.viewAfterAuth || 'data';
-                delete appState.viewAfterAuth;
-                closeModal();
-                renderApp();
-            } else {
-                errorEl.textContent = 'รหัสผ่านไม่ถูกต้อง';
-                errorEl.classList.remove('hidden');
-            }
-        }
-
-        const handleModalFormSubmit = (e) => {
-            e.preventDefault();
-            if (e.target.id === 'route-form') handleRouteFormSubmit(e);
-            if (e.target.id === 'fuel-record-edit-form') handleFuelRecordUpdateSubmit(e);
-            if (e.target.id === 'vehicle-form') handleVehicleFormSubmit(e);
-        };
-
-        // --- Form View Handlers ---
-        function attachFormListeners() {
-            document.getElementById('reset-fuel-form-btn').addEventListener('click', handleResetFuelForm);
-            document.getElementById('add-distribution-btn-liters').addEventListener('click', () => handleAddDistributionRow('Liters'));
-            document.getElementById('add-distribution-btn-baht').addEventListener('click', () => handleAddDistributionRow('Baht'));
-            
+        const attachFormListeners = () => {
             const form = document.getElementById('fuel-record-form');
             if (form) form.addEventListener('submit', handleFuelFormSubmit);
             
-            const lists = ['distribution-list-liters', 'distribution-list-baht'];
-            lists.forEach(listId => {
-                const listEl = document.getElementById(listId);
-                listEl.addEventListener('click', (e) => {
-                    if (e.target.closest('[data-action="remove-distribution"]')) {
-                        e.target.closest('.distribution-row').remove();
-                        updateTotals();
-                    }
-                });
-                listEl.addEventListener('input', updateTotals);
+            // Autocomplete listeners
+            attachAutocompleteListeners('form-vehicle-registration', logisticsService.getVehicleRegistrations());
+            attachAutocompleteListeners('form-vehicle-type', logisticsService.getUniqueValues('vehicleType'));
+            attachAutocompleteListeners('form-origin', logisticsService.getUniqueValues('origin'));
+            attachAutocompleteListeners('form-destination', logisticsService.getUniqueValues('destination'));
+
+            // V-lookup trigger
+            ['form-vehicle-type', 'form-origin', 'form-destination'].forEach(id => {
+                const input = document.getElementById(id);
+                if(input) input.addEventListener('change', updateVlookupCard);
             });
             
-            // Autocomplete and VLOOKUP listeners
-            attachAutocompleteListeners('form-vehicle-type', () => logisticsService.getUniqueValues('vehicleType'), updateVLookup);
-            attachAutocompleteListeners('form-origin', () => logisticsService.getUniqueValues('origin'), updateVLookup);
-            attachAutocompleteListeners('form-destination', () => logisticsService.getUniqueValues('destination'), updateVLookup);
-            attachAutocompleteListeners('form-vehicle-registration', logisticsService.getVehicleRegistrations, (value) => {
-                const vehicle = appState.vehicles.find(v => v.registrationNumber === value);
-                if(vehicle) {
-                    document.getElementById('form-vehicle-type').value = vehicle.vehicleType;
-                }
-                updateVLookup();
-            });
+            // Distribution buttons
+            const addLitersBtn = document.getElementById('add-distribution-btn-liters');
+            const addBahtBtn = document.getElementById('add-distribution-btn-baht');
+            if(addLitersBtn) addLitersBtn.addEventListener('click', () => updateDistributionList('liters'));
+            if(addBahtBtn) addBahtBtn.addEventListener('click', () => updateDistributionList('baht'));
+            
+            // Reset button
+            const resetBtn = document.getElementById('reset-fuel-form-btn');
+            if(resetBtn) resetBtn.addEventListener('click', resetFuelForm);
 
-            // Initial render
-            updateVLookup();
-            updateDistributionList('Liters');
-            updateDistributionList('Baht');
-        }
+            // Recalculate totals on change
+            document.getElementById('distribution-list-liters')?.addEventListener('input', () => updateTotalAmount('liters'));
+            document.getElementById('distribution-list-baht')?.addEventListener('input', () => updateTotalAmount('baht'));
 
-        function attachAutocompleteListeners(id, optionsFn, onSelect) {
+            // Initial V-lookup call
+            updateVlookupCard();
+        };
+
+        const attachDashboardListeners = () => {
+            const filters = document.getElementById('dashboard-filters');
+            if(filters) {
+                filters.addEventListener('input', (e) => {
+                    const { name, value } = e.target;
+                    appState.dashboardFilters[name] = value;
+                    const content = document.getElementById('dashboard-content');
+                    if (content) content.innerHTML = renderDashboardContent();
+                });
+            }
+            const clearBtn = document.getElementById('clear-dashboard-filters-btn');
+            if(clearBtn) {
+                 clearBtn.addEventListener('click', () => {
+                    appState.dashboardFilters = { vehicleRegistration: '', dateFrom: '', dateTo: '' };
+                    renderApp();
+                });
+            }
+            const refreshBtn = document.getElementById('refresh-dashboard-btn');
+            if(refreshBtn) {
+                refreshBtn.addEventListener('click', () => renderApp());
+            }
+            const exportBtn = document.getElementById('export-excel-btn');
+            if (exportBtn) {
+                exportBtn.addEventListener('click', handleExportToExcel);
+            }
+        };
+
+        const attachDataManagementListeners = () => {
+            const filterInput = document.getElementById('data-management-filter');
+            if (filterInput) {
+                filterInput.addEventListener('input', (e) => {
+                    appState.dataManagementFilter = e.target.value;
+                    const content = document.getElementById('data-management-content');
+                    if(content) content.innerHTML = renderDataManagementContent();
+                });
+            }
+             const refreshBtn = document.getElementById('refresh-routes-btn');
+            if(refreshBtn) {
+                refreshBtn.addEventListener('click', () => {
+                    const content = document.getElementById('data-management-content');
+                    if(content) content.innerHTML = renderDataManagementContent();
+                });
+            }
+        };
+
+         const attachVehicleManagementListeners = () => {
+            const filterInput = document.getElementById('vehicle-management-filter');
+            if (filterInput) {
+                filterInput.addEventListener('input', (e) => {
+                    appState.vehicleManagementFilter = e.target.value;
+                    const content = document.getElementById('vehicle-management-content');
+                    if(content) content.innerHTML = renderVehicleManagementContent();
+                });
+            }
+             const refreshBtn = document.getElementById('refresh-vehicles-btn');
+            if(refreshBtn) {
+                refreshBtn.addEventListener('click', () => {
+                    const content = document.getElementById('vehicle-management-content');
+                    if(content) content.innerHTML = renderVehicleManagementContent();
+                });
+            }
+        };
+        
+        const attachAutocompleteListeners = (id, options) => {
             const input = document.getElementById(id);
-            if (!input) return;
-
             const suggestionsContainer = document.getElementById(`${id}-suggestions`);
-            const container = input.closest('.autocomplete-container');
+            if (!input || !suggestionsContainer) return;
 
-            const updateSuggestions = () => {
+            const showSuggestions = () => {
                 const value = input.value.toLowerCase();
-                const options = optionsFn();
                 const filteredOptions = options.filter(opt => opt.toLowerCase().includes(value));
-                
-                if (filteredOptions.length > 0 && document.activeElement === input) {
-                    suggestionsContainer.innerHTML = filteredOptions.map(opt => `<div class="px-3 py-2 cursor-pointer text-white hover:bg-accent" data-value="${opt}">${opt}</div>`).join('');
+
+                if (filteredOptions.length > 0 && value.length > 0) {
+                    suggestionsContainer.innerHTML = filteredOptions
+                        .map(opt => `<div class="p-2 cursor-pointer hover:bg-slate-700">${opt}</div>`)
+                        .join('');
                     suggestionsContainer.classList.remove('hidden');
                 } else {
                     suggestionsContainer.classList.add('hidden');
                 }
             };
-            
-            input.addEventListener('input', () => {
-                updateSuggestions();
-                if(onSelect) onSelect(input.value);
-            });
-            input.addEventListener('focus', updateSuggestions);
-            input.addEventListener('change', () => {
-                 if(onSelect) onSelect(input.value);
-            });
 
+            input.addEventListener('input', showSuggestions);
 
-            suggestionsContainer.addEventListener('mousedown', (e) => {
-                 if (e.target.dataset.value) {
-                    input.value = e.target.dataset.value;
+            suggestionsContainer.addEventListener('click', (e) => {
+                if (e.target.tagName === 'DIV') {
+                    input.value = e.target.textContent;
                     suggestionsContainer.classList.add('hidden');
-                    if(onSelect) onSelect(input.value);
-                 }
+                    // Trigger change event for vlookup
+                    input.dispatchEvent(new Event('change'));
+                }
             });
-             
+
             document.addEventListener('click', (e) => {
-                if (container && !container.contains(e.target)) {
+                if (!e.target.closest('.autocomplete-container')) {
                     suggestionsContainer.classList.add('hidden');
                 }
             });
-        }
+        };
         
-        function renderDistributionRow(item, index, unit) {
-            const unitText = unit === 'Liters' ? 'ลิตร' : 'บาท';
-            const gasStationOptions = Object.entries(GAS_STATION_FRIENDLY_NAMES)
-                .map(([key, name]) => `<option value="${key}" ${item.stationKey === key ? 'selected' : ''}>${name}</option>`)
-                .join('');
-            return `
-                <div class="distribution-row grid grid-cols-12 gap-2 items-center" data-index="${index}" data-unit="${unit}">
-                    <div class="col-span-6">
-                        <select data-field="stationKey" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent">
-                            <option value="">เลือกปั๊มน้ำมัน</option>
-                            ${gasStationOptions}
-                        </select>
+        const updateVlookupCard = () => {
+            const cardContent = document.getElementById('vlookup-card-content');
+            if (!cardContent) return;
+
+            const vehicleType = document.getElementById('form-vehicle-type')?.value;
+            const origin = document.getElementById('form-origin')?.value;
+            const destination = document.getElementById('form-destination')?.value;
+
+            const route = logisticsService.findMatchingRoute(vehicleType, origin, destination);
+
+            if (!route) {
+                cardContent.innerHTML = `
+                    <h3 class="text-xl font-bold text-white mb-4">ข้อมูลเส้นทาง</h3>
+                    <p class="text-gray-400">ไม่พบข้อมูลเส้นทางที่ตรงกัน</p>
+                    <p class="text-sm text-gray-500 mt-2">กรุณากรอกข้อมูลประเภทรถ, ต้นทาง, และปลายทางให้ครบถ้วน</p>
+                `;
+                return;
+            }
+            
+            const stationList = (stations) => {
+                if (!stations || Object.keys(stations).length === 0) return '<p class="text-sm text-gray-500">ไม่มี</p>';
+                return Object.entries(stations)
+                    .map(([key, value]) => `
+                        <div class="flex justify-between items-center text-sm py-1">
+                           <span class="text-gray-400">${logisticsService.getFriendlyGasStationName(key)}:</span>
+                           <span class="font-semibold">${value.toLocaleString()}</span>
+                        </div>
+                    `).join('');
+            };
+
+            cardContent.innerHTML = `
+                <h3 class="text-xl font-bold text-white mb-4">ข้อมูลเส้นทาง (อัตโนมัติ)</h3>
+                <div class="space-y-2">
+                    <div class="flex justify-between items-center">
+                        <span class="font-semibold text-gray-300">ประเภทรถ:</span>
+                        <span>${route.vehicleType}</span>
                     </div>
-                    <div class="col-span-5">
-                        <input type="number" data-field="amount" value="${item.amount || ''}" placeholder="${unitText}" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent" />
+                    <div class="flex justify-between items-center">
+                        <span class="font-semibold text-gray-300">เส้นทาง:</span>
+                        <span class="text-right">${route.origin} → ${route.destination}</span>
                     </div>
-                    <div class="col-span-1">
-                        <button type="button" data-action="remove-distribution" class="text-red-500 hover:text-red-400 p-2 rounded-full transition-colors">${ICONS.Trash}</button>
+                    <hr class="border-slate-600 my-2">
+                    <div class="flex justify-between items-center text-lg">
+                        <span class="font-bold text-accent">รวม (ลิตร):</span>
+                        <span class="font-bold text-accent">${(route.totalLiters || 0).toLocaleString()}</span>
                     </div>
+                     ${stationList(route.gasStationsLiters)}
+                     <hr class="border-slate-600 my-2">
+                    <div class="flex justify-between items-center text-lg">
+                        <span class="font-bold text-accent">รวม (บาท):</span>
+                        <span class="font-bold text-accent">${(route.totalBaht || 0).toLocaleString()}</span>
+                    </div>
+                    ${stationList(route.gasStationsBaht)}
                 </div>
             `;
-        }
-
-        function updateDistributionList(unit) {
-            const container = document.getElementById(`distribution-list-${unit.toLowerCase()}`);
-            if(!container) return;
-            const stateKey = unit === 'Liters' ? 'distributionLiters' : 'distributionBaht';
-            container.innerHTML = appState.fuelForm[stateKey].map((item, index) => renderDistributionRow(item, index, unit)).join('');
-        }
-
-        function handleAddDistributionRow(unit) {
-            const stateKey = unit === 'Liters' ? 'distributionLiters' : 'distributionBaht';
-            appState.fuelForm[stateKey].push({ stationKey: '', amount: '' });
-            updateDistributionList(unit);
-        }
+        };
         
-        function updateTotals() {
-            let totalLiters = 0;
-            document.querySelectorAll('#distribution-list-liters [data-field="amount"]').forEach(input => {
-                totalLiters += Number(input.value) || 0;
-            });
-            document.getElementById('form-total-liters').value = totalLiters;
+        const updateDistributionList = (unit) => {
+            const unitUpper = unit.charAt(0).toUpperCase() + unit.slice(1); // Liters or Baht
+            const container = document.getElementById(`distribution-list-${unit}`);
+            if (!container) return;
             
-            let totalBaht = 0;
-             document.querySelectorAll('#distribution-list-baht [data-field="amount"]').forEach(input => {
-                totalBaht += Number(input.value) || 0;
-            });
-            document.getElementById('form-total-baht').value = totalBaht;
-        }
+            const index = container.children.length;
+            const newItemHtml = renderRouteDistributionRow({}, index, unitUpper);
+            container.insertAdjacentHTML('beforeend', newItemHtml);
+        };
+        
+        const updateTotalAmount = (unit) => {
+            const container = document.getElementById(`distribution-list-${unit}`);
+            const totalInput = document.getElementById(`form-total-${unit}`);
+            if (!container || !totalInput) return;
 
-        function updateVLookup() {
-            const vehicleType = document.getElementById('form-vehicle-type').value;
-            const origin = document.getElementById('form-origin').value;
-            const destination = document.getElementById('form-destination').value;
-            const cardContent = document.getElementById('vlookup-card-content');
-            
-            let content = `
-                <h3 class="text-xl font-bold text-white mb-4 border-b border-slate-600 pb-2">รายละเอียดเส้นทาง</h3>
-                <p class="text-gray-500 italic">เลือกประเภทรถ ต้นทาง และปลายทางเพื่อดูข้อมูลเส้นทาง</p>
-            `;
-
-            if (vehicleType && origin && destination) {
-                const route = logisticsService.findMatchingRoute(vehicleType, origin, destination);
-                if (route) {
-                    const renderDistributionDetails = (gasStations, unit) => {
-                         if (!gasStations || Object.keys(gasStations).length === 0) return '';
-                         return `<ul class="list-disc list-inside space-y-1 pl-2">${Object.entries(gasStations).map(([key, value]) => `<li><span class="text-gray-400">${logisticsService.getFriendlyGasStationName(key)}:</span> <strong class="text-white">${formatZeroAsEmpty(value)} ${unit}</strong></li>`).join('')}</ul>`;
-                    };
-
-                    content = `
-                        <h3 class="text-xl font-bold text-white mb-4 border-b border-slate-600 pb-2">รายละเอียดเส้นทาง (VLOOKUP)</h3>
-                        <div class="space-y-3 text-sm">
-                             ${route.totalLiters > 0 ? `<p><strong class="text-gray-400">ปริมาณ (ลิตร):</strong> <span class="text-accent font-semibold text-lg">${formatZeroAsEmpty(route.totalLiters)}</span></p>` : ''}
-                             ${route.totalBaht > 0 ? `<p><strong class="text-gray-400">ปริมาณ (บาท):</strong> <span class="text-accent font-semibold text-lg">${formatZeroAsEmpty(route.totalBaht)}</span></p>` : ''}
-                            <div class="pt-2 space-y-3">
-                                ${route.gasStationsLiters && Object.keys(route.gasStationsLiters).length > 0 ? `<div><h4 class="font-semibold text-gray-300 mb-2">การกระจาย (ลิตร):</h4>${renderDistributionDetails(route.gasStationsLiters, 'ลิตร')}</div>` : ''}
-                                ${route.gasStationsBaht && Object.keys(route.gasStationsBaht).length > 0 ? `<div><h4 class="font-semibold text-gray-300 mb-2">การกระจาย (บาท):</h4>${renderDistributionDetails(route.gasStationsBaht, 'บาท')}</div>` : ''}
-                            </div>
-                        </div>
-                    `;
-                    
-                    appState.fuelForm.distributionLiters = Object.entries(route.gasStationsLiters || {}).map(([stationKey, amount]) => ({ stationKey, amount }));
-                    appState.fuelForm.distributionBaht = Object.entries(route.gasStationsBaht || {}).map(([stationKey, amount]) => ({ stationKey, amount }));
-                    updateDistributionList('Liters');
-                    updateDistributionList('Baht');
-                    updateTotals();
-                } else {
-                     content = `
-                        <h3 class="text-xl font-bold text-white mb-4 border-b border-slate-600 pb-2">รายละเอียดเส้นทาง (VLOOKUP)</h3>
-                        <p class="text-yellow-400 italic">ไม่พบเส้นทางที่ตรงกัน</p>
-                     `;
-                     appState.fuelForm.distributionLiters = [];
-                     appState.fuelForm.distributionBaht = [];
-                     updateDistributionList('Liters');
-                     updateDistributionList('Baht');
-                     updateTotals();
+            const rows = container.querySelectorAll('.distribution-row');
+            let total = 0;
+            rows.forEach(row => {
+                const amountInput = row.querySelector('input[type="number"]');
+                if (amountInput) {
+                    total += Number(amountInput.value) || 0;
                 }
-            }
-             if (cardContent) {
-                cardContent.innerHTML = content;
-             }
-        }
+            });
+            totalInput.value = total > 0 ? total : '';
+        };
 
-        function handleResetFuelForm() {
+        const resetFuelForm = () => {
             const form = document.getElementById('fuel-record-form');
             if (form) {
                 form.reset();
+                // Also reset date to today and clear dynamic lists
                 document.getElementById('form-date').value = new Date().toISOString().split('T')[0];
-                appState.fuelForm.distributionLiters = [];
-                appState.fuelForm.distributionBaht = [];
-                updateDistributionList('Liters');
-                updateDistributionList('Baht');
-                updateTotals();
-                updateVLookup();
-                document.getElementById('form-status').innerHTML = '';
+                document.getElementById('distribution-list-liters').innerHTML = '';
+                document.getElementById('distribution-list-baht').innerHTML = '';
+                document.getElementById('form-total-liters').value = '';
+                document.getElementById('form-total-baht').value = '';
+                updateVlookupCard();
+                const status = document.getElementById('form-status');
+                if (status) status.innerHTML = '';
             }
-        }
-
-        function handleFuelFormSubmit(e) {
+        };
+        
+        const handleFuelFormSubmit = async (e) => {
             e.preventDefault();
             const form = e.target;
-            const statusEl = document.getElementById('form-status');
-            
+            const statusDiv = document.getElementById('form-status');
+
             const getDistributionData = (unit) => {
-                const distribution = {};
-                const rows = document.querySelectorAll(`#distribution-list-${unit.toLowerCase()} .distribution-row`);
-                rows.forEach(row => {
-                    const key = row.querySelector('[data-field="stationKey"]').value;
-                    const amount = Number(row.querySelector('[data-field="amount"]').value);
-                    if (key && amount > 0) {
-                        distribution[key] = amount;
+                const container = document.getElementById(`distribution-list-${unit}`);
+                if (!container) return {};
+                const data = {};
+                container.querySelectorAll('.distribution-row').forEach(row => {
+                    const stationKey = row.querySelector('select')?.value;
+                    const amount = Number(row.querySelector('input[type="number"]')?.value) || 0;
+                    if (stationKey && amount > 0) {
+                        data[stationKey] = (data[stationKey] || 0) + amount;
                     }
                 });
-                return distribution;
+                return data;
             };
 
             const record = {
@@ -2073,405 +2191,289 @@
                 vehicleType: form.querySelector('#form-vehicle-type').value,
                 origin: form.querySelector('#form-origin').value,
                 destination: form.querySelector('#form-destination').value,
-                totalLiters: Number(form.querySelector('#form-total-liters').value),
-                totalBaht: Number(form.querySelector('#form-total-baht').value),
                 notes: form.querySelector('#form-notes').value,
-                fuelDistributionLiters: getDistributionData('Liters'),
-                fuelDistributionBaht: getDistributionData('Baht'),
-                matchedRoute: logisticsService.findMatchingRoute(
-                    form.querySelector('#form-vehicle-type').value,
-                    form.querySelector('#form-origin').value,
-                    form.querySelector('#form-destination').value
-                ),
+                fuelDistributionLiters: getDistributionData('liters'),
+                totalLiters: Number(form.querySelector('#form-total-liters').value) || 0,
+                fuelDistributionBaht: getDistributionData('baht'),
+                totalBaht: Number(form.querySelector('#form-total-baht').value) || 0,
             };
 
-            if (!record.date || !record.vehicleRegistration || !record.vehicleType || !record.origin || !record.destination || (record.totalLiters <= 0 && record.totalBaht <= 0)) {
-                 statusEl.innerHTML = `<div class="p-3 rounded-lg text-center font-semibold bg-red-500/20 text-red-300">กรุณากรอกข้อมูลที่จำเป็นทั้งหมด</div>`;
-                 return;
+            if (!record.date || !record.vehicleRegistration || !record.vehicleType || !record.origin || !record.destination) {
+                statusDiv.innerHTML = `<p class="text-red-400">กรุณากรอกข้อมูลที่จำเป็นให้ครบถ้วน (วันที่, ทะเบียน, ประเภทรถ, เส้นทาง)</p>`;
+                return;
             }
 
-            logisticsService.addFuelRecord(record);
-            statusEl.innerHTML = `<div class="p-3 rounded-lg text-center font-semibold bg-green-500/20 text-green-300">บันทึกรายการสำเร็จ!</div>`;
-            
-            handleResetFuelForm();
-
-            setTimeout(() => statusEl.innerHTML = '', 3000);
-        }
-
-        // --- Dashboard View Handlers ---
-        function attachDashboardListeners() {
-            const filterInput = document.querySelector('#dashboard-filters input[name="vehicleRegistration"]');
-            if (filterInput) {
-                filterInput.addEventListener('input', (e) => {
-                    appState.dashboardFilters[e.target.name] = e.target.value;
-                    const contentDiv = document.getElementById('dashboard-content');
-                    if (contentDiv) {
-                        contentDiv.innerHTML = renderDashboardContent();
-                    }
-                });
+            try {
+                await logisticsService.addFuelRecord(record);
+                statusDiv.innerHTML = `<p class="text-green-400">บันทึกข้อมูลสำเร็จ!</p>`;
+                resetFuelForm();
+                setTimeout(() => statusDiv.innerHTML = '', 3000);
+            } catch (error) {
+                console.error("Error saving fuel record:", error);
+                statusDiv.innerHTML = `<p class="text-red-400">เกิดข้อผิดพลาดในการบันทึก: ${error.message}</p>`;
             }
-             document.querySelectorAll('#dashboard-filters input[type="date"]').forEach(input => {
-                input.addEventListener('change', (e) => {
-                    appState.dashboardFilters[e.target.name] = e.target.value;
-                    const contentDiv = document.getElementById('dashboard-content');
-                    if (contentDiv) {
-                        contentDiv.innerHTML = renderDashboardContent();
-                    }
-                });
-            });
+        };
 
-            document.getElementById('clear-dashboard-filters-btn').addEventListener('click', handleClearDashboardFilters);
-            document.getElementById('refresh-dashboard-btn').addEventListener('click', () => renderApp());
-            document.getElementById('export-excel-btn').addEventListener('click', handleExportToExcel);
-            
-            const dashboardContent = document.getElementById('dashboard-content');
-            if (dashboardContent) {
-                dashboardContent.addEventListener('click', e => {
-                    const button = e.target.closest('button[data-action]');
-                    if (!button) return;
-
-                    const action = button.dataset.action;
-                    const id = button.dataset.id;
-
-                    if (action === 'edit-fuel-record' || action === 'delete-fuel-record') {
-                         if (!appState.isAuthenticated) {
-                            appState.viewAfterAuth = 'dashboard';
-                            openAuthModal();
-                            return;
-                        }
-                    }
-
-                    if (action === 'edit-fuel-record') {
-                        handleEditFuelRecord(id);
-                    }
-                    if (action === 'delete-fuel-record') {
-                        if (confirm('คุณแน่ใจหรือไม่ว่าต้องการลบรายการนี้?')) {
-                            handleDeleteFuelRecord(id);
-                        }
-                    }
-                });
+        const handleAuthSubmit = (e) => {
+            e.preventDefault();
+            const passwordInput = document.getElementById('password');
+            const errorP = document.getElementById('auth-error');
+            // Simple password check, in a real app this would be more secure.
+            if (passwordInput.value === "1234") {
+                appState.isAuthenticated = true;
+                closeModal();
+                if (appState.pendingView) {
+                    appState.view = appState.pendingView;
+                    appState.pendingView = null;
+                    renderApp();
+                }
+            } else {
+                errorP.textContent = "รหัสผ่านไม่ถูกต้อง";
+                errorP.classList.remove('hidden');
+                passwordInput.focus();
             }
-        }
+        };
+
+        const handleAddNewRoute = () => {
+            openModal('เพิ่มเส้นทางใหม่', renderRouteFormContent());
+            document.getElementById('route-form').addEventListener('submit', handleRouteFormSubmit);
+        };
+
+        const handleEditRoute = (id) => {
+            const route = logisticsService.getRoutes().find(r => r.id === id);
+            if (!route) return;
+            openModal('แก้ไขข้อมูลเส้นทาง', renderRouteFormContent(route));
+            document.getElementById('route-form').addEventListener('submit', handleRouteFormSubmit);
+        };
         
-        function handleClearDashboardFilters() {
-            appState.dashboardFilters = {
-                vehicleRegistration: '',
-                dateFrom: '',
-                dateTo: '',
-            };
-            renderApp();
-        }
-        
-        function handleDeleteFuelRecord(id) {
-             logisticsService.deleteFuelRecord(id);
-        }
-        
-        function handleEditFuelRecord(id) {
-            appState.editingFuelRecord = logisticsService.getFuelRecords().find(r => r.id === id);
-            if (appState.editingFuelRecord) {
-                openModal('แก้ไขรายการน้ำมัน', renderFuelRecordEditFormContent(appState.editingFuelRecord));
+        const handleDeleteRoute = async (id) => {
+            if (confirm('คุณต้องการลบข้อมูลเส้นทางนี้ใช่หรือไม่?')) {
+                try {
+                    await logisticsService.deleteRoute(id);
+                    // No need to re-render, Firebase listener will do it.
+                } catch (error) {
+                    console.error("Failed to delete route:", error);
+                }
             }
-        }
+        };
 
-        function renderEditDistributionRow(item, index, unit) {
-            const unitText = unit === 'Liters' ? 'ลิตร' : 'บาท';
-            const gasStationOptions = Object.entries(GAS_STATION_FRIENDLY_NAMES).map(([key, name]) => `<option value="${key}" ${item.stationKey === key ? 'selected' : ''}>${name}</option>`).join('');
-            return `
-                 <div class="distribution-row grid grid-cols-12 gap-2 items-center" data-index="${index}">
-                    <div class="col-span-6">
-                        <select name="stationKey" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white">
-                            <option value="">เลือกปั๊มน้ำมัน</option>
-                            ${gasStationOptions}
-                        </select>
-                    </div>
-                    <div class="col-span-5"><input type="number" name="amount" value="${item.amount || ''}" placeholder="${unitText}" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white" /></div>
-                    <div class="col-span-1"><button type="button" data-action="remove-distribution" class="text-red-500 hover:text-red-400 p-2 rounded-full transition-colors">${ICONS.Trash}</button></div>
-                </div>`;
-        }
-
-        function handleAddEditDistributionRow(unit) {
-            const container = document.getElementById(`edit-distribution-list-${unit.toLowerCase()}`);
-            const newIndex = container.children.length;
-            container.insertAdjacentHTML('beforeend', renderEditDistributionRow({stationKey: '', amount: ''}, newIndex, unit));
-        }
-
-        function handleFuelRecordUpdateSubmit(e) {
+        const handleRouteFormSubmit = async (e) => {
             e.preventDefault();
             const form = e.target;
+            const formData = new FormData(form);
+            const id = formData.get('id');
 
             const getDistributionData = (unit) => {
-                let total = 0;
-                const distribution = {};
-                const rows = form.querySelectorAll(`#edit-distribution-list-${unit.toLowerCase()} .distribution-row`);
-                rows.forEach(row => {
-                    const key = row.querySelector('[name="stationKey"]').value;
-                    const amount = Number(row.querySelector('[name="amount"]').value);
-                    if (key && amount > 0) {
-                        distribution[key] = amount;
-                        total += amount;
+                const container = form.querySelector(`#route-distribution-list-${unit.toLowerCase()}`);
+                if (!container) return {};
+                const data = {};
+                 container.querySelectorAll('.distribution-row').forEach(row => {
+                    const stationKey = row.querySelector('[data-field="stationKey"]').value;
+                    const amount = Number(row.querySelector('[data-field="amount"]').value) || 0;
+                    if (stationKey && amount > 0) {
+                        data[stationKey] = (data[stationKey] || 0) + amount;
                     }
                 });
-                return { distribution, total };
+                return data;
             };
 
-            const litersData = getDistributionData('Liters');
-            const bahtData = getDistributionData('Baht');
+            const data = {
+                vehicleType: formData.get('vehicleType'),
+                origin: formData.get('origin'),
+                destination: formData.get('destination'),
+                gasStationsLiters: getDistributionData('Liters'),
+                gasStationsBaht: getDistributionData('Baht'),
+            };
+            
+            data.totalLiters = Object.values(data.gasStationsLiters).reduce((sum, val) => sum + val, 0);
+            data.totalBaht = Object.values(data.gasStationsBaht).reduce((sum, val) => sum + val, 0);
 
-            const updatedData = {
-                id: form.querySelector('[name="id"]').value,
-                date: form.querySelector('[name="date"]').value,
-                vehicleRegistration: form.querySelector('[name="vehicleRegistration"]').value,
-                vehicleType: form.querySelector('[name="vehicleType"]').value,
-                origin: form.querySelector('[name="origin"]').value,
-                destination: form.querySelector('[name="destination"]').value,
-                notes: form.querySelector('[name="notes"]').value,
-                totalLiters: litersData.total,
-                totalBaht: bahtData.total,
-                fuelDistributionLiters: litersData.distribution,
-                fuelDistributionBaht: bahtData.distribution,
+            try {
+                if (id) {
+                    await logisticsService.updateRoute({ id, ...data });
+                } else {
+                    await logisticsService.addRoute(data);
+                }
+                closeModal();
+                // No need to re-render, Firebase listener handles it.
+            } catch (error) {
+                console.error("Error saving route:", error);
+                alert("เกิดข้อผิดพลาดในการบันทึกข้อมูลเส้นทาง: " + error.message);
+            }
+        };
+        
+        const handleAddRouteDistribution = (button) => {
+            const unit = button.dataset.unit; // 'Liters' or 'Baht'
+            const containerId = `route-distribution-list-${unit.toLowerCase()}`;
+            const container = document.getElementById(containerId);
+            if (!container) return;
+            
+            const index = container.children.length;
+            const newItemHtml = renderRouteDistributionRow({}, index, unit);
+            container.insertAdjacentHTML('beforeend', newItemHtml);
+        };
+        
+        const handleAddNewVehicle = () => {
+            openModal('เพิ่มทะเบียนรถใหม่', renderVehicleFormContent());
+            document.getElementById('vehicle-form').addEventListener('submit', handleVehicleFormSubmit);
+        };
+        
+        const handleEditVehicle = (id) => {
+            const vehicle = logisticsService.getVehicles().find(v => v.id === id);
+            if (!vehicle) return;
+            openModal('แก้ไขข้อมูลทะเบียนรถ', renderVehicleFormContent(vehicle));
+            document.getElementById('vehicle-form').addEventListener('submit', handleVehicleFormSubmit);
+        };
+
+        const handleDeleteVehicle = async (id) => {
+            if (confirm('คุณต้องการลบข้อมูลทะเบียนรถนี้ใช่หรือไม่?')) {
+                try {
+                    await logisticsService.deleteVehicle(id);
+                } catch (error) {
+                    console.error("Failed to delete vehicle:", error);
+                }
+            }
+        };
+
+        const handleVehicleFormSubmit = async (e) => {
+            e.preventDefault();
+            const form = e.target;
+            const formData = new FormData(form);
+            const id = formData.get('id');
+            const data = {
+                registrationNumber: formData.get('registrationNumber'),
+                vehicleType: formData.get('vehicleType'),
             };
 
-            updatedData.matchedRoute = logisticsService.findMatchingRoute(
-                updatedData.vehicleType,
-                updatedData.origin,
-                updatedData.destination
-            );
+            try {
+                if (id) {
+                    await logisticsService.updateVehicle({ id, ...data });
+                } else {
+                    await logisticsService.addVehicle(data);
+                }
+                closeModal();
+            } catch (error) {
+                console.error("Error saving vehicle:", error);
+                alert("เกิดข้อผิดพลาดในการบันทึกข้อมูล: " + error.message);
+            }
+        };
+        
+        const handleEditFuelRecord = (id) => {
+            const record = logisticsService.getFuelRecords().find(r => r.id === id);
+            if (!record) return;
+            openModal('แก้ไขรายการน้ำมัน', renderFuelRecordEditFormContent(record));
+            document.getElementById('fuel-record-edit-form').addEventListener('submit', handleFuelRecordEditFormSubmit);
+        };
+        
+        const handleFuelRecordEditFormSubmit = async (e) => {
+            e.preventDefault();
+            const form = e.target;
+            const formData = new FormData(form);
+            const id = formData.get('id');
 
-            logisticsService.updateFuelRecord(updatedData);
-            closeModal();
-        }
+            const getDistributionData = (unit) => {
+                const container = form.querySelector(`#edit-distribution-list-${unit.toLowerCase()}`);
+                if (!container) return {};
+                const data = {};
+                container.querySelectorAll('.distribution-row').forEach(row => {
+                    const stationKey = row.querySelector('[data-field="stationKey"]')?.value;
+                    const amount = Number(row.querySelector('[data-field="amount"]')?.value) || 0;
+                    if (stationKey && amount > 0) {
+                        data[stationKey] = (data[stationKey] || 0) + amount;
+                    }
+                });
+                return data;
+            };
 
-        function handleExportToExcel() {
-             const records = logisticsService.getFuelRecords();
-             const filters = appState.dashboardFilters;
+            const data = {
+                date: formData.get('date'),
+                vehicleRegistration: formData.get('vehicleRegistration'),
+                vehicleType: formData.get('vehicleType'),
+                origin: formData.get('origin'),
+                destination: formData.get('destination'),
+                notes: formData.get('notes'),
+                fuelDistributionLiters: getDistributionData('Liters'),
+                fuelDistributionBaht: getDistributionData('Baht'),
+            };
+            
+            data.totalLiters = Object.values(data.fuelDistributionLiters).reduce((sum, val) => sum + val, 0);
+            data.totalBaht = Object.values(data.fuelDistributionBaht).reduce((sum, val) => sum + val, 0);
+
+            try {
+                await logisticsService.updateFuelRecord({ id, ...data });
+                closeModal();
+            } catch (error) {
+                console.error("Error updating fuel record:", error);
+                alert("เกิดข้อผิดพลาดในการอัปเดตข้อมูล: " + error.message);
+            }
+        };
+        
+        const handleAddEditDistribution = (button) => {
+            const unit = button.dataset.unit; // 'Liters' or 'Baht'
+            const containerId = `edit-distribution-list-${unit.toLowerCase()}`;
+            const container = document.getElementById(containerId);
+            if (!container) return;
+            
+            const index = container.children.length;
+            const newItemHtml = renderEditDistributionRow({}, index, unit);
+            container.insertAdjacentHTML('beforeend', newItemHtml);
+        };
+        
+        const handleExportToExcel = () => {
+            const filters = appState.dashboardFilters;
+            const records = logisticsService.getFuelRecords();
+            
              const filteredRecords = records.filter(record => {
                 const recordDate = new Date(record.date);
                 const dateFrom = filters.dateFrom ? new Date(filters.dateFrom) : null;
                 const dateTo = filters.dateTo ? new Date(filters.dateTo) : null;
+
                 if (filters.vehicleRegistration && !(record.vehicleRegistration || '').toUpperCase().includes(filters.vehicleRegistration.toUpperCase())) return false;
                 if (dateFrom && recordDate < dateFrom) return false;
                 if (dateTo && recordDate > dateTo) return false;
                 return true;
             });
-
-            if (filteredRecords.length === 0) return;
-
-            const orderedStationKeys = logisticsService.getAllGasStationKeys();
+            
+            const stationKeys = logisticsService.getAllGasStationKeys();
             const friendlyNames = logisticsService.getAllGasStationFriendlyNames();
 
-            const dataForExport = filteredRecords.map(record => {
-                const row = {
-                    'วันที่': record.date,
-                    'ทะเบียนรถ': record.vehicleRegistration,
-                    'ประเภทรถ': record.vehicleType,
-                    'ต้นทาง': record.origin,
-                    'ปลายทาง': record.destination,
-                    'ปริมาณรวม (ลิตร)': record.totalLiters || 0,
-                    'ปริมาณรวม (บาท)': record.totalBaht || 0,
-                    'หมายเหตุ': record.notes,
-                };
-                orderedStationKeys.forEach(stationKey => {
-                    const stationFriendlyName = friendlyNames[stationKey] || stationKey;
-                    row[`${stationFriendlyName} (ลิตร)`] = record.fuelDistributionLiters?.[stationKey] || 0;
-                    row[`${stationFriendlyName} (บาท)`] = record.fuelDistributionBaht?.[stationKey] || 0;
-                });
-                return row;
+            const headers = [
+                'วันที่', 'ทะเบียนรถ', 'ประเภทรถ', 'ต้นทาง', 'ปลายทาง', 'รวม (ลิตร)', 'รวม (บาท)',
+                ...stationKeys.map(key => `${friendlyNames[key]} (ลิตร)`),
+                ...stationKeys.map(key => `${friendlyNames[key]} (บาท)`),
+                'หมายเหตุ'
+            ];
+
+            const data = filteredRecords.map(record => {
+                const stationLiters = stationKeys.map(key => record.fuelDistributionLiters?.[key] || '');
+                const stationBaht = stationKeys.map(key => record.fuelDistributionBaht?.[key] || '');
+                return [
+                    record.date,
+                    record.vehicleRegistration,
+                    record.vehicleType,
+                    record.origin,
+                    record.destination,
+                    record.totalLiters || '',
+                    record.totalBaht || '',
+                    ...stationLiters,
+                    ...stationBaht,
+                    record.notes || ''
+                ];
             });
 
-            const worksheet = XLSX.utils.json_to_sheet(dataForExport);
+            const worksheet = XLSX.utils.aoa_to_sheet([headers, ...data]);
             const workbook = XLSX.utils.book_new();
-            XLSX.utils.book_append_sheet(workbook, worksheet, 'Fuel Records');
-            const colWidths = [ {wch:12}, {wch:15}, {wch:18}, {wch:20}, {wch:20}, {wch:15}, {wch:15}, {wch:30} ];
-            orderedStationKeys.forEach(() => {
-                colWidths.push({wch: 25}); // for Liters
-                colWidths.push({wch: 25}); // for Baht
-            });
-            worksheet['!cols'] = colWidths;
-            XLSX.writeFile(workbook, `FuelReport_${new Date().toISOString().split('T')[0]}.xlsx`);
-        }
+            XLSX.utils.book_append_sheet(workbook, worksheet, 'FuelRecords');
+            XLSX.writeFile(workbook, `FuelRecords_${new Date().toISOString().split('T')[0]}.xlsx`);
+        };
         
-        // --- Data Management Handlers ---
-        function attachDataManagementListeners() {
-            document.getElementById('data-management-filter').addEventListener('input', e => {
-                appState.dataManagementFilter = e.target.value;
-                 const contentDiv = document.getElementById('data-management-content');
-                if (contentDiv) {
-                    contentDiv.innerHTML = renderDataManagementContent();
-                }
-            });
-             document.getElementById('refresh-routes-btn').addEventListener('click', () => renderApp());
-            document.getElementById('add-new-route-btn').addEventListener('click', () => {
-                appState.editingRoute = null;
-                openModal('เพิ่มเส้นทางใหม่', renderRouteFormContent(null));
-            });
-            const contentDiv = document.getElementById('data-management-content');
-            if(contentDiv) {
-                contentDiv.addEventListener('click', e => {
-                    const button = e.target.closest('button[data-action]');
-                    if (!button) return;
-
-                    const action = button.dataset.action;
-                    const id = button.dataset.id;
-                    
-                    if (action === 'edit-route') {
-                        const route = logisticsService.getRoutes().find(r => r.id === id);
-                        if(route) {
-                            appState.editingRoute = route;
-                            openModal('แก้ไขข้อมูลเส้นทาง', renderRouteFormContent(route));
-                        }
-                    }
-                    if (action === 'delete-route') {
-                        if (confirm('คุณแน่ใจหรือไม่ว่าต้องการลบเส้นทางนี้? การกระทำนี้ไม่สามารถย้อนกลับได้')) {
-                            logisticsService.deleteRoute(id);
-                        }
-                    }
-                });
-            }
-        }
-
-        function handleRouteFormSubmit(e) {
-            e.preventDefault();
-            const form = e.target;
-            const getDistributionData = (unit) => {
-                const distribution = {};
-                const rows = form.querySelectorAll(`#route-distribution-list-${unit.toLowerCase()} .distribution-row`);
-                rows.forEach(row => {
-                    const key = row.querySelector('[name="stationKey"]').value;
-                    const amount = Number(row.querySelector('[name="amount"]').value);
-                    if (key && amount > 0) {
-                        distribution[key] = amount;
-                    }
-                });
-                return distribution;
-            };
-
-            const gasStationsLiters = getDistributionData('Liters');
-            const gasStationsBaht = getDistributionData('Baht');
-
-            const totalLiters = Object.values(gasStationsLiters).reduce((sum, val) => sum + val, 0);
-            const totalBaht = Object.values(gasStationsBaht).reduce((sum, val) => sum + val, 0);
-
-            const routeData = {
-                id: form.querySelector('[name="id"]').value,
-                vehicleType: form.querySelector('[name="vehicleType"]').value,
-                origin: form.querySelector('[name="origin"]').value,
-                destination: form.querySelector('[name="destination"]').value,
-                gasStationsLiters,
-                gasStationsBaht,
-                totalLiters,
-                totalBaht,
-            };
-
-            if (routeData.id) {
-                logisticsService.updateRoute(routeData);
-            } else {
-                logisticsService.addRoute({
-                    vehicleType: routeData.vehicleType,
-                    origin: routeData.origin,
-                    destination: routeData.destination,
-                    gasStationsLiters: routeData.gasStationsLiters,
-                    gasStationsBaht: routeData.gasStationsBaht,
-                    totalLiters: routeData.totalLiters,
-                    totalBaht: routeData.totalBaht,
-                });
-            }
-
-            closeModal();
-        }
-        
-        function renderRouteDistributionRow(item, index, unit) {
-            const unitText = unit === 'Liters' ? 'ลิตร' : 'บาท';
-            const gasStationOptions = Object.entries(GAS_STATION_FRIENDLY_NAMES).map(([key, name]) => `<option value="${key}" ${item.stationKey === key ? 'selected' : ''}>${name}</option>`).join('');
-            return `
-                 <div class="distribution-row grid grid-cols-12 gap-2 items-center" data-index="${index}">
-                    <div class="col-span-6">
-                        <select name="stationKey" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white">
-                            <option value="">เลือกปั๊มน้ำมัน</option>
-                            ${gasStationOptions}
-                        </select>
-                    </div>
-                    <div class="col-span-5"><input type="number" name="amount" value="${item.amount || ''}" placeholder="${unitText}" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white" /></div>
-                    <div class="col-span-1"><button type="button" data-action="remove-distribution" class="text-red-500 hover:text-red-400 p-2 rounded-full transition-colors">${ICONS.Trash}</button></div>
-                </div>`;
-        }
-
-        function handleAddRouteDistributionRow(unit) {
-            const container = document.getElementById(`route-distribution-list-${unit.toLowerCase()}`);
-            const newIndex = container.children.length;
-            container.insertAdjacentHTML('beforeend', renderRouteDistributionRow({stationKey: '', amount: ''}, newIndex, unit));
-        }
-
-        // --- Vehicle Management Handlers ---
-        function attachVehicleManagementListeners() {
-            document.getElementById('vehicle-management-filter').addEventListener('input', e => {
-                appState.vehicleManagementFilter = e.target.value;
-                const contentDiv = document.getElementById('vehicle-management-content');
-                if (contentDiv) {
-                    contentDiv.innerHTML = renderVehicleManagementContent();
-                }
-            });
-            document.getElementById('refresh-vehicles-btn').addEventListener('click', () => renderApp());
-            document.getElementById('add-new-vehicle-btn').addEventListener('click', () => {
-                appState.editingVehicle = null;
-                openModal('เพิ่มข้อมูลทะเบียนรถ', renderVehicleFormContent(null));
-            });
-
-            const contentDiv = document.getElementById('vehicle-management-content');
-            if (contentDiv) {
-                contentDiv.addEventListener('click', e => {
-                    const button = e.target.closest('button[data-action]');
-                    if (!button) return;
-
-                    const action = button.dataset.action;
-                    const id = button.dataset.id;
-                    
-                    if (action === 'edit-vehicle') {
-                        const vehicle = logisticsService.getVehicles().find(v => v.id === id);
-                        if (vehicle) {
-                            appState.editingVehicle = vehicle;
-                            openModal('แก้ไขข้อมูลทะเบียนรถ', renderVehicleFormContent(vehicle));
-                        }
-                    }
-                    if (action === 'delete-vehicle') {
-                        if (confirm('คุณแน่ใจหรือไม่ว่าต้องการลบทะเบียนรถนี้?')) {
-                            logisticsService.deleteVehicle(id);
-                        }
-                    }
-                });
-            }
-        }
-        
-        function handleVehicleFormSubmit(e) {
-            e.preventDefault();
-            const form = e.target;
-            const vehicleData = {
-                id: form.querySelector('[name="id"]').value,
-                registrationNumber: form.querySelector('[name="registrationNumber"]').value,
-                vehicleType: form.querySelector('[name="vehicleType"]').value,
-            };
-
-            if (vehicleData.id) {
-                logisticsService.updateVehicle(vehicleData);
-            } else {
-                logisticsService.addVehicle({
-                    registrationNumber: vehicleData.registrationNumber,
-                    vehicleType: vehicleData.vehicleType
-                });
-            }
-            closeModal();
-        }
-
         // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-        // 6. INITIALIZATION
+        // 6. APP INITIALIZATION
         // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-        
-        document.addEventListener('DOMContentLoaded', () => {
-            logisticsService.initialize();
-            renderApp();
-        });
-        
+        logisticsService.initialize();
+
         // --- END OF SCRIPT ---
     </script>
-
+<script type="module" src="/index.tsx"></script>
 </body>
 </html>
