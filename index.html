@@ -29,7 +29,6 @@
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
     <!-- XLSX for Excel Export -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-<link rel="stylesheet" href="/index.css">
 </head>
 <body class="bg-base-100 text-gray-300 font-sans">
     <div id="app-container">
@@ -141,7 +140,7 @@
                         id,
                         ...value,
                         gasStations: (value.gasStations && typeof value.gasStations === 'object') ? value.gasStations : {}
-                    })).reverse() : [];
+                    })) : [];
                     if(['data', 'form'].includes(appState.view)) renderApp();
                 });
 
@@ -208,10 +207,14 @@
             },
             
             findMatchingRoute: (vehicleType, origin, destination) => {
+                 if (!vehicleType || !origin || !destination) return null;
+                const vt = vehicleType.trim();
+                const o = origin.trim();
+                const d = destination.trim();
                 return appState.routes.find(route => 
-                    route.vehicleType === vehicleType && 
-                    route.origin === origin && 
-                    route.destination === destination
+                    (route.vehicleType || '').trim() === vt && 
+                    (route.origin || '').trim() === o && 
+                    (route.destination || '').trim() === d
                 ) || null;
             },
 
@@ -329,11 +332,20 @@
                                     <button type="button" id="add-distribution-btn" class="w-full border-2 border-dashed border-slate-500 hover:bg-slate-700/50 text-gray-300 font-semibold py-2 px-4 rounded-lg transition">+ เพิ่มจุดเติมน้ำมัน</button>
                                 </div>
                                 
-                                <div>
-                                    <label class="block text-sm font-medium text-gray-400 mb-1">ปริมาณน้ำมันทั้งหมด (ลิตร)</label>
-                                    <input type="number" id="form-fuel-amount" placeholder="คำนวณอัตโนมัติ" readonly class="w-full bg-slate-900 cursor-not-allowed border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent" />
+                                <div class="grid grid-cols-2 gap-4">
+                                    <div>
+                                        <label class="block text-sm font-medium text-gray-400 mb-1">หน่วย</label>
+                                        <select id="form-fuel-unit" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent">
+                                            <option value="Liters">ลิตร</option>
+                                            <option value="Baht">บาท</option>
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label class="block text-sm font-medium text-gray-400 mb-1">ปริมาณรวม</label>
+                                        <input type="number" id="form-fuel-amount" placeholder="คำนวณอัตโนมัติ" readonly class="w-full bg-slate-900 cursor-not-allowed border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent" />
+                                    </div>
                                 </div>
-                                
+
                                 <div>
                                    <label class="block text-sm font-medium text-gray-400 mb-1">หมายเหตุ</label>
                                    <textarea id="form-notes" placeholder="หมายเหตุเพิ่มเติมเกี่ยวกับการเดินทาง" rows="3" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent"></textarea>
@@ -353,8 +365,7 @@
             `;
         };
 
-        // --- View: Dashboard ---
-        const renderDashboard = () => {
+        const renderDashboardContent = () => {
              const filters = appState.dashboardFilters;
              const records = logisticsService.getFuelRecords();
 
@@ -369,7 +380,12 @@
                 return true;
             });
             
-            const totalFuel = filteredRecords.reduce((sum, record) => sum + record.fuelAmount, 0);
+            const totalFuelLiters = filteredRecords
+                .filter(r => r.unit !== 'Baht') // Default to Liters if unit is missing
+                .reduce((sum, record) => sum + (record.fuelAmount || 0), 0);
+            const totalFuelBaht = filteredRecords
+                .filter(r => r.unit === 'Baht')
+                .reduce((sum, record) => sum + (record.fuelAmount || 0), 0);
 
             const latestRecordsTableRows = filteredRecords.map(record => `
                 <tr class="border-b border-slate-600 hover:bg-slate-700/20">
@@ -377,7 +393,7 @@
                     <td class="p-3 font-mono">${record.vehicleRegistration}</td>
                     <td class="p-3">${record.vehicleType}</td>
                     <td class="p-3">${record.origin} → ${record.destination}</td>
-                    <td class="p-3 text-right font-semibold text-accent">${record.fuelAmount}</td>
+                    <td class="p-3 text-right font-semibold text-accent">${(record.fuelAmount || 0).toLocaleString()} ${record.unit === 'Baht' ? 'บาท' : 'ลิตร'}</td>
                     <td class="p-3 text-center">
                         <div class="flex justify-center gap-2">
                             <button data-action="edit-fuel-record" data-id="${record.id}" class="text-blue-400 hover:text-blue-300 p-2 rounded-full transition-colors">${ICONS.Pencil}</button>
@@ -401,7 +417,8 @@
                                 date: record.date,
                                 vehicleRegistration: record.vehicleRegistration,
                                 vehicleType: record.vehicleType,
-                                fuel: fuel
+                                fuel: fuel,
+                                unit: record.unit || 'Liters'
                             });
                         }
                     });
@@ -415,10 +432,77 @@
                     <td class="p-3 whitespace-nowrap">${entry.date}</td>
                     <td class="p-3 font-mono whitespace-nowrap">${entry.vehicleRegistration}</td>
                     <td class="p-3 whitespace-nowrap">${entry.vehicleType}</td>
-                    <td class="p-3 text-right font-semibold text-accent whitespace-nowrap">${entry.fuel.toLocaleString()}</td>
+                    <td class="p-3 text-right font-semibold text-accent whitespace-nowrap">${(entry.fuel || 0).toLocaleString()} ${entry.unit === 'Baht' ? 'บาท' : 'ลิตร'}</td>
                 </tr>
             `).join('');
+            
+            const exportBtn = document.getElementById('export-excel-btn');
+            if (exportBtn) {
+                 exportBtn.disabled = filteredRecords.length === 0;
+            }
 
+            return `
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                    ${renderCard(`<h3 class="text-lg text-gray-400">จำนวนรายการทั้งหมด</h3><p class="text-4xl font-bold text-accent">${(filteredRecords.length || 0).toLocaleString()}</p>`, 'text-center')}
+                    ${renderCard(`<h3 class="text-lg text-gray-400">ปริมาณน้ำมันทั้งหมด</h3><p class="text-4xl font-bold text-accent">${(totalFuelLiters || 0).toLocaleString()} <span class="text-2xl">ลิตร</span></p>`, 'text-center')}
+                    ${renderCard(`<h3 class="text-lg text-gray-400">ค่าใช้จ่ายน้ำมันทั้งหมด</h3><p class="text-4xl font-bold text-accent">${(totalFuelBaht || 0).toLocaleString()}<span class="text-2xl"> บาท</span></p>`, 'text-center')}
+                </div>
+                
+                ${renderCard(`
+                    <h3 class="text-xl font-bold mb-4 flex items-center gap-2">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="w-6 h-6 text-accent" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 11h1.5a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2h-1.5a2 2 0 0 1-2-2v-2a1 1 0 0 0-1-1h-2a1 1 0 0 0-1 1v2a2 2 0 0 1-2 2H5.5a2 2 0 0 1-2-2v-6a2 2 0 0 1 2-2H7"></path><path d="M14 11V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v7"></path><path d="M4 15h5"></path><path d="M15 4h2"></path></svg>
+                        <span>รายละเอียดการเติมน้ำมันตามปั๊ม</span>
+                    </h3>
+                    <div class="overflow-x-auto max-h-[400px]">
+                        <table class="w-full text-left table-auto">
+                            <thead class="bg-slate-800 text-sm text-gray-400 uppercase sticky top-0 z-10">
+                                <tr>
+                                    <th class="p-3">ปั๊มน้ำมัน</th>
+                                    <th class="p-3">วันที่</th>
+                                    <th class="p-3">ทะเบียน</th>
+                                    <th class="p-3">ประเภท</th>
+                                    <th class="p-3 text-right">จำนวน</th>
+                                </tr>
+                            </thead>
+                            <tbody class="text-sm">
+                                ${stationEntries.length > 0 ? stationTableRows : `<tr><td colspan="5" class="text-center py-8 text-gray-500">ไม่มีข้อมูลการเติมน้ำมันที่ตรงกัน</td></tr>`}
+                            </tbody>
+                        </table>
+                    </div>
+                `)}
+
+                ${renderCard(`
+                    <h3 class="text-xl font-bold mb-4">รายการน้ำมันล่าสุด</h3>
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-left">
+                            <thead class="bg-slate-800 text-sm text-gray-400 uppercase">
+                                <tr>
+                                    <th class="p-3">วันที่</th><th class="p-3">ทะเบียน</th><th class="p-3">ประเภท</th><th class="p-3">เส้นทาง</th><th class="p-3 text-right">ปริมาณ</th><th class="p-3 text-center">จัดการ</th>
+                                </tr>
+                            </thead>
+                            <tbody id="dashboard-table-body">${latestRecordsTableRows}</tbody>
+                        </table>
+                        ${filteredRecords.length === 0 ? '<p class="text-center py-8 text-gray-500">ไม่พบรายการที่ตรงกัน</p>' : ''}
+                    </div>
+                `)}
+            `;
+        }
+
+        // --- View: Dashboard ---
+        const renderDashboard = () => {
+             const filters = appState.dashboardFilters;
+             const records = logisticsService.getFuelRecords();
+
+             const filteredRecords = records.filter(record => {
+                const recordDate = new Date(record.date);
+                const dateFrom = filters.dateFrom ? new Date(filters.dateFrom) : null;
+                const dateTo = filters.dateTo ? new Date(filters.dateTo) : null;
+
+                if (filters.vehicleRegistration && !(record.vehicleRegistration || '').toUpperCase().includes(filters.vehicleRegistration.toUpperCase())) return false;
+                if (dateFrom && recordDate < dateFrom) return false;
+                if (dateTo && recordDate > dateTo) return false;
+                return true;
+            });
 
             return `
                 <div class="space-y-8">
@@ -444,55 +528,14 @@
                         </div>
                     `)}
 
-                    <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
-                        ${renderCard(`<h3 class="text-lg text-gray-400">จำนวนรายการทั้งหมด</h3><p class="text-4xl font-bold text-accent">${filteredRecords.length}</p>`, 'text-center')}
-                        ${renderCard(`<h3 class="text-lg text-gray-400">ปริมาณน้ำมันที่ใช้ทั้งหมด</h3><p class="text-4xl font-bold text-accent">${totalFuel.toLocaleString()} <span class="text-2xl">ลิตร</span></p>`, 'text-center')}
-                        ${renderCard(`<h3 class="text-lg text-gray-400">เฉลี่ยต่อเที่ยว</h3><p class="text-4xl font-bold text-accent">${filteredRecords.length > 0 ? (totalFuel / filteredRecords.length).toFixed(2) : 0}<span class="text-2xl"> ลิตร</span></p>`, 'text-center')}
+                    <div id="dashboard-content" class="space-y-8">
+                       ${renderDashboardContent()}
                     </div>
-                    
-                    ${renderCard(`
-                        <h3 class="text-xl font-bold mb-4 flex items-center gap-2">
-                            <svg xmlns="http://www.w3.org/2000/svg" class="w-6 h-6 text-accent" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 11h1.5a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2h-1.5a2 2 0 0 1-2-2v-2a1 1 0 0 0-1-1h-2a1 1 0 0 0-1 1v2a2 2 0 0 1-2 2H5.5a2 2 0 0 1-2-2v-6a2 2 0 0 1 2-2H7"></path><path d="M14 11V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v7"></path><path d="M4 15h5"></path><path d="M15 4h2"></path></svg>
-                            <span>รายละเอียดการเติมน้ำมันตามปั๊ม</span>
-                        </h3>
-                        <div class="overflow-x-auto max-h-[400px]">
-                            <table class="w-full text-left table-auto">
-                                <thead class="bg-slate-800 text-sm text-gray-400 uppercase sticky top-0 z-10">
-                                    <tr>
-                                        <th class="p-3">ปั๊มน้ำมัน</th>
-                                        <th class="p-3">วันที่</th>
-                                        <th class="p-3">ทะเบียน</th>
-                                        <th class="p-3">ประเภท</th>
-                                        <th class="p-3 text-right">จำนวน (ลิตร)</th>
-                                    </tr>
-                                </thead>
-                                <tbody class="text-sm">
-                                    ${stationEntries.length > 0 ? stationTableRows : `<tr><td colspan="5" class="text-center py-8 text-gray-500">ไม่มีข้อมูลการเติมน้ำมันที่ตรงกัน</td></tr>`}
-                                </tbody>
-                            </table>
-                        </div>
-                    `)}
-
-                    ${renderCard(`
-                        <h3 class="text-xl font-bold mb-4">รายการน้ำมันล่าสุด</h3>
-                        <div class="overflow-x-auto">
-                            <table class="w-full text-left">
-                                <thead class="bg-slate-800 text-sm text-gray-400 uppercase">
-                                    <tr>
-                                        <th class="p-3">วันที่</th><th class="p-3">ทะเบียน</th><th class="p-3">ประเภท</th><th class="p-3">เส้นทาง</th><th class="p-3 text-right">น้ำมัน (ลิตร)</th><th class="p-3 text-center">จัดการ</th>
-                                    </tr>
-                                </thead>
-                                <tbody id="dashboard-table-body">${latestRecordsTableRows}</tbody>
-                            </table>
-                            ${filteredRecords.length === 0 ? '<p class="text-center py-8 text-gray-500">ไม่พบรายการที่ตรงกัน</p>' : ''}
-                        </div>
-                    `)}
                 </div>
             `;
         };
 
-        // --- View: Data Management ---
-        const renderDataManagement = () => {
+        const renderDataManagementContent = () => {
             const filter = appState.dataManagementFilter.toLowerCase();
             const routes = logisticsService.getRoutes();
             const filteredRoutes = filter ? routes.filter(r => 
@@ -501,12 +544,23 @@
                 (r.destination || '').toLowerCase().includes(filter)
             ) : routes;
 
+            // Sort routes for consistent display
+            filteredRoutes.sort((a, b) => {
+                const vehicleTypeCompare = (a.vehicleType || '').localeCompare(b.vehicleType || '', 'th');
+                if (vehicleTypeCompare !== 0) return vehicleTypeCompare;
+
+                const originCompare = (a.origin || '').localeCompare(b.origin || '', 'th');
+                if (originCompare !== 0) return originCompare;
+
+                return (a.destination || '').localeCompare(b.destination || '', 'th');
+            });
+
             const tableRows = filteredRoutes.map(route => `
                 <tr key="${route.id}" class="border-b border-slate-600 hover:bg-slate-700/20">
                     <td class="p-3">${route.vehicleType}</td>
                     <td class="p-3">${route.origin}</td>
                     <td class="p-3">${route.destination}</td>
-                    <td class="p-3 text-right font-semibold text-accent">${route.totalFuel}</td>
+                    <td class="p-3 text-right font-semibold text-accent">${(route.totalFuel || 0).toLocaleString()} ${route.unit === 'Baht' ? 'บาท' : 'ลิตร'}</td>
                     <td class="p-3 text-center">
                         <div class="flex justify-center gap-2">
                             <button data-action="edit-route" data-id="${route.id}" class="text-blue-400 hover:text-blue-300 p-2 rounded-full transition-colors">${ICONS.Pencil}</button>
@@ -516,6 +570,23 @@
                 </tr>
             `).join('');
 
+            return renderCard(`
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left">
+                        <thead class="bg-slate-800 text-sm text-gray-400 uppercase">
+                            <tr>
+                                <th class="p-3">ประเภทรถ</th><th class="p-3">ต้นทาง</th><th class="p-3">ปลายทาง</th><th class="p-3 text-right">ปริมาณ</th><th class="p-3 text-center">จัดการ</th>
+                            </tr>
+                        </thead>
+                        <tbody id="routes-table-body">${tableRows}</tbody>
+                    </table>
+                    ${filteredRoutes.length === 0 ? '<p class="text-center py-8 text-gray-500">ไม่พบข้อมูลเส้นทาง</p>' : ''}
+                </div>
+            `);
+        };
+
+        // --- View: Data Management ---
+        const renderDataManagement = () => {
             return `
                 <div class="space-y-8">
                     ${renderCard(`
@@ -532,25 +603,14 @@
                             </div>
                         </div>
                     `)}
-                    ${renderCard(`
-                        <div class="overflow-x-auto">
-                            <table class="w-full text-left">
-                                <thead class="bg-slate-800 text-sm text-gray-400 uppercase">
-                                    <tr>
-                                        <th class="p-3">ประเภทรถ</th><th class="p-3">ต้นทาง</th><th class="p-3">ปลายทาง</th><th class="p-3 text-right">น้ำมัน (ลิตร)</th><th class="p-3 text-center">จัดการ</th>
-                                    </tr>
-                                </thead>
-                                <tbody id="routes-table-body">${tableRows}</tbody>
-                            </table>
-                            ${filteredRoutes.length === 0 ? '<p class="text-center py-8 text-gray-500">ไม่พบข้อมูลเส้นทาง</p>' : ''}
-                        </div>
-                    `)}
+                    <div id="data-management-content">
+                        ${renderDataManagementContent()}
+                    </div>
                 </div>
             `;
         };
         
-        // --- View: Vehicle Management ---
-        const renderVehicleManagement = () => {
+        const renderVehicleManagementContent = () => {
             const filter = appState.vehicleManagementFilter.toLowerCase();
             const vehicles = logisticsService.getVehicles();
             const filteredVehicles = filter ? vehicles.filter(v => 
@@ -571,6 +631,23 @@
                 </tr>
             `).join('');
 
+            return renderCard(`
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left">
+                        <thead class="bg-slate-800 text-sm text-gray-400 uppercase">
+                            <tr>
+                                <th class="p-3">ทะเบียนรถ</th><th class="p-3">ประเภทรถ</th><th class="p-3 text-center">จัดการ</th>
+                            </tr>
+                        </thead>
+                        <tbody id="vehicles-table-body">${tableRows}</tbody>
+                    </table>
+                    ${filteredVehicles.length === 0 ? '<p class="text-center py-8 text-gray-500">ไม่พบข้อมูลทะเบียนรถ</p>' : ''}
+                </div>
+            `);
+        };
+
+        // --- View: Vehicle Management ---
+        const renderVehicleManagement = () => {
             return `
                 <div class="space-y-8">
                     ${renderCard(`
@@ -587,19 +664,9 @@
                             </div>
                         </div>
                     `)}
-                    ${renderCard(`
-                        <div class="overflow-x-auto">
-                            <table class="w-full text-left">
-                                <thead class="bg-slate-800 text-sm text-gray-400 uppercase">
-                                    <tr>
-                                        <th class="p-3">ทะเบียนรถ</th><th class="p-3">ประเภทรถ</th><th class="p-3 text-center">จัดการ</th>
-                                    </tr>
-                                </thead>
-                                <tbody id="vehicles-table-body">${tableRows}</tbody>
-                            </table>
-                            ${filteredVehicles.length === 0 ? '<p class="text-center py-8 text-gray-500">ไม่พบข้อมูลทะเบียนรถ</p>' : ''}
-                        </div>
-                    `)}
+                    <div id="vehicle-management-content">
+                        ${renderVehicleManagementContent()}
+                    </div>
                 </div>
             `;
         };
@@ -676,9 +743,18 @@
                             <input type="text" name="origin" value="${route?.origin || ''}" placeholder="เช่น, กทม" required class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent" />
                         </div>
                     </div>
-                    <div>
-                        <label class="block text-sm font-medium text-gray-400 mb-1">ปลายทาง</label>
-                        <input type="text" name="destination" value="${route?.destination || ''}" placeholder="เช่น, เชียงใหม่" required class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent" />
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-400 mb-1">ปลายทาง</label>
+                            <input type="text" name="destination" value="${route?.destination || ''}" placeholder="เช่น, เชียงใหม่" required class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent" />
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-400 mb-1">หน่วยน้ำมัน</label>
+                            <select name="unit" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent">
+                                <option value="Liters" ${route?.unit === 'Liters' || !route?.unit ? 'selected' : ''}>ลิตร</option>
+                                <option value="Baht" ${route?.unit === 'Baht' ? 'selected' : ''}>บาท</option>
+                            </select>
+                        </div>
                     </div>
 
                     <div class="space-y-4 rounded-lg border border-slate-600 p-4">
@@ -747,6 +823,16 @@
                         </div>
                     </div>
 
+                     <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-400 mb-1">หน่วย</label>
+                            <select name="unit" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent">
+                                <option value="Liters" ${record.unit === 'Liters' || !record.unit ? 'selected' : ''}>ลิตร</option>
+                                <option value="Baht" ${record.unit === 'Baht' ? 'selected' : ''}>บาท</option>
+                            </select>
+                        </div>
+                    </div>
+
                     <div class="space-y-4 rounded-lg border border-slate-600 p-4">
                         <h3 class="font-semibold text-lg text-white">การกระจายน้ำมัน</h3>
                         <div id="edit-distribution-list">
@@ -772,7 +858,7 @@
         // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         
         const attachEventListeners = () => {
-            // Global listeners
+            // Global listeners that are safe to re-attach or are on static elements
             document.querySelectorAll('.nav-button').forEach(btn => btn.addEventListener('click', handleNavClick));
             
             const modalContainer = document.getElementById('modal-container');
@@ -801,16 +887,16 @@
         
         const handleModalClick = (e) => {
             const closeButton = e.target.closest('[data-action="close-modal"]');
-            const isBackgroundClick = e.currentTarget.id.includes('modal-container') && e.target === e.currentTarget;
+            // Check if the click is on the dark overlay background itself, not on its children
+            const isBackgroundClick = e.target.classList.contains('bg-opacity-70');
 
-            // Proceed if the close button was clicked or if it was a background click on the modal overlay
             if (closeButton || isBackgroundClick) {
                 const isAuthModal = e.currentTarget.id === 'auth-modal-container';
                 
-                closeModal(); // Hides the modal DOM element
+                closeModal();
 
-                // If the auth modal was closed by pressing the 'X' button, navigate back to the form view as requested.
-                if (isAuthModal && closeButton) {
+                // If closing the auth modal without authenticating, go back to a safe view.
+                if (isAuthModal && (closeButton || isBackgroundClick)) {
                     appState.view = 'form';
                     renderApp();
                 }
@@ -835,7 +921,6 @@
 
         // --- Form View Handlers ---
         function attachFormListeners() {
-            document.getElementById('fuel-record-form').addEventListener('submit', handleFuelFormSubmit);
             document.getElementById('reset-fuel-form-btn').addEventListener('click', handleResetFuelForm);
             document.getElementById('add-distribution-btn').addEventListener('click', handleAddDistributionRow);
             document.getElementById('distribution-list').addEventListener('click', (e) => {
@@ -972,22 +1057,27 @@
             if (vehicleType && origin && destination) {
                 const route = logisticsService.findMatchingRoute(vehicleType, origin, destination);
                 if (route) {
-                    const stationsList = Object.keys(route.gasStations).length > 0 
-                        ? `<ul class="list-disc list-inside space-y-1 pl-2">${Object.entries(route.gasStations).map(([key, value]) => `<li><span class="text-gray-400">${logisticsService.getFriendlyGasStationName(key)}:</span> <strong class="text-white">${value} L</strong></li>`).join('')}</ul>`
+                    const unitText = route.unit === 'Baht' ? 'บาท' : 'ลิตร';
+                    const stationsList = Object.keys(route.gasStations || {}).length > 0
+                        ? `<ul class="list-disc list-inside space-y-1 pl-2">${Object.entries(route.gasStations).map(([key, value]) => `<li><span class="text-gray-400">${logisticsService.getFriendlyGasStationName(key)}:</span> <strong class="text-white">${(value || 0).toLocaleString()} ${unitText}</strong></li>`).join('')}</ul>`
                         : `<p class="text-gray-500 italic">ไม่มีการกระจายที่ระบุ</p>`;
                     
                     content = `
                         <h3 class="text-xl font-bold text-white mb-4 border-b border-slate-600 pb-2">รายละเอียดเส้นทาง (VLOOKUP)</h3>
                         <div class="space-y-3 text-sm">
-                            <p><strong class="text-gray-400">ปริมาณน้ำมันที่แนะนำ:</strong> <span class="text-accent font-semibold text-lg">${route.totalFuel || 'N/A'} ลิตร</span></p>
+                            <p><strong class="text-gray-400">ปริมาณที่แนะนำ:</strong> <span class="text-accent font-semibold text-lg">${(route.totalFuel || 0).toLocaleString()} ${unitText}</span></p>
                             <div class="pt-2">
                                 <h4 class="font-semibold text-gray-300 mb-2">การกระจายที่แนะนำ:</h4>
                                 ${stationsList}
                             </div>
                         </div>
                     `;
-                    // Auto-fill distribution
-                    appState.fuelForm.distribution = Object.entries(route.gasStations).map(([stationKey, amount]) => ({ stationKey, amount }));
+                    // Auto-fill distribution and unit
+                    const fuelUnitSelect = document.getElementById('form-fuel-unit');
+                    if (fuelUnitSelect) {
+                        fuelUnitSelect.value = route.unit === 'Baht' ? 'Baht' : 'Liters';
+                    }
+                    appState.fuelForm.distribution = Object.entries(route.gasStations || {}).map(([stationKey, amount]) => ({ stationKey, amount }));
                     updateDistributionList();
                     updateTotalFuel();
                 } else {
@@ -1000,7 +1090,9 @@
                      updateTotalFuel();
                 }
             }
-             cardContent.innerHTML = content;
+             if (cardContent) {
+                cardContent.innerHTML = content;
+             }
         }
 
         function handleResetFuelForm() {
@@ -1008,6 +1100,7 @@
             if (form) {
                 form.reset();
                 document.getElementById('form-date').value = new Date().toISOString().split('T')[0];
+                document.getElementById('form-fuel-unit').value = 'Liters';
                 appState.fuelForm.distribution = [];
                 updateDistributionList();
                 updateTotalFuel();
@@ -1028,6 +1121,7 @@
                 origin: form.querySelector('#form-origin').value,
                 destination: form.querySelector('#form-destination').value,
                 fuelAmount: Number(form.querySelector('#form-fuel-amount').value),
+                unit: form.querySelector('#form-fuel-unit').value,
                 notes: form.querySelector('#form-notes').value,
                 matchedRoute: logisticsService.findMatchingRoute(
                     form.querySelector('#form-vehicle-type').value,
@@ -1048,41 +1142,39 @@
             }
 
             logisticsService.addFuelRecord(record);
-            statusEl.innerHTML = `<div class="p-3 rounded-lg text-center font-semibold bg-green-500/20 text-green-300">บันทึกรายการน้ำมันสำเร็จ!</div>`;
+            statusEl.innerHTML = `<div class="p-3 rounded-lg text-center font-semibold bg-green-500/20 text-green-300">บันทึกรายการสำเร็จ!</div>`;
             
             // Reset form
-            form.reset();
-            document.getElementById('form-date').value = new Date().toISOString().split('T')[0]; // Reset date correctly
-            appState.fuelForm.distribution = [];
-            updateDistributionList();
-            updateTotalFuel();
-            updateVLookup();
+            handleResetFuelForm();
 
             setTimeout(() => statusEl.innerHTML = '', 3000);
         }
 
         // --- Dashboard View Handlers ---
         function attachDashboardListeners() {
-            document.getElementById('dashboard-filters').addEventListener('input', (e) => {
-                appState.dashboardFilters[e.target.name] = e.target.value;
-                renderApp();
+            const filterInput = document.querySelector('#dashboard-filters input[name="vehicleRegistration"]');
+            if (filterInput) {
+                filterInput.addEventListener('input', (e) => {
+                    appState.dashboardFilters[e.target.name] = e.target.value;
+                    const contentDiv = document.getElementById('dashboard-content');
+                    if (contentDiv) {
+                        contentDiv.innerHTML = renderDashboardContent();
+                    }
+                });
+            }
+             document.querySelectorAll('#dashboard-filters input[type="date"]').forEach(input => {
+                input.addEventListener('change', (e) => {
+                    appState.dashboardFilters[e.target.name] = e.target.value;
+                    const contentDiv = document.getElementById('dashboard-content');
+                    if (contentDiv) {
+                        contentDiv.innerHTML = renderDashboardContent();
+                    }
+                });
             });
+
             document.getElementById('clear-dashboard-filters-btn').addEventListener('click', handleClearDashboardFilters);
             document.getElementById('refresh-dashboard-btn').addEventListener('click', () => renderApp());
             document.getElementById('export-excel-btn').addEventListener('click', handleExportToExcel);
-            document.getElementById('dashboard-table-body')?.addEventListener('click', e => {
-                const button = e.target.closest('button');
-                if (!button) return;
-                const action = button.dataset.action;
-                const id = button.dataset.id;
-                if (!action || !id) return;
-
-                if (action === 'delete-fuel-record') {
-                    handleDeleteFuelRecord(id);
-                } else if (action === 'edit-fuel-record') {
-                    handleEditFuelRecord(id);
-                }
-            });
         }
         
         function handleClearDashboardFilters() {
@@ -1095,9 +1187,7 @@
         }
         
         function handleDeleteFuelRecord(id) {
-            if (confirm('คุณแน่ใจหรือไม่ว่าต้องการลบรายการนี้?')) {
-                logisticsService.deleteFuelRecord(id);
-            }
+             logisticsService.deleteFuelRecord(id);
         }
         
         function handleEditFuelRecord(id) {
@@ -1109,7 +1199,6 @@
         }
 
         function attachFuelRecordEditFormListeners() {
-            document.getElementById('fuel-record-edit-form').addEventListener('submit', handleFuelRecordUpdateSubmit);
             document.getElementById('add-edit-distribution-btn').addEventListener('click', handleAddEditDistributionRow);
             document.getElementById('edit-distribution-list').addEventListener('click', (e) => {
                  if(e.target.closest('[data-action="remove-distribution"]')) {
@@ -1143,21 +1232,19 @@
             e.preventDefault();
             const form = e.target;
             const recordId = form.querySelector('[name="id"]').value;
-            
-            const originalRecord = logisticsService.getFuelRecords().find(r => r.id === recordId);
-            if (!originalRecord) return;
 
+            // Build a fresh object to prevent carrying over stale data from the original record.
             const updatedData = {
-                ...originalRecord,
                 id: recordId,
                 date: form.querySelector('[name="date"]').value,
                 vehicleRegistration: form.querySelector('[name="vehicleRegistration"]').value,
                 vehicleType: form.querySelector('[name="vehicleType"]').value,
                 origin: form.querySelector('[name="origin"]').value,
                 destination: form.querySelector('[name="destination"]').value,
+                unit: form.querySelector('[name="unit"]').value,
                 notes: form.querySelector('[name="notes"]').value,
                 fuelDistribution: {},
-                fuelAmount: 0
+                fuelAmount: 0,
             };
             
             const distributionRows = form.querySelectorAll('.distribution-row');
@@ -1205,7 +1292,8 @@
                     'ประเภทรถ': record.vehicleType,
                     'ต้นทาง': record.origin,
                     'ปลายทาง': record.destination,
-                    'ปริมาณน้ำมันรวม (ลิตร)': record.fuelAmount,
+                    'ปริมาณรวม': record.fuelAmount,
+                    'หน่วย': record.unit === 'Baht' ? 'บาท' : 'ลิตร',
                     'หมายเหตุ': record.notes,
                 };
                 orderedStationKeys.forEach(stationKey => {
@@ -1218,7 +1306,7 @@
             const worksheet = XLSX.utils.json_to_sheet(dataForExport);
             const workbook = XLSX.utils.book_new();
             XLSX.utils.book_append_sheet(workbook, worksheet, 'Fuel Records');
-            worksheet['!cols'] = [ {wch:12}, {wch:15}, {wch:18}, {wch:20}, {wch:20}, {wch:20}, {wch:30}, ...orderedStationKeys.map(() => ({wch: 25})) ];
+            worksheet['!cols'] = [ {wch:12}, {wch:15}, {wch:18}, {wch:20}, {wch:20}, {wch:15}, {wch:10}, {wch:30}, ...orderedStationKeys.map(() => ({wch: 25})) ];
             XLSX.writeFile(workbook, `FuelReport_${new Date().toISOString().split('T')[0]}.xlsx`);
         }
         
@@ -1226,7 +1314,10 @@
         function attachDataManagementListeners() {
             document.getElementById('data-management-filter').addEventListener('input', e => {
                 appState.dataManagementFilter = e.target.value;
-                renderApp();
+                 const contentDiv = document.getElementById('data-management-content');
+                if (contentDiv) {
+                    contentDiv.innerHTML = renderDataManagementContent();
+                }
             });
              document.getElementById('refresh-routes-btn').addEventListener('click', () => renderApp());
             document.getElementById('add-new-route-btn').addEventListener('click', () => {
@@ -1234,29 +1325,9 @@
                 openModal('เพิ่มเส้นทางใหม่', renderRouteFormContent(null));
                 attachRouteFormListeners();
             });
-            document.getElementById('routes-table-body').addEventListener('click', e => {
-                const button = e.target.closest('button');
-                if (!button) return;
-                const action = button.dataset.action;
-                const id = button.dataset.id;
-                if (!action || !id) return;
-
-                if (action === 'edit-route') {
-                    const route = logisticsService.getRoutes().find(r => r.id === id);
-                    appState.editingRoute = route;
-                    openModal('แก้ไขข้อมูลเส้นทาง', renderRouteFormContent(route));
-                    attachRouteFormListeners();
-                }
-                if (action === 'delete-route') {
-                    if (confirm('คุณแน่ใจหรือไม่ว่าต้องการลบเส้นทางนี้?')) {
-                        logisticsService.deleteRoute(id);
-                    }
-                }
-            });
         }
         
         function attachRouteFormListeners() {
-            document.getElementById('route-form').addEventListener('submit', handleRouteFormSubmit);
             document.getElementById('add-route-distribution-btn').addEventListener('click', handleAddRouteDistributionRow);
             document.getElementById('route-distribution-list').addEventListener('click', (e) => {
                  if(e.target.closest('[data-action="remove-distribution"]')) {
@@ -1291,9 +1362,10 @@
             const form = e.target;
             const routeData = {
                 id: form.querySelector('[name="id"]').value,
-                vehicleType: form.querySelector('[name="vehicleType"]').value,
-                origin: form.querySelector('[name="origin"]').value,
-                destination: form.querySelector('[name="destination"]').value,
+                vehicleType: form.querySelector('[name="vehicleType"]').value.trim(),
+                origin: form.querySelector('[name="origin"]').value.trim(),
+                destination: form.querySelector('[name="destination"]').value.trim(),
+                unit: form.querySelector('[name="unit"]').value,
                 gasStations: {},
                 totalFuel: 0
             };
@@ -1321,7 +1393,10 @@
         function attachVehicleManagementListeners() {
              document.getElementById('vehicle-management-filter').addEventListener('input', e => {
                 appState.vehicleManagementFilter = e.target.value;
-                renderApp();
+                const contentDiv = document.getElementById('vehicle-management-content');
+                if (contentDiv) {
+                    contentDiv.innerHTML = renderVehicleManagementContent();
+                }
             });
             document.getElementById('refresh-vehicles-btn').addEventListener('click', () => renderApp());
             document.getElementById('add-new-vehicle-btn').addEventListener('click', () => {
@@ -1329,29 +1404,10 @@
                 openModal('เพิ่มทะเบียนรถใหม่', renderVehicleFormContent(null));
                 attachVehicleFormListeners();
             });
-            document.getElementById('vehicles-table-body').addEventListener('click', e => {
-                const button = e.target.closest('button');
-                if (!button) return;
-                const action = button.dataset.action;
-                const id = button.dataset.id;
-                if (!action || !id) return;
-
-                if (action === 'edit-vehicle') {
-                    const vehicle = logisticsService.getVehicles().find(v => v.id === id);
-                    appState.editingVehicle = vehicle;
-                    openModal('แก้ไขข้อมูลทะเบียนรถ', renderVehicleFormContent(vehicle));
-                    attachVehicleFormListeners();
-                }
-                if (action === 'delete-vehicle') {
-                    if (confirm('คุณแน่ใจหรือไม่ว่าต้องการลบทะเบียนรถนี้?')) {
-                        logisticsService.deleteVehicle(id);
-                    }
-                }
-            });
         }
         
         function attachVehicleFormListeners() {
-            document.getElementById('vehicle-form').addEventListener('submit', handleVehicleFormSubmit);
+            // Submission is handled by the centralized listener
         }
 
         function handleVehicleFormSubmit(e) {
@@ -1383,13 +1439,74 @@
         document.addEventListener('DOMContentLoaded', () => {
             logisticsService.initialize();
             renderApp();
+            
+            // --- Centralized Event Listener for Clicks ---
+            document.body.addEventListener('click', (e) => {
+                const button = e.target.closest('button[data-action]');
+                if (!button) return;
+
+                const { action, id } = button.dataset;
+                if (!action) return;
+
+                const confirmDelete = (type, callback) => {
+                    if (confirm(`คุณแน่ใจหรือไม่ว่าต้องการลบ${type}นี้?`)) {
+                        callback();
+                    }
+                };
+
+                // Handle actions on dynamic content (table rows)
+                switch (action) {
+                    case 'edit-fuel-record':
+                        handleEditFuelRecord(id);
+                        break;
+                    case 'delete-fuel-record':
+                        confirmDelete('รายการ', () => handleDeleteFuelRecord(id));
+                        break;
+                    case 'edit-route':
+                        const route = logisticsService.getRoutes().find(r => r.id === id);
+                        appState.editingRoute = route;
+                        openModal('แก้ไขข้อมูลเส้นทาง', renderRouteFormContent(route));
+                        attachRouteFormListeners();
+                        break;
+                    case 'delete-route':
+                        confirmDelete('เส้นทาง', () => logisticsService.deleteRoute(id));
+                        break;
+                    case 'edit-vehicle':
+                        const vehicle = logisticsService.getVehicles().find(v => v.id === id);
+                        appState.editingVehicle = vehicle;
+                        openModal('แก้ไขข้อมูลทะเบียนรถ', renderVehicleFormContent(vehicle));
+                        attachVehicleFormListeners();
+                        break;
+                    case 'delete-vehicle':
+                        confirmDelete('ทะเบียนรถ', () => logisticsService.deleteVehicle(id));
+                        break;
+                }
+            });
+            
+            // --- Centralized Event Listener for Submissions ---
             document.body.addEventListener('submit', (e) => {
-                if (e.target.id === 'auth-form') handleAuthSubmit(e);
+                const formId = e.target.id;
+                switch (formId) {
+                    case 'auth-form':
+                        handleAuthSubmit(e);
+                        break;
+                    case 'fuel-record-form':
+                        handleFuelFormSubmit(e);
+                        break;
+                    case 'fuel-record-edit-form':
+                        handleFuelRecordUpdateSubmit(e);
+                        break;
+                    case 'route-form':
+                        handleRouteFormSubmit(e);
+                        break;
+                    case 'vehicle-form':
+                        handleVehicleFormSubmit(e);
+                        break;
+                }
             });
         });
 
         // --- END OF SCRIPT ---
     </script>
-<script type="module" src="/index.tsx"></script>
 </body>
 </html>
