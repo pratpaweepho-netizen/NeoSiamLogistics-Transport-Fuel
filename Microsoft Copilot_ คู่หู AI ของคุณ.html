@@ -1,0 +1,1508 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ระบบติดตามน้ำมันโลจิสติกส์</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        'primary': '#0284c7', // sky-600
+                        'secondary': '#0369a1', // sky-700
+                        'accent': '#f97316', // orange-500
+                        'neutral': '#374151', // gray-700
+                        'base-100': '#1f2937', // gray-800
+                        'info': '#0ea5e9', // sky-500
+                        'success': '#22c55e', // green-500
+                        'warning': '#eab308', // yellow-500
+                        'error': '#ef4444', // red-500
+                    }
+                }
+            }
+        }
+    </script>
+    <!-- Firebase -->
+    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+    <!-- XLSX for Excel Export -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+</head>
+<body class="bg-base-100 text-gray-300 font-sans">
+    <div id="app-container">
+        <!-- App will be rendered here -->
+    </div>
+
+    <script>
+        // --- START OF SCRIPT ---
+
+        // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        // 1. CONSTANTS & CONFIGURATION
+        // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        
+        const GAS_STATION_KEYS = [
+            'nissan_singburi',
+            'jittamas_bangpain',
+            'srinakorn_klongklung',
+            'daopaisan_nakhonsawan',
+            'ekawitat_nonthaburi',
+            'daourai_sai3',
+            'tekyong_chonburi',
+            'rungpattana_wangnoi',
+        ];
+
+        const GAS_STATION_FRIENDLY_NAMES = {
+            'nissan_singburi': 'นิสสัน (สิงห์บุรี)',
+            'jittamas_bangpain': 'จิตตมาศ (บางประอิน)',
+            'srinakorn_klongklung': 'ศรีนคร (คลองขลุง)',
+            'daopaisan_nakhonsawan': 'ดาวไพศาล (นครสวรรค์)',
+            'ekawitat_nonthaburi': 'เอกวิทัศน์ (นนทบุรี)',
+            'daourai_sai3': 'ดาวอุไร (สาย 3)',
+            'tekyong_chonburi': 'เต็กย้งทวีโชค (ชลบุรี)',
+            'rungpattana_wangnoi': 'รุ่งพัฒนาดี (วังน้อย)',
+        };
+
+        const firebaseConfig = {
+          apiKey: "AIzaSyDnlm_o9uJQ-uYI4Nv0w-Apmz1d3JQxCQw",
+          authDomain: "fleet-fuel-management-system.firebaseapp.com",
+          databaseURL: "https://fleet-fuel-management-system-default-rtdb.asia-southeast1.firebasedatabase.app",
+          projectId: "fleet-fuel-management-system",
+          storageBucket: "fleet-fuel-management-system.appspot.com",
+          messagingSenderId: "870197166069",
+          appId: "1:870197166069:web:e97f0a6fadb034ae912abc"
+        };
+        
+        const ICONS = {
+            Truck: `<svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" viewBox="0 0 24 24" fill="#eab308" stroke="#eab308" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22a7 7 0 0 0 7-7c0-2-1-3.9-3-5.5s-3.5-4-4-6.5c-.5 2.5-2 4.9-4 6.5C6 11.1 5 13 5 15a7 7 0 0 0 7 7z"></path></svg>`,
+            ChartBar: `<svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"></path><path d="M18 17V9"></path><path d="M13 17V5"></path><path d="M8 17v-3"></path></svg>`,
+            Database: `<svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"></ellipse><path d="M3 5V19A9 3 0 0 0 21 19V5"></path><path d="M3 12A9 3 0 0 0 21 12"></path></svg>`,
+            IdCard: `<svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 10.5V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v12c0 1.1.9 2 2 2h12.5"></path><path d="M16 19h6"></path><path d="M19 16v6"></path><path d="M6 11h4"></path><path d="M6 15h2"></path><path d="M10 15h2"></path></svg>`,
+            DocumentAdd: `<svg xmlns="http://www.w3.org/2000/svg" class="w-7 h-7 text-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 13h6m-3-3v6m5 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>`,
+            Trash: `<svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>`,
+            Pencil: `<svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.5L15.232 5.232z" /></svg>`,
+            Plus: `<svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" /></svg>`,
+            Download: `<svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>`,
+            Refresh: `<svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h5m-5-5a9 9 0 0115.54 5.54M20 20v-5h-5m5 5a9 9 0 01-15.54-5.54" /></svg>`,
+            Clear: `<svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>`,
+        };
+
+        // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        // 2. APPLICATION STATE
+        // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        
+        let appState = {
+            view: 'form', // 'form', 'dashboard', 'data', 'vehicles'
+            isAuthenticated: false,
+            routes: [],
+            fuelRecords: [],
+            vehicles: [],
+            // Form-specific state
+            fuelForm: {
+                distribution: []
+            },
+            // Dashboard-specific state
+            dashboardFilters: {
+                vehicleRegistration: '',
+                dateFrom: '',
+                dateTo: '',
+            },
+            // Data Management-specific state
+            dataManagementFilter: '',
+            vehicleManagementFilter: '',
+            editingRoute: null,
+            editingFuelRecord: null,
+            editingVehicle: null,
+        };
+
+        // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        // 3. SERVICE LAYER (Data Handling & Firebase)
+        // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        
+        let database;
+
+        const logisticsService = {
+            initialize: () => {
+                firebase.initializeApp(firebaseConfig);
+                database = firebase.database();
+                logisticsService.listenToData();
+            },
+
+            listenToData: () => {
+                const routesRef = database.ref('routes');
+                const fuelRecordsRef = database.ref('fuelRecords');
+                const vehiclesRef = database.ref('vehicles');
+
+                routesRef.on('value', (snapshot) => {
+                    const data = snapshot.val();
+                    appState.routes = data ? Object.entries(data).map(([id, value]) => ({
+                        id,
+                        ...value,
+                        gasStations: (value.gasStations && typeof value.gasStations === 'object') ? value.gasStations : {}
+                    })) : [];
+                    if(['data', 'form'].includes(appState.view)) renderApp();
+                });
+
+                fuelRecordsRef.on('value', (snapshot) => {
+                    const data = snapshot.val();
+                    appState.fuelRecords = data ? Object.entries(data).map(([id, value]) => ({
+                        id,
+                        ...value,
+                        fuelDistribution: (value.fuelDistribution && typeof value.fuelDistribution === 'object') ? value.fuelDistribution : {},
+                        matchedRoute: value.matchedRoute,
+                    })).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()) : [];
+                    if(appState.view === 'dashboard') renderApp();
+                });
+
+                vehiclesRef.on('value', (snapshot) => {
+                    const data = snapshot.val();
+                    appState.vehicles = data ? Object.entries(data).map(([id, value]) => ({ id, ...value })) : [];
+                    if(['vehicles', 'form'].includes(appState.view)) renderApp();
+                });
+            },
+
+            addRoute: (routeData) => database.ref('routes').push(routeData),
+            updateRoute: (updatedRoute) => {
+                const { id, ...data } = updatedRoute;
+                database.ref(`routes/${id}`).set(data);
+            },
+            deleteRoute: (routeId) => database.ref(`routes/${routeId}`).remove().catch(error => {
+                console.error("Error deleting route:", error);
+                alert("เกิดข้อผิดพลาดในการลบข้อมูลเส้นทาง: " + error.message);
+            }),
+            
+            addFuelRecord: (record) => database.ref('fuelRecords').push(record),
+            updateFuelRecord: (updatedRecord) => {
+                const { id, ...data } = updatedRecord;
+                database.ref(`fuelRecords/${id}`).set(data);
+            },
+            deleteFuelRecord: (recordId) => database.ref(`fuelRecords/${recordId}`).remove().catch(error => {
+                console.error("Error deleting fuel record:", error);
+                alert("เกิดข้อผิดพลาดในการลบข้อมูล: " + error.message);
+            }),
+
+            addVehicle: (vehicleData) => database.ref('vehicles').push(vehicleData),
+            updateVehicle: (updatedVehicle) => {
+                const { id, ...data } = updatedVehicle;
+                database.ref(`vehicles/${id}`).set(data);
+            },
+            deleteVehicle: (vehicleId) => database.ref(`vehicles/${vehicleId}`).remove().catch(error => {
+                console.error("Error deleting vehicle:", error);
+                alert("เกิดข้อผิดพลาดในการลบข้อมูล: " + error.message);
+            }),
+
+            getRoutes: () => [...appState.routes],
+            getFuelRecords: () => [...appState.fuelRecords],
+            getVehicles: () => [...appState.vehicles],
+            
+            getUniqueValues: (key) => {
+                const values = appState.routes.map(route => route[key]);
+                const validStrings = values.filter(v => typeof v === 'string' && v);
+                return [...new Set(validStrings)].sort((a,b) => a.localeCompare(b, 'th'));
+            },
+
+            getVehicleRegistrations: () => {
+                return [...new Set(appState.vehicles.map(v => v.registrationNumber))].sort();
+            },
+            
+            findMatchingRoute: (vehicleType, origin, destination) => {
+                 if (!vehicleType || !origin || !destination) return null;
+                const vt = vehicleType.trim();
+                const o = origin.trim();
+                const d = destination.trim();
+                return appState.routes.find(route => 
+                    (route.vehicleType || '').trim() === vt && 
+                    (route.origin || '').trim() === o && 
+                    (route.destination || '').trim() === d
+                ) || null;
+            },
+
+            getFriendlyGasStationName: (key) => GAS_STATION_FRIENDLY_NAMES[key] || key,
+            getAllGasStationFriendlyNames: () => GAS_STATION_FRIENDLY_NAMES,
+            getAllGasStationKeys: () => GAS_STATION_KEYS,
+        };
+
+
+        // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        // 4. RENDER FUNCTIONS (UI Generation)
+        // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        
+        const renderApp = () => {
+            const appContainer = document.getElementById('app-container');
+            let viewHtml = '';
+            if (appState.view === 'form') viewHtml = renderFuelRecordForm();
+            if (appState.view === 'dashboard') viewHtml = renderDashboard();
+            if (appState.view === 'data') viewHtml = renderDataManagement();
+            if (appState.view === 'vehicles') viewHtml = renderVehicleManagement();
+
+            appContainer.innerHTML = `
+                ${renderHeader()}
+                <main class="container mx-auto px-6 py-8">
+                    ${viewHtml}
+                </main>
+                <footer class="text-center py-4 text-gray-500 text-sm">
+                    <p>NeoSiamLogistics & Transport Fuel Management © 2024</p>
+                </footer>
+                ${renderModal()}
+                ${renderAuthModal()}
+            `;
+            attachEventListeners();
+        };
+
+        const renderHeader = () => {
+            const navButton = (targetView, icon, text) => `
+                <button
+                    data-view="${targetView}"
+                    class="nav-button flex items-center gap-2 px-4 py-2 rounded-md transition-colors duration-200 ${
+                        appState.view === targetView
+                            ? 'bg-accent text-white font-semibold shadow-lg'
+                            : 'bg-neutral/60 hover:bg-neutral text-gray-300'
+                    }"
+                >
+                    ${icon}
+                    <span class="hidden sm:inline">${text}</span>
+                </button>
+            `;
+
+            return `
+                <header class="bg-neutral shadow-lg sticky top-0 z-30">
+                    <nav class="container mx-auto px-6 py-3 flex justify-between items-center">
+                        <div class="flex items-center gap-3">
+                            <div class="bg-gray-200 p-2 rounded-full">
+                               <svg xmlns="http://www.w3.org/2000/svg" class="w-8 h-8" viewBox="0 0 24 24" fill="#0369a1"><path d="M12 22a7 7 0 0 0 7-7c0-2-1-3.9-3-5.5s-3.5-4-4-6.5c-.5 2.5-2 4.9-4 6.5C6 11.1 5 13 5 15a7 7 0 0 0 7 7z"></path></svg>
+                            </div>
+                            <h1 class="text-xl sm:text-2xl font-bold text-white tracking-wider">NeoSiamLogistics & Transport Fuel</h1>
+                        </div>
+                        <div class="flex items-center gap-2 sm:gap-4">
+                            ${navButton('form', ICONS.Truck, 'บันทึกน้ำมัน')}
+                            ${navButton('dashboard', ICONS.ChartBar, 'แดชบอร์ด')}
+                            ${navButton('vehicles', ICONS.IdCard, 'จัดการทะเบียนรถ')}
+                            ${navButton('data', ICONS.Database, 'จัดการเส้นทาง')}
+                        </div>
+                    </nav>
+                </header>
+            `;
+        };
+
+        const renderCard = (content, className = '') => `<div class="bg-neutral rounded-xl shadow-lg p-6 ${className}">${content}</div>`;
+
+        const renderAutocomplete = (id, label, placeholder, options) => {
+            return `
+                <div class="relative autocomplete-container" data-id="${id}">
+                    <label class="block text-sm font-medium text-gray-400 mb-1">${label}</label>
+                    <input
+                        type="text"
+                        id="${id}"
+                        placeholder="${placeholder}"
+                        autocomplete="off"
+                        class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent"
+                    />
+                    <div id="${id}-suggestions" class="hidden absolute z-20 w-full mt-1 bg-slate-800 border border-slate-600 rounded-md shadow-lg max-h-60 overflow-y-auto"></div>
+                </div>
+            `;
+        };
+
+        // --- View: Fuel Record Form ---
+        const renderFuelRecordForm = () => {
+            return `
+                <div class="max-w-4xl mx-auto grid grid-cols-1 md:grid-cols-3 gap-8">
+                    <div class="md:col-span-2">
+                        ${renderCard(`
+                            <h2 class="text-2xl font-bold text-white mb-6 border-b border-slate-600 pb-2 flex items-center gap-2">
+                                ${ICONS.DocumentAdd} บันทึกรายการน้ำมันใหม่
+                            </h2>
+                            <form id="fuel-record-form" class="space-y-4">
+                                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                    <div>
+                                        <label class="block text-sm font-medium text-gray-400 mb-1">วันที่</label>
+                                        <input type="date" id="form-date" value="${new Date().toISOString().split('T')[0]}" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent" />
+                                    </div>
+                                    ${renderAutocomplete('form-vehicle-registration', 'ทะเบียนรถ', 'ค้นหาทะเบียนรถ', logisticsService.getVehicleRegistrations())}
+                                </div>
+                                ${renderAutocomplete('form-vehicle-type', 'ประเภทรถ', 'ค้นหาประเภทรถ', logisticsService.getUniqueValues('vehicleType'))}
+                                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                    ${renderAutocomplete('form-origin', 'ต้นทาง', 'ค้นหาต้นทาง', logisticsService.getUniqueValues('origin'))}
+                                    ${renderAutocomplete('form-destination', 'ปลายทาง', 'ค้นหาปลายทาง', logisticsService.getUniqueValues('destination'))}
+                                </div>
+
+                                <div class="space-y-4 rounded-lg border border-slate-600 p-4">
+                                    <h3 class="font-semibold text-lg text-white">การกระจายน้ำมัน</h3>
+                                    <div id="distribution-list"></div>
+                                    <button type="button" id="add-distribution-btn" class="w-full border-2 border-dashed border-slate-500 hover:bg-slate-700/50 text-gray-300 font-semibold py-2 px-4 rounded-lg transition">+ เพิ่มจุดเติมน้ำมัน</button>
+                                </div>
+                                
+                                <div class="grid grid-cols-2 gap-4">
+                                    <div>
+                                        <label class="block text-sm font-medium text-gray-400 mb-1">หน่วย</label>
+                                        <select id="form-fuel-unit" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent">
+                                            <option value="Liters">ลิตร</option>
+                                            <option value="Baht">บาท</option>
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label class="block text-sm font-medium text-gray-400 mb-1">ปริมาณรวม</label>
+                                        <input type="number" id="form-fuel-amount" placeholder="คำนวณอัตโนมัติ" readonly class="w-full bg-slate-900 cursor-not-allowed border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent" />
+                                    </div>
+                                </div>
+
+                                <div>
+                                   <label class="block text-sm font-medium text-gray-400 mb-1">หมายเหตุ</label>
+                                   <textarea id="form-notes" placeholder="หมายเหตุเพิ่มเติมเกี่ยวกับการเดินทาง" rows="3" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent"></textarea>
+                                </div>
+                                <div class="flex justify-end pt-4 gap-4">
+                                    <button type="button" id="reset-fuel-form-btn" class="bg-slate-600 hover:bg-slate-500 text-white font-bold py-2 px-6 rounded-lg shadow-md transition-transform transform hover:scale-105">ล้างข้อมูล</button>
+                                    <button type="submit" class="bg-primary hover:bg-secondary text-white font-bold py-2 px-6 rounded-lg shadow-md transition-transform transform hover:scale-105">บันทึกรายการ</button>
+                                </div>
+                                <div id="form-status" class="mt-4"></div>
+                            </form>
+                        `)}
+                    </div>
+                    <div class="md:col-span-1">
+                        ${renderCard('<div id="vlookup-card-content"></div>', 'sticky top-28')}
+                    </div>
+                </div>
+            `;
+        };
+
+        const renderDashboardContent = () => {
+             const filters = appState.dashboardFilters;
+             const records = logisticsService.getFuelRecords();
+
+             const filteredRecords = records.filter(record => {
+                const recordDate = new Date(record.date);
+                const dateFrom = filters.dateFrom ? new Date(filters.dateFrom) : null;
+                const dateTo = filters.dateTo ? new Date(filters.dateTo) : null;
+
+                if (filters.vehicleRegistration && !(record.vehicleRegistration || '').toUpperCase().includes(filters.vehicleRegistration.toUpperCase())) return false;
+                if (dateFrom && recordDate < dateFrom) return false;
+                if (dateTo && recordDate > dateTo) return false;
+                return true;
+            });
+            
+            const totalFuelLiters = filteredRecords
+                .filter(r => r.unit !== 'Baht') // Default to Liters if unit is missing
+                .reduce((sum, record) => sum + (record.fuelAmount || 0), 0);
+            const totalFuelBaht = filteredRecords
+                .filter(r => r.unit === 'Baht')
+                .reduce((sum, record) => sum + (record.fuelAmount || 0), 0);
+
+            const latestRecordsTableRows = filteredRecords.map(record => `
+                <tr class="border-b border-slate-600 hover:bg-slate-700/20">
+                    <td class="p-3">${record.date}</td>
+                    <td class="p-3 font-mono">${record.vehicleRegistration}</td>
+                    <td class="p-3">${record.vehicleType}</td>
+                    <td class="p-3">${record.origin} → ${record.destination}</td>
+                    <td class="p-3 text-right font-semibold text-accent">${(record.fuelAmount || 0).toLocaleString()} ${record.unit === 'Baht' ? 'บาท' : 'ลิตร'}</td>
+                    <td class="p-3 text-center">
+                        <div class="flex justify-center gap-2">
+                            <button data-action="edit-fuel-record" data-id="${record.id}" class="text-blue-400 hover:text-blue-300 p-2 rounded-full transition-colors">${ICONS.Pencil}</button>
+                            <button data-action="delete-fuel-record" data-id="${record.id}" class="text-red-500 hover:text-red-400 p-2 rounded-full transition-colors">${ICONS.Trash}</button>
+                        </div>
+                    </td>
+                </tr>
+            `).join('');
+
+            const stationKeys = logisticsService.getAllGasStationKeys();
+            const friendlyNames = logisticsService.getAllGasStationFriendlyNames();
+
+            const stationTablesHtml = stationKeys.map(key => {
+                const stationRecords = filteredRecords.filter(record => record.fuelDistribution?.[key] > 0);
+                
+                const tableRows = stationRecords.map(record => {
+                    const amount = record.fuelDistribution[key];
+                    const unitSuffix = record.unit === 'Baht' ? ' บาท' : ' ลิตร';
+                    return `
+                        <tr class="border-b border-slate-600 hover:bg-slate-700/20">
+                            <td class="p-3 whitespace-nowrap">${record.date}</td>
+                            <td class="p-3 font-mono whitespace-nowrap">${record.vehicleRegistration}</td>
+                            <td class="p-3 whitespace-nowrap">${record.vehicleType}</td>
+                            <td class="p-3 whitespace-nowrap">${record.origin} → ${record.destination}</td>
+                            <td class="p-3 text-right font-semibold text-accent whitespace-nowrap">${(amount || 0).toLocaleString()}${unitSuffix}</td>
+                        </tr>
+                    `;
+                }).join('');
+
+                return renderCard(`
+                    <h3 class="text-xl font-bold mb-4 flex items-center gap-2">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="w-6 h-6 text-accent" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 11h1.5a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2h-1.5a2 2 0 0 1-2-2v-2a1 1 0 0 0-1-1h-2a1 1 0 0 0-1 1v2a2 2 0 0 1-2 2H5.5a2 2 0 0 1-2-2v-6a2 2 0 0 1 2-2H7"></path><path d="M14 11V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v7"></path><path d="M4 15h5"></path><path d="M15 4h2"></path></svg>
+                        <span>${friendlyNames[key] || key}</span>
+                    </h3>
+                    <div class="overflow-x-auto max-h-[300px]">
+                        <table class="w-full text-left table-auto">
+                            <thead class="bg-slate-800 text-sm text-gray-400 uppercase sticky top-0 z-10">
+                                <tr>
+                                    <th class="p-3 whitespace-nowrap">วันที่</th>
+                                    <th class="p-3 whitespace-nowrap">ทะเบียน</th>
+                                    <th class="p-3 whitespace-nowrap">ประเภท</th>
+                                    <th class="p-3 whitespace-nowrap">เส้นทาง</th>
+                                    <th class="p-3 text-right whitespace-nowrap">ปริมาณ</th>
+                                </tr>
+                            </thead>
+                            <tbody class="text-sm">
+                                ${stationRecords.length > 0 ? tableRows : `<tr><td colspan="5" class="text-center py-8 text-gray-500">ไม่มีข้อมูลการเติมน้ำมัน</td></tr>`}
+                            </tbody>
+                        </table>
+                    </div>
+                `);
+            }).join('');
+            
+            const exportBtn = document.getElementById('export-excel-btn');
+            if (exportBtn) {
+                 exportBtn.disabled = filteredRecords.length === 0;
+            }
+
+            return `
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                    ${renderCard(`<h3 class="text-lg text-gray-400">จำนวนรายการทั้งหมด</h3><p class="text-4xl font-bold text-accent">${(filteredRecords.length || 0).toLocaleString()}</p>`, 'text-center')}
+                    ${renderCard(`<h3 class="text-lg text-gray-400">ปริมาณน้ำมันทั้งหมด</h3><p class="text-4xl font-bold text-accent">${(totalFuelLiters || 0).toLocaleString()} <span class="text-2xl">ลิตร</span></p>`, 'text-center')}
+                    ${renderCard(`<h3 class="text-lg text-gray-400">ค่าใช้จ่ายน้ำมันทั้งหมด</h3><p class="text-4xl font-bold text-accent">${(totalFuelBaht || 0).toLocaleString()}<span class="text-2xl"> บาท</span></p>`, 'text-center')}
+                </div>
+
+                <div class="space-y-6">
+                    <h2 class="text-2xl font-bold text-white mt-8 border-b border-slate-600 pb-2">สรุปยอดเติมน้ำมันรายปั๊ม</h2>
+                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                        ${stationTablesHtml}
+                    </div>
+                </div>
+                
+                ${renderCard(`
+                    <h3 class="text-xl font-bold mb-4">รายการน้ำมันล่าสุดทั้งหมด</h3>
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-left">
+                            <thead class="bg-slate-800 text-sm text-gray-400 uppercase">
+                                <tr>
+                                    <th class="p-3">วันที่</th><th class="p-3">ทะเบียน</th><th class="p-3">ประเภท</th><th class="p-3">เส้นทาง</th><th class="p-3 text-right">ปริมาณรวม</th><th class="p-3 text-center">จัดการ</th>
+                                </tr>
+                            </thead>
+                            <tbody id="dashboard-table-body">${latestRecordsTableRows}</tbody>
+                        </table>
+                        ${filteredRecords.length === 0 ? '<p class="text-center py-8 text-gray-500">ไม่พบรายการที่ตรงกัน</p>' : ''}
+                    </div>
+                `)}
+            `;
+        }
+
+
+        // --- View: Dashboard ---
+        const renderDashboard = () => {
+             const filters = appState.dashboardFilters;
+             const records = logisticsService.getFuelRecords();
+
+             const filteredRecords = records.filter(record => {
+                const recordDate = new Date(record.date);
+                const dateFrom = filters.dateFrom ? new Date(filters.dateFrom) : null;
+                const dateTo = filters.dateTo ? new Date(filters.dateTo) : null;
+
+                if (filters.vehicleRegistration && !(record.vehicleRegistration || '').toUpperCase().includes(filters.vehicleRegistration.toUpperCase())) return false;
+                if (dateFrom && recordDate < dateFrom) return false;
+                if (dateTo && recordDate > dateTo) return false;
+                return true;
+            });
+
+            return `
+                <div class="space-y-8">
+                    ${renderCard(`
+                        <div class="flex flex-wrap justify-between items-center gap-4 mb-4">
+                             <h2 class="text-2xl font-bold">ตัวกรองแดชบอร์ด</h2>
+                            <div class="flex items-center gap-2">
+                                <button id="clear-dashboard-filters-btn" class="flex items-center gap-2 bg-yellow-600 hover:bg-yellow-700 text-white font-bold py-2 px-4 rounded-lg shadow-md transition-transform transform hover:scale-105">
+                                    ${ICONS.Clear} ล้างตัวกรอง
+                                </button>
+                                <button id="refresh-dashboard-btn" class="flex items-center gap-2 bg-sky-600 hover:bg-sky-700 text-white font-bold py-2 px-4 rounded-lg shadow-md transition-transform transform hover:scale-105">
+                                    ${ICONS.Refresh} รีเฟรช
+                                </button>
+                                <button id="export-excel-btn" ${filteredRecords.length === 0 ? 'disabled' : ''} class="flex items-center gap-2 bg-success hover:bg-green-600 text-white font-bold py-2 px-4 rounded-lg shadow-md transition-transform transform hover:scale-105 disabled:bg-slate-600 disabled:cursor-not-allowed disabled:transform-none">
+                                    ${ICONS.Download} Export to Excel
+                                </button>
+                            </div>
+                        </div>
+                        <div class="grid grid-cols-1 md:grid-cols-3 gap-4" id="dashboard-filters">
+                            <input name="vehicleRegistration" value="${filters.vehicleRegistration}" placeholder="กรองตามทะเบียนรถ" class="bg-slate-800 border border-slate-600 rounded-md px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent" />
+                            <input name="dateFrom" type="date" value="${filters.dateFrom}" class="bg-slate-800 border border-slate-600 rounded-md px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent" />
+                            <input name="dateTo" type="date" value="${filters.dateTo}" class="bg-slate-800 border border-slate-600 rounded-md px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent" />
+                        </div>
+                    `)}
+
+                    <div id="dashboard-content" class="space-y-8">
+                       ${renderDashboardContent()}
+                    </div>
+                </div>
+            `;
+        };
+
+        const renderDataManagementContent = () => {
+            const filter = appState.dataManagementFilter.toLowerCase();
+            const routes = logisticsService.getRoutes();
+            const filteredRoutes = filter ? routes.filter(r => 
+                (r.vehicleType || '').toLowerCase().includes(filter) ||
+                (r.origin || '').toLowerCase().includes(filter) ||
+                (r.destination || '').toLowerCase().includes(filter)
+            ) : routes;
+
+            // Sort routes for consistent display
+            filteredRoutes.sort((a, b) => {
+                const vehicleTypeCompare = (a.vehicleType || '').localeCompare(b.vehicleType || '', 'th');
+                if (vehicleTypeCompare !== 0) return vehicleTypeCompare;
+
+                const originCompare = (a.origin || '').localeCompare(b.origin || '', 'th');
+                if (originCompare !== 0) return originCompare;
+
+                return (a.destination || '').localeCompare(b.destination || '', 'th');
+            });
+
+            const tableRows = filteredRoutes.map(route => `
+                <tr key="${route.id}" class="border-b border-slate-600 hover:bg-slate-700/20">
+                    <td class="p-3">${route.vehicleType}</td>
+                    <td class="p-3">${route.origin}</td>
+                    <td class="p-3">${route.destination}</td>
+                    <td class="p-3 text-right font-semibold text-accent">${(route.totalFuel || 0).toLocaleString()} ${route.unit === 'Baht' ? 'บาท' : 'ลิตร'}</td>
+                    <td class="p-3 text-center">
+                        <div class="flex justify-center gap-2">
+                            <button data-action="edit-route" data-id="${route.id}" class="text-blue-400 hover:text-blue-300 p-2 rounded-full transition-colors">${ICONS.Pencil}</button>
+                            <button data-action="delete-route" data-id="${route.id}" class="text-red-500 hover:text-red-400 p-2 rounded-full transition-colors">${ICONS.Trash}</button>
+                        </div>
+                    </td>
+                </tr>
+            `).join('');
+
+            return renderCard(`
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left">
+                        <thead class="bg-slate-800 text-sm text-gray-400 uppercase">
+                            <tr>
+                                <th class="p-3">ประเภทรถ</th><th class="p-3">ต้นทาง</th><th class="p-3">ปลายทาง</th><th class="p-3 text-right">ปริมาณ</th><th class="p-3 text-center">จัดการ</th>
+                            </tr>
+                        </thead>
+                        <tbody id="routes-table-body">${tableRows}</tbody>
+                    </table>
+                    ${filteredRoutes.length === 0 ? '<p class="text-center py-8 text-gray-500">ไม่พบข้อมูลเส้นทาง</p>' : ''}
+                </div>
+            `);
+        };
+
+        // --- View: Data Management ---
+        const renderDataManagement = () => {
+            return `
+                <div class="space-y-8">
+                    ${renderCard(`
+                        <div class="flex flex-wrap justify-between items-center gap-4">
+                            <h2 class="text-2xl font-bold text-white flex items-center gap-3">${ICONS.Database}จัดการข้อมูลเส้นทาง</h2>
+                            <div class="flex items-center gap-4">
+                                <input type="text" id="data-management-filter" value="${appState.dataManagementFilter}" placeholder="ค้นหา..." class="w-full md:w-64 bg-slate-800 border border-slate-600 rounded-md px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent" />
+                                <button id="refresh-routes-btn" title="รีเฟรชข้อมูล" class="bg-sky-600 hover:bg-sky-700 text-white font-bold p-2 rounded-lg shadow-md transition-transform transform hover:scale-105">
+                                    ${ICONS.Refresh}
+                                </button>
+                                <button id="add-new-route-btn" class="flex items-center gap-2 bg-primary hover:bg-secondary text-white font-bold py-2 px-4 rounded-lg shadow-md transition-transform transform hover:scale-105">
+                                    ${ICONS.Plus} เพิ่มเส้นทางใหม่
+                                </button>
+                            </div>
+                        </div>
+                    `)}
+                    <div id="data-management-content">
+                        ${renderDataManagementContent()}
+                    </div>
+                </div>
+            `;
+        };
+        
+        const renderVehicleManagementContent = () => {
+            const filter = appState.vehicleManagementFilter.toLowerCase();
+            const vehicles = logisticsService.getVehicles();
+            const filteredVehicles = filter ? vehicles.filter(v => 
+                (v.registrationNumber || '').toLowerCase().includes(filter) ||
+                (v.vehicleType || '').toLowerCase().includes(filter)
+            ) : vehicles;
+
+            const tableRows = filteredVehicles.map(vehicle => `
+                <tr key="${vehicle.id}" class="border-b border-slate-600 hover:bg-slate-700/20">
+                    <td class="p-3 font-mono">${vehicle.registrationNumber}</td>
+                    <td class="p-3">${vehicle.vehicleType}</td>
+                    <td class="p-3 text-center">
+                        <div class="flex justify-center gap-2">
+                            <button data-action="edit-vehicle" data-id="${vehicle.id}" class="text-blue-400 hover:text-blue-300 p-2 rounded-full transition-colors">${ICONS.Pencil}</button>
+                            <button data-action="delete-vehicle" data-id="${vehicle.id}" class="text-red-500 hover:text-red-400 p-2 rounded-full transition-colors">${ICONS.Trash}</button>
+                        </div>
+                    </td>
+                </tr>
+            `).join('');
+
+            return renderCard(`
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left">
+                        <thead class="bg-slate-800 text-sm text-gray-400 uppercase">
+                            <tr>
+                                <th class="p-3">ทะเบียนรถ</th><th class="p-3">ประเภทรถ</th><th class="p-3 text-center">จัดการ</th>
+                            </tr>
+                        </thead>
+                        <tbody id="vehicles-table-body">${tableRows}</tbody>
+                    </table>
+                    ${filteredVehicles.length === 0 ? '<p class="text-center py-8 text-gray-500">ไม่พบข้อมูลทะเบียนรถ</p>' : ''}
+                </div>
+            `);
+        };
+
+        // --- View: Vehicle Management ---
+        const renderVehicleManagement = () => {
+            return `
+                <div class="space-y-8">
+                    ${renderCard(`
+                        <div class="flex flex-wrap justify-between items-center gap-4">
+                            <h2 class="text-2xl font-bold text-white flex items-center gap-3">${ICONS.IdCard}จัดการข้อมูลทะเบียนรถ</h2>
+                            <div class="flex items-center gap-4">
+                                <input type="text" id="vehicle-management-filter" value="${appState.vehicleManagementFilter}" placeholder="ค้นหาทะเบียน/ประเภท..." class="w-full md:w-64 bg-slate-800 border border-slate-600 rounded-md px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent" />
+                                 <button id="refresh-vehicles-btn" title="รีเฟรชข้อมูล" class="bg-sky-600 hover:bg-sky-700 text-white font-bold p-2 rounded-lg shadow-md transition-transform transform hover:scale-105">
+                                    ${ICONS.Refresh}
+                                </button>
+                                <button id="add-new-vehicle-btn" class="flex items-center gap-2 bg-primary hover:bg-secondary text-white font-bold py-2 px-4 rounded-lg shadow-md transition-transform transform hover:scale-105">
+                                    ${ICONS.Plus} เพิ่มทะเบียนใหม่
+                                </button>
+                            </div>
+                        </div>
+                    `)}
+                    <div id="vehicle-management-content">
+                        ${renderVehicleManagementContent()}
+                    </div>
+                </div>
+            `;
+        };
+
+        // --- Modals ---
+        const renderModal = () => `<div id="modal-container" class="hidden"></div>`;
+        const renderAuthModal = () => `<div id="auth-modal-container" class="hidden"></div>`;
+
+        const openModal = (title, content) => {
+            const modalContainer = document.getElementById('modal-container');
+            modalContainer.innerHTML = `
+                <div class="fixed inset-0 bg-black bg-opacity-70 z-40 flex justify-center items-center">
+                    <div class="bg-neutral rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col">
+                        <header class="flex justify-between items-center p-4 border-b border-slate-600">
+                            <h2 class="text-xl font-bold text-white">${title}</h2>
+                            <button data-action="close-modal" class="text-gray-400 hover:text-white transition-colors">
+                                <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
+                            </button>
+                        </header>
+                        <main class="p-6 overflow-y-auto">${content}</main>
+                    </div>
+                </div>
+            `;
+            modalContainer.classList.remove('hidden');
+        };
+
+        const closeModal = () => {
+             document.getElementById('modal-container').classList.add('hidden');
+             document.getElementById('auth-modal-container').classList.add('hidden');
+        };
+        
+        const openAuthModal = () => {
+             const modalContainer = document.getElementById('auth-modal-container');
+             modalContainer.innerHTML = `
+                <div class="fixed inset-0 bg-black bg-opacity-70 z-40 flex justify-center items-center">
+                    <div class="bg-neutral rounded-xl shadow-2xl w-full max-w-md">
+                        <header class="flex justify-between items-center p-4 border-b border-slate-600">
+                            <h2 class="text-xl font-bold text-white">เข้าสู่หน้าจัดการข้อมูล</h2>
+                            <button data-action="close-modal" class="text-gray-400 hover:text-white transition-colors">
+                                <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
+                            </button>
+                        </header>
+                        <main class="p-6">
+                             <form id="auth-form" class="space-y-4">
+                                <div>
+                                    <label for="password" class="block text-sm font-medium text-gray-400 mb-1">กรุณากรอกรหัสผ่านเพื่อดำเนินการต่อ</label>
+                                    <input id="password" type="password" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent" autofocus />
+                                </div>
+                                <p id="auth-error" class="text-sm text-red-400 hidden"></p>
+                                <div class="flex justify-end pt-2">
+                                    <button type="submit" class="bg-primary hover:bg-secondary text-white font-bold py-2 px-6 rounded-lg shadow-md transition-transform transform hover:scale-105">ยืนยัน</button>
+                                </div>
+                            </form>
+                        </main>
+                    </div>
+                </div>
+             `;
+             modalContainer.classList.remove('hidden');
+        }
+
+        const renderRouteFormContent = (route) => {
+             const distributionItems = route ? Object.entries(route.gasStations).map(([stationKey, amount]) => ({stationKey, amount})) : [];
+            
+             return `
+                <form id="route-form" class="space-y-6">
+                    <input type="hidden" name="id" value="${route?.id || ''}" />
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-400 mb-1">ประเภทรถ</label>
+                            <input type="text" name="vehicleType" value="${route?.vehicleType || ''}" placeholder="เช่น, 18 ล้อ" required class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent" />
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-400 mb-1">ต้นทาง</label>
+                            <input type="text" name="origin" value="${route?.origin || ''}" placeholder="เช่น, กทม" required class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent" />
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-400 mb-1">ปลายทาง</label>
+                            <input type="text" name="destination" value="${route?.destination || ''}" placeholder="เช่น, เชียงใหม่" required class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent" />
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-400 mb-1">หน่วยน้ำมัน</label>
+                            <select name="unit" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent">
+                                <option value="Liters" ${route?.unit === 'Liters' || !route?.unit ? 'selected' : ''}>ลิตร</option>
+                                <option value="Baht" ${route?.unit === 'Baht' ? 'selected' : ''}>บาท</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="space-y-4 rounded-lg border border-slate-600 p-4">
+                        <h3 class="font-semibold text-lg text-white">การกระจายน้ำมัน</h3>
+                        <div id="route-distribution-list">
+                             ${distributionItems.map((item, index) => renderRouteDistributionRow(item, index)).join('')}
+                        </div>
+                        <button type="button" id="add-route-distribution-btn" class="w-full border-2 border-dashed border-slate-500 hover:bg-slate-700/50 text-gray-300 font-semibold py-2 px-4 rounded-lg transition">+ เพิ่มจุดเติมน้ำมัน</button>
+                    </div>
+
+                    <footer class="flex justify-end gap-4 pt-4">
+                        <button type="button" data-action="close-modal" class="bg-slate-600 hover:bg-slate-500 text-white font-bold py-2 px-4 rounded-lg transition">ยกเลิก</button>
+                        <button type="submit" class="bg-primary hover:bg-secondary text-white font-bold py-2 px-6 rounded-lg transition">บันทึกข้อมูล</button>
+                    </footer>
+                </form>
+             `;
+        };
+        
+        const renderVehicleFormContent = (vehicle) => {
+            return `
+                <form id="vehicle-form" class="space-y-6">
+                    <input type="hidden" name="id" value="${vehicle?.id || ''}" />
+                    <div>
+                        <label class="block text-sm font-medium text-gray-400 mb-1">ทะเบียนรถ</label>
+                        <input type="text" name="registrationNumber" value="${vehicle?.registrationNumber || ''}" placeholder="เช่น, 70-1234" required class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent" />
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-400 mb-1">ประเภทรถ</label>
+                        <input type="text" name="vehicleType" value="${vehicle?.vehicleType || ''}" placeholder="เช่น, 18 ล้อ HINO" required class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent" />
+                    </div>
+                    <footer class="flex justify-end gap-4 pt-4">
+                        <button type="button" data-action="close-modal" class="bg-slate-600 hover:bg-slate-500 text-white font-bold py-2 px-4 rounded-lg transition">ยกเลิก</button>
+                        <button type="submit" class="bg-primary hover:bg-secondary text-white font-bold py-2 px-6 rounded-lg transition">บันทึกข้อมูล</button>
+                    </footer>
+                </form>
+            `;
+        };
+
+        const renderFuelRecordEditFormContent = (record) => {
+            const distributionItems = record.fuelDistribution ? Object.entries(record.fuelDistribution).map(([stationKey, amount]) => ({ stationKey, amount })) : [];
+             return `
+                <form id="fuel-record-edit-form" class="space-y-4">
+                    <input type="hidden" name="id" value="${record.id}" />
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-400 mb-1">วันที่</label>
+                            <input type="date" name="date" value="${record.date}" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white" />
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-400 mb-1">ทะเบียนรถ</label>
+                            <input type="text" name="vehicleRegistration" value="${record.vehicleRegistration}" placeholder="เช่น, กข-1234" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white" />
+                        </div>
+                    </div>
+                     <div>
+                        <label class="block text-sm font-medium text-gray-400 mb-1">ประเภทรถ</label>
+                        <input type="text" name="vehicleType" value="${record.vehicleType}" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white" />
+                    </div>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                         <div>
+                            <label class="block text-sm font-medium text-gray-400 mb-1">ต้นทาง</label>
+                            <input type="text" name="origin" value="${record.origin}" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white" />
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-400 mb-1">ปลายทาง</label>
+                            <input type="text" name="destination" value="${record.destination}" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white" />
+                        </div>
+                    </div>
+
+                     <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-400 mb-1">หน่วย</label>
+                            <select name="unit" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent">
+                                <option value="Liters" ${record.unit === 'Liters' || !record.unit ? 'selected' : ''}>ลิตร</option>
+                                <option value="Baht" ${record.unit === 'Baht' ? 'selected' : ''}>บาท</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="space-y-4 rounded-lg border border-slate-600 p-4">
+                        <h3 class="font-semibold text-lg text-white">การกระจายน้ำมัน</h3>
+                        <div id="edit-distribution-list">
+                            ${distributionItems.map((item, index) => renderEditDistributionRow(item, index)).join('')}
+                        </div>
+                        <button type="button" id="add-edit-distribution-btn" class="w-full border-2 border-dashed border-slate-500 hover:bg-slate-700/50 text-gray-300 font-semibold py-2 px-4 rounded-lg transition">+ เพิ่มจุดเติมน้ำมัน</button>
+                    </div>
+                    
+                    <div>
+                        <label class="block text-sm font-medium text-gray-400 mb-1">หมายเหตุ</label>
+                        <textarea name="notes" placeholder="หมายเหตุเพิ่มเติม" rows="3" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white">${record.notes || ''}</textarea>
+                    </div>
+                    <footer class="flex justify-end gap-4 pt-4">
+                        <button type="button" data-action="close-modal" class="bg-slate-600 hover:bg-slate-500 text-white font-bold py-2 px-4 rounded-lg transition">ยกเลิก</button>
+                        <button type="submit" class="bg-primary hover:bg-secondary text-white font-bold py-2 px-6 rounded-lg transition">บันทึกข้อมูล</button>
+                    </footer>
+                </form>
+             `;
+        };
+        
+        // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        // 5. EVENT LISTENERS & HANDLERS
+        // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        
+        const attachEventListeners = () => {
+            // Global listeners that are safe to re-attach or are on static elements
+            document.querySelectorAll('.nav-button').forEach(btn => btn.addEventListener('click', handleNavClick));
+            
+            const modalContainer = document.getElementById('modal-container');
+            if (modalContainer) modalContainer.addEventListener('click', handleModalClick);
+            
+            const authModalContainer = document.getElementById('auth-modal-container');
+            if(authModalContainer) authModalContainer.addEventListener('click', handleModalClick);
+
+            // View-specific listeners
+            if (appState.view === 'form') attachFormListeners();
+            if (appState.view === 'dashboard') attachDashboardListeners();
+            if (appState.view === 'data') attachDataManagementListeners();
+            if (appState.view === 'vehicles') attachVehicleManagementListeners();
+        };
+        
+        const handleNavClick = (e) => {
+            const targetView = e.currentTarget.dataset.view;
+            if (['data', 'vehicles'].includes(targetView) && !appState.isAuthenticated) {
+                appState.viewAfterAuth = targetView;
+                openAuthModal();
+                return;
+            }
+            appState.view = targetView;
+            renderApp();
+        };
+        
+        const handleModalClick = (e) => {
+            const closeButton = e.target.closest('[data-action="close-modal"]');
+            // Check if the click is on the dark overlay background itself, not on its children
+            const isBackgroundClick = e.target.classList.contains('bg-opacity-70');
+
+            if (closeButton || isBackgroundClick) {
+                const isAuthModal = e.currentTarget.id === 'auth-modal-container';
+                
+                closeModal();
+
+                // If closing the auth modal without authenticating, go back to a safe view.
+                if (isAuthModal && (closeButton || isBackgroundClick)) {
+                    appState.view = 'form';
+                    renderApp();
+                }
+            }
+        };
+        
+        const handleAuthSubmit = (e) => {
+            e.preventDefault();
+            const password = document.getElementById('password').value;
+            const errorEl = document.getElementById('auth-error');
+            if (password === 'neosiam') {
+                appState.isAuthenticated = true;
+                appState.view = appState.viewAfterAuth || 'data';
+                delete appState.viewAfterAuth;
+                closeModal();
+                renderApp();
+            } else {
+                errorEl.textContent = 'รหัสผ่านไม่ถูกต้อง';
+                errorEl.classList.remove('hidden');
+            }
+        }
+
+        // --- Form View Handlers ---
+        function attachFormListeners() {
+            document.getElementById('reset-fuel-form-btn').addEventListener('click', handleResetFuelForm);
+            document.getElementById('add-distribution-btn').addEventListener('click', handleAddDistributionRow);
+            document.getElementById('distribution-list').addEventListener('click', (e) => {
+                if(e.target.closest('[data-action="remove-distribution"]')) {
+                     const row = e.target.closest('.distribution-row');
+                     const index = parseInt(row.dataset.index, 10);
+                     appState.fuelForm.distribution.splice(index, 1);
+                     updateDistributionList();
+                     updateTotalFuel();
+                }
+            });
+            document.getElementById('distribution-list').addEventListener('input', updateTotalFuel);
+            
+            // Autocomplete and VLOOKUP listeners
+            attachAutocompleteListeners('form-vehicle-type', () => logisticsService.getUniqueValues('vehicleType'), updateVLookup);
+            attachAutocompleteListeners('form-origin', () => logisticsService.getUniqueValues('origin'), updateVLookup);
+            attachAutocompleteListeners('form-destination', () => logisticsService.getUniqueValues('destination'), updateVLookup);
+            attachAutocompleteListeners('form-vehicle-registration', logisticsService.getVehicleRegistrations, (value) => {
+                const vehicle = appState.vehicles.find(v => v.registrationNumber === value);
+                if(vehicle) {
+                    document.getElementById('form-vehicle-type').value = vehicle.vehicleType;
+                }
+                updateVLookup();
+            });
+
+            // Initial render
+            updateVLookup();
+            updateDistributionList();
+        }
+
+        function attachAutocompleteListeners(id, optionsFn, onSelect) {
+            const input = document.getElementById(id);
+            if (!input) return;
+
+            const suggestionsContainer = document.getElementById(`${id}-suggestions`);
+            const container = input.closest('.autocomplete-container');
+
+            const updateSuggestions = () => {
+                const value = input.value.toLowerCase();
+                const options = optionsFn();
+                const filteredOptions = options.filter(opt => opt.toLowerCase().includes(value));
+                
+                if (filteredOptions.length > 0 && document.activeElement === input) {
+                    suggestionsContainer.innerHTML = filteredOptions.map(opt => `<div class="px-3 py-2 cursor-pointer text-white hover:bg-accent" data-value="${opt}">${opt}</div>`).join('');
+                    suggestionsContainer.classList.remove('hidden');
+                } else {
+                    suggestionsContainer.classList.add('hidden');
+                }
+            };
+            
+            input.addEventListener('input', () => {
+                updateSuggestions();
+                if(onSelect) onSelect(input.value);
+            });
+            input.addEventListener('focus', updateSuggestions);
+            input.addEventListener('change', () => {
+                 if(onSelect) onSelect(input.value);
+            });
+
+
+            suggestionsContainer.addEventListener('mousedown', (e) => {
+                 if (e.target.dataset.value) {
+                    input.value = e.target.dataset.value;
+                    suggestionsContainer.classList.add('hidden');
+                    if(onSelect) onSelect(input.value);
+                 }
+            });
+             
+            document.addEventListener('click', (e) => {
+                if (container && !container.contains(e.target)) {
+                    suggestionsContainer.classList.add('hidden');
+                }
+            });
+        }
+        
+        function renderDistributionRow(item, index) {
+            const gasStationOptions = Object.entries(GAS_STATION_FRIENDLY_NAMES)
+                .map(([key, name]) => `<option value="${key}" ${item.stationKey === key ? 'selected' : ''}>${name}</option>`)
+                .join('');
+            return `
+                <div class="distribution-row grid grid-cols-12 gap-2 items-center" data-index="${index}">
+                    <div class="col-span-6">
+                        <select data-field="stationKey" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent">
+                            <option value="">เลือกปั๊มน้ำมัน</option>
+                            ${gasStationOptions}
+                        </select>
+                    </div>
+                    <div class="col-span-5">
+                        <input type="number" data-field="amount" value="${item.amount || ''}" placeholder="ลิตร" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent" />
+                    </div>
+                    <div class="col-span-1">
+                        <button type="button" data-action="remove-distribution" class="text-red-500 hover:text-red-400 p-2 rounded-full transition-colors">${ICONS.Trash}</button>
+                    </div>
+                </div>
+            `;
+        }
+
+        function updateDistributionList() {
+            const container = document.getElementById('distribution-list');
+            if(!container) return;
+            container.innerHTML = appState.fuelForm.distribution.map(renderDistributionRow).join('');
+             // Re-bind change listeners to update state
+            container.querySelectorAll('.distribution-row').forEach((row, index) => {
+                row.querySelector('[data-field="stationKey"]').addEventListener('change', (e) => appState.fuelForm.distribution[index].stationKey = e.target.value);
+                row.querySelector('[data-field="amount"]').addEventListener('input', (e) => appState.fuelForm.distribution[index].amount = e.target.value);
+            });
+        }
+
+        function handleAddDistributionRow() {
+            appState.fuelForm.distribution.push({ stationKey: '', amount: '' });
+            updateDistributionList();
+        }
+        
+        function updateTotalFuel() {
+             const container = document.getElementById('distribution-list');
+             let total = 0;
+             container.querySelectorAll('[data-field="amount"]').forEach(input => {
+                 total += Number(input.value) || 0;
+             });
+             document.getElementById('form-fuel-amount').value = total;
+        }
+
+        function updateVLookup() {
+            const vehicleType = document.getElementById('form-vehicle-type').value;
+            const origin = document.getElementById('form-origin').value;
+            const destination = document.getElementById('form-destination').value;
+            const cardContent = document.getElementById('vlookup-card-content');
+            
+            let content = `
+                <h3 class="text-xl font-bold text-white mb-4 border-b border-slate-600 pb-2">รายละเอียดเส้นทาง</h3>
+                <p class="text-gray-500 italic">เลือกประเภทรถ ต้นทาง และปลายทางเพื่อดูข้อมูลเส้นทาง</p>
+            `;
+
+            if (vehicleType && origin && destination) {
+                const route = logisticsService.findMatchingRoute(vehicleType, origin, destination);
+                if (route) {
+                    const unitText = route.unit === 'Baht' ? 'บาท' : 'ลิตร';
+                    const stationsList = Object.keys(route.gasStations || {}).length > 0
+                        ? `<ul class="list-disc list-inside space-y-1 pl-2">${Object.entries(route.gasStations).map(([key, value]) => `<li><span class="text-gray-400">${logisticsService.getFriendlyGasStationName(key)}:</span> <strong class="text-white">${(value || 0).toLocaleString()} ${unitText}</strong></li>`).join('')}</ul>`
+                        : `<p class="text-gray-500 italic">ไม่มีการกระจายที่ระบุ</p>`;
+                    
+                    content = `
+                        <h3 class="text-xl font-bold text-white mb-4 border-b border-slate-600 pb-2">รายละเอียดเส้นทาง (VLOOKUP)</h3>
+                        <div class="space-y-3 text-sm">
+                            <p><strong class="text-gray-400">ปริมาณที่แนะนำ:</strong> <span class="text-accent font-semibold text-lg">${(route.totalFuel || 0).toLocaleString()} ${unitText}</span></p>
+                            <div class="pt-2">
+                                <h4 class="font-semibold text-gray-300 mb-2">การกระจายที่แนะนำ:</h4>
+                                ${stationsList}
+                            </div>
+                        </div>
+                    `;
+                    // Auto-fill distribution and unit
+                    const fuelUnitSelect = document.getElementById('form-fuel-unit');
+                    if (fuelUnitSelect) {
+                        fuelUnitSelect.value = route.unit === 'Baht' ? 'Baht' : 'Liters';
+                    }
+                    appState.fuelForm.distribution = Object.entries(route.gasStations || {}).map(([stationKey, amount]) => ({ stationKey, amount }));
+                    updateDistributionList();
+                    updateTotalFuel();
+                } else {
+                     content = `
+                        <h3 class="text-xl font-bold text-white mb-4 border-b border-slate-600 pb-2">รายละเอียดเส้นทาง (VLOOKUP)</h3>
+                        <p class="text-yellow-400 italic">ไม่พบเส้นทางที่ตรงกัน</p>
+                     `;
+                     appState.fuelForm.distribution = [];
+                     updateDistributionList();
+                     updateTotalFuel();
+                }
+            }
+             if (cardContent) {
+                cardContent.innerHTML = content;
+             }
+        }
+
+        function handleResetFuelForm() {
+            const form = document.getElementById('fuel-record-form');
+            if (form) {
+                form.reset();
+                document.getElementById('form-date').value = new Date().toISOString().split('T')[0];
+                document.getElementById('form-fuel-unit').value = 'Liters';
+                appState.fuelForm.distribution = [];
+                updateDistributionList();
+                updateTotalFuel();
+                updateVLookup();
+                document.getElementById('form-status').innerHTML = '';
+            }
+        }
+
+        function handleFuelFormSubmit(e) {
+            e.preventDefault();
+            const form = e.target;
+            const statusEl = document.getElementById('form-status');
+            
+            const record = {
+                date: form.querySelector('#form-date').value,
+                vehicleRegistration: form.querySelector('#form-vehicle-registration').value,
+                vehicleType: form.querySelector('#form-vehicle-type').value,
+                origin: form.querySelector('#form-origin').value,
+                destination: form.querySelector('#form-destination').value,
+                fuelAmount: Number(form.querySelector('#form-fuel-amount').value),
+                unit: form.querySelector('#form-fuel-unit').value,
+                notes: form.querySelector('#form-notes').value,
+                matchedRoute: logisticsService.findMatchingRoute(
+                    form.querySelector('#form-vehicle-type').value,
+                    form.querySelector('#form-origin').value,
+                    form.querySelector('#form-destination').value
+                ),
+                fuelDistribution: appState.fuelForm.distribution.reduce((acc, item) => {
+                    if (item.stationKey && Number(item.amount) > 0) {
+                        acc[item.stationKey] = Number(item.amount);
+                    }
+                    return acc;
+                }, {})
+            };
+
+            if (!record.date || !record.vehicleRegistration || !record.vehicleType || !record.origin || !record.destination || record.fuelAmount <= 0) {
+                 statusEl.innerHTML = `<div class="p-3 rounded-lg text-center font-semibold bg-red-500/20 text-red-300">กรุณากรอกข้อมูลที่จำเป็นทั้งหมด</div>`;
+                 return;
+            }
+
+            logisticsService.addFuelRecord(record);
+            statusEl.innerHTML = `<div class="p-3 rounded-lg text-center font-semibold bg-green-500/20 text-green-300">บันทึกรายการสำเร็จ!</div>`;
+            
+            // Reset form
+            handleResetFuelForm();
+
+            setTimeout(() => statusEl.innerHTML = '', 3000);
+        }
+
+        // --- Dashboard View Handlers ---
+        function attachDashboardListeners() {
+            const filterInput = document.querySelector('#dashboard-filters input[name="vehicleRegistration"]');
+            if (filterInput) {
+                filterInput.addEventListener('input', (e) => {
+                    appState.dashboardFilters[e.target.name] = e.target.value;
+                    const contentDiv = document.getElementById('dashboard-content');
+                    if (contentDiv) {
+                        contentDiv.innerHTML = renderDashboardContent();
+                    }
+                });
+            }
+             document.querySelectorAll('#dashboard-filters input[type="date"]').forEach(input => {
+                input.addEventListener('change', (e) => {
+                    appState.dashboardFilters[e.target.name] = e.target.value;
+                    const contentDiv = document.getElementById('dashboard-content');
+                    if (contentDiv) {
+                        contentDiv.innerHTML = renderDashboardContent();
+                    }
+                });
+            });
+
+            document.getElementById('clear-dashboard-filters-btn').addEventListener('click', handleClearDashboardFilters);
+            document.getElementById('refresh-dashboard-btn').addEventListener('click', () => renderApp());
+            document.getElementById('export-excel-btn').addEventListener('click', handleExportToExcel);
+        }
+        
+        function handleClearDashboardFilters() {
+            appState.dashboardFilters = {
+                vehicleRegistration: '',
+                dateFrom: '',
+                dateTo: '',
+            };
+            renderApp();
+        }
+        
+        function handleDeleteFuelRecord(id) {
+             logisticsService.deleteFuelRecord(id);
+        }
+        
+        function handleEditFuelRecord(id) {
+            appState.editingFuelRecord = logisticsService.getFuelRecords().find(r => r.id === id);
+            if (appState.editingFuelRecord) {
+                openModal('แก้ไขรายการน้ำมัน', renderFuelRecordEditFormContent(appState.editingFuelRecord));
+                attachFuelRecordEditFormListeners();
+            }
+        }
+
+        function attachFuelRecordEditFormListeners() {
+            document.getElementById('add-edit-distribution-btn').addEventListener('click', handleAddEditDistributionRow);
+            document.getElementById('edit-distribution-list').addEventListener('click', (e) => {
+                 if(e.target.closest('[data-action="remove-distribution"]')) {
+                     e.target.closest('.distribution-row').remove();
+                 }
+            });
+        }
+        
+        function renderEditDistributionRow(item, index) {
+            const gasStationOptions = Object.entries(GAS_STATION_FRIENDLY_NAMES).map(([key, name]) => `<option value="${key}" ${item.stationKey === key ? 'selected' : ''}>${name}</option>`).join('');
+            return `
+                 <div class="distribution-row grid grid-cols-12 gap-2 items-center" data-index="${index}">
+                    <div class="col-span-6">
+                        <select name="stationKey" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white">
+                            <option value="">เลือกปั๊มน้ำมัน</option>
+                            ${gasStationOptions}
+                        </select>
+                    </div>
+                    <div class="col-span-5"><input type="number" name="amount" value="${item.amount || ''}" placeholder="ลิตร" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white" /></div>
+                    <div class="col-span-1"><button type="button" data-action="remove-distribution" class="text-red-500 hover:text-red-400 p-2 rounded-full transition-colors">${ICONS.Trash}</button></div>
+                </div>`;
+        }
+
+        function handleAddEditDistributionRow() {
+            const container = document.getElementById('edit-distribution-list');
+            const newIndex = container.children.length;
+            container.insertAdjacentHTML('beforeend', renderEditDistributionRow({stationKey: '', amount: ''}, newIndex));
+        }
+
+        function handleFuelRecordUpdateSubmit(e) {
+            e.preventDefault();
+            const form = e.target;
+            const recordId = form.querySelector('[name="id"]').value;
+
+            // Build a fresh object to prevent carrying over stale data from the original record.
+            const updatedData = {
+                id: recordId,
+                date: form.querySelector('[name="date"]').value,
+                vehicleRegistration: form.querySelector('[name="vehicleRegistration"]').value,
+                vehicleType: form.querySelector('[name="vehicleType"]').value,
+                origin: form.querySelector('[name="origin"]').value,
+                destination: form.querySelector('[name="destination"]').value,
+                unit: form.querySelector('[name="unit"]').value,
+                notes: form.querySelector('[name="notes"]').value,
+                fuelDistribution: {},
+                fuelAmount: 0,
+            };
+            
+            const distributionRows = form.querySelectorAll('.distribution-row');
+            distributionRows.forEach(row => {
+                const key = row.querySelector('[name="stationKey"]').value;
+                const amount = Number(row.querySelector('[name="amount"]').value);
+                if (key && amount > 0) {
+                    updatedData.fuelDistribution[key] = amount;
+                    updatedData.fuelAmount += amount;
+                }
+            });
+
+            updatedData.matchedRoute = logisticsService.findMatchingRoute(
+                updatedData.vehicleType,
+                updatedData.origin,
+                updatedData.destination
+            );
+
+            logisticsService.updateFuelRecord(updatedData);
+            closeModal();
+        }
+
+        function handleExportToExcel() {
+             const records = logisticsService.getFuelRecords();
+             const filters = appState.dashboardFilters;
+             const filteredRecords = records.filter(record => {
+                const recordDate = new Date(record.date);
+                const dateFrom = filters.dateFrom ? new Date(filters.dateFrom) : null;
+                const dateTo = filters.dateTo ? new Date(filters.dateTo) : null;
+                if (filters.vehicleRegistration && !(record.vehicleRegistration || '').toUpperCase().includes(filters.vehicleRegistration.toUpperCase())) return false;
+                if (dateFrom && recordDate < dateFrom) return false;
+                if (dateTo && recordDate > dateTo) return false;
+                return true;
+            });
+
+            if (filteredRecords.length === 0) return;
+
+            const orderedStationKeys = logisticsService.getAllGasStationKeys();
+            const friendlyNames = logisticsService.getAllGasStationFriendlyNames();
+
+            const dataForExport = filteredRecords.map(record => {
+                const row = {
+                    'วันที่': record.date,
+                    'ทะเบียนรถ': record.vehicleRegistration,
+                    'ประเภทรถ': record.vehicleType,
+                    'ต้นทาง': record.origin,
+                    'ปลายทาง': record.destination,
+                    'ปริมาณรวม': record.fuelAmount,
+                    'หน่วย': record.unit === 'Baht' ? 'บาท' : 'ลิตร',
+                    'หมายเหตุ': record.notes,
+                };
+                orderedStationKeys.forEach(stationKey => {
+                    const stationFriendlyName = friendlyNames[stationKey] || stationKey;
+                    row[stationFriendlyName] = record.fuelDistribution?.[stationKey] || 0;
+                });
+                return row;
+            });
+
+            const worksheet = XLSX.utils.json_to_sheet(dataForExport);
+            const workbook = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(workbook, worksheet, 'Fuel Records');
+            worksheet['!cols'] = [ {wch:12}, {wch:15}, {wch:18}, {wch:20}, {wch:20}, {wch:15}, {wch:10}, {wch:30}, ...orderedStationKeys.map(() => ({wch: 25})) ];
+            XLSX.writeFile(workbook, `FuelReport_${new Date().toISOString().split('T')[0]}.xlsx`);
+        }
+        
+        // --- Data Management Handlers ---
+        function attachDataManagementListeners() {
+            document.getElementById('data-management-filter').addEventListener('input', e => {
+                appState.dataManagementFilter = e.target.value;
+                 const contentDiv = document.getElementById('data-management-content');
+                if (contentDiv) {
+                    contentDiv.innerHTML = renderDataManagementContent();
+                }
+            });
+             document.getElementById('refresh-routes-btn').addEventListener('click', () => renderApp());
+            document.getElementById('add-new-route-btn').addEventListener('click', () => {
+                appState.editingRoute = null;
+                openModal('เพิ่มเส้นทางใหม่', renderRouteFormContent(null));
+                attachRouteFormListeners();
+            });
+        }
+        
+        function attachRouteFormListeners() {
+            document.getElementById('add-route-distribution-btn').addEventListener('click', handleAddRouteDistributionRow);
+            document.getElementById('route-distribution-list').addEventListener('click', (e) => {
+                 if(e.target.closest('[data-action="remove-distribution"]')) {
+                     e.target.closest('.distribution-row').remove();
+                 }
+            });
+        }
+        
+        function renderRouteDistributionRow(item, index) {
+            const gasStationOptions = Object.entries(GAS_STATION_FRIENDLY_NAMES).map(([key, name]) => `<option value="${key}" ${item.stationKey === key ? 'selected' : ''}>${name}</option>`).join('');
+            return `
+                 <div class="distribution-row grid grid-cols-12 gap-2 items-center" data-index="${index}">
+                    <div class="col-span-6">
+                        <select name="stationKey" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent">
+                            <option value="">เลือกปั๊มน้ำมัน</option>
+                            ${gasStationOptions}
+                        </select>
+                    </div>
+                    <div class="col-span-5"><input type="number" name="amount" value="${item.amount || ''}" placeholder="ลิตร" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent" /></div>
+                    <div class="col-span-1"><button type="button" data-action="remove-distribution" class="text-red-500 hover:text-red-400 p-2 rounded-full transition-colors">${ICONS.Trash}</button></div>
+                </div>`;
+        }
+        
+        function handleAddRouteDistributionRow() {
+            const container = document.getElementById('route-distribution-list');
+            const newIndex = container.children.length;
+            container.insertAdjacentHTML('beforeend', renderRouteDistributionRow({stationKey: '', amount: ''}, newIndex));
+        }
+
+        function handleRouteFormSubmit(e) {
+            e.preventDefault();
+            const form = e.target;
+            const routeData = {
+                id: form.querySelector('[name="id"]').value,
+                vehicleType: form.querySelector('[name="vehicleType"]').value.trim(),
+                origin: form.querySelector('[name="origin"]').value.trim(),
+                destination: form.querySelector('[name="destination"]').value.trim(),
+                unit: form.querySelector('[name="unit"]').value,
+                gasStations: {},
+                totalFuel: 0
+            };
+
+            const distributionRows = form.querySelectorAll('.distribution-row');
+            distributionRows.forEach(row => {
+                const key = row.querySelector('[name="stationKey"]').value;
+                const amount = Number(row.querySelector('[name="amount"]').value);
+                if (key && amount > 0) {
+                    routeData.gasStations[key] = amount;
+                    routeData.totalFuel += amount;
+                }
+            });
+
+            if (routeData.id) {
+                logisticsService.updateRoute(routeData);
+            } else {
+                delete routeData.id;
+                logisticsService.addRoute(routeData);
+            }
+            closeModal();
+        }
+
+        // --- Vehicle Management Handlers ---
+        function attachVehicleManagementListeners() {
+             document.getElementById('vehicle-management-filter').addEventListener('input', e => {
+                appState.vehicleManagementFilter = e.target.value;
+                const contentDiv = document.getElementById('vehicle-management-content');
+                if (contentDiv) {
+                    contentDiv.innerHTML = renderVehicleManagementContent();
+                }
+            });
+            document.getElementById('refresh-vehicles-btn').addEventListener('click', () => renderApp());
+            document.getElementById('add-new-vehicle-btn').addEventListener('click', () => {
+                appState.editingVehicle = null;
+                openModal('เพิ่มทะเบียนรถใหม่', renderVehicleFormContent(null));
+                attachVehicleFormListeners();
+            });
+        }
+        
+        function attachVehicleFormListeners() {
+            // Submission is handled by the centralized listener
+        }
+
+        function handleVehicleFormSubmit(e) {
+            e.preventDefault();
+            const form = e.target;
+            const vehicleData = {
+                id: form.querySelector('[name="id"]').value,
+                registrationNumber: form.querySelector('[name="registrationNumber"]').value.trim(),
+                vehicleType: form.querySelector('[name="vehicleType"]').value.trim(),
+            };
+            
+            if(!vehicleData.registrationNumber || !vehicleData.vehicleType) {
+                alert('กรุณากรอกข้อมูลให้ครบถ้วน');
+                return;
+            }
+
+            if (vehicleData.id) {
+                logisticsService.updateVehicle(vehicleData);
+            } else {
+                delete vehicleData.id;
+                logisticsService.addVehicle(vehicleData);
+            }
+            closeModal();
+        }
+
+        // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        // 6. APP INITIALIZATION
+        // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        document.addEventListener('DOMContentLoaded', () => {
+            logisticsService.initialize();
+            renderApp();
+            
+            // --- Centralized Event Listener for Clicks ---
+            document.body.addEventListener('click', (e) => {
+                const button = e.target.closest('button[data-action]');
+                if (!button) return;
+
+                const { action, id } = button.dataset;
+                if (!action) return;
+
+                const confirmDelete = (type, callback) => {
+                    if (confirm(`คุณแน่ใจหรือไม่ว่าต้องการลบ${type}นี้?`)) {
+                        callback();
+                    }
+                };
+
+                // Handle actions on dynamic content (table rows)
+                switch (action) {
+                    case 'edit-fuel-record':
+                        handleEditFuelRecord(id);
+                        break;
+                    case 'delete-fuel-record':
+                        confirmDelete('รายการ', () => handleDeleteFuelRecord(id));
+                        break;
+                    case 'edit-route':
+                        const route = logisticsService.getRoutes().find(r => r.id === id);
+                        appState.editingRoute = route;
+                        openModal('แก้ไขข้อมูลเส้นทาง', renderRouteFormContent(route));
+                        attachRouteFormListeners();
+                        break;
+                    case 'delete-route':
+                        confirmDelete('เส้นทาง', () => logisticsService.deleteRoute(id));
+                        break;
+                    case 'edit-vehicle':
+                        const vehicle = logisticsService.getVehicles().find(v => v.id === id);
+                        appState.editingVehicle = vehicle;
+                        openModal('แก้ไขข้อมูลทะเบียนรถ', renderVehicleFormContent(vehicle));
+                        attachVehicleFormListeners();
+                        break;
+                    case 'delete-vehicle':
+                        confirmDelete('ทะเบียนรถ', () => logisticsService.deleteVehicle(id));
+                        break;
+                }
+            });
+            
+            // --- Centralized Event Listener for Submissions ---
+            document.body.addEventListener('submit', (e) => {
+                const formId = e.target.id;
+                switch (formId) {
+                    case 'auth-form':
+                        handleAuthSubmit(e);
+                        break;
+                    case 'fuel-record-form':
+                        handleFuelFormSubmit(e);
+                        break;
+                    case 'fuel-record-edit-form':
+                        handleFuelRecordUpdateSubmit(e);
+                        break;
+                    case 'route-form':
+                        handleRouteFormSubmit(e);
+                        break;
+                    case 'vehicle-form':
+                        handleVehicleFormSubmit(e);
+                        break;
+                }
+            });
+        });
+
+        // --- END OF SCRIPT ---
+    </script>
+</body>
+</html>
