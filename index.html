@@ -599,15 +599,10 @@
                 return (a.destination || '').localeCompare(b.destination || '', 'th');
             });
 
-            const tableColumns = [
-                { key: 'nissan_singburi', units: ['Liters'] },
-                { key: 'jittamas_bangpain', units: ['Liters', 'Baht'] },
-                { key: 'srinakorn_klongklung', units: ['Liters'] },
-                { key: 'daopaisan_nakhonsawan', units: ['Liters'] },
-                { key: 'ekawitat_nonthaburi', units: ['Liters'] },
-                { key: 'daourai_sai3', units: ['Liters'] },
-                { key: 'tekyong_chonburi', units: ['Liters', 'Baht'] }
-            ];
+            const tableColumns = logisticsService.getAllGasStationKeys().map(key => ({
+                key,
+                units: ['Liters', 'Baht']
+            }));
 
             const tableRows = filteredRoutes.map(route => {
                 const stationCells = tableColumns.map(col => {
@@ -641,6 +636,16 @@
                 </tr>
             `}).join('');
 
+            const stationHeaderCells = logisticsService.getAllGasStationKeys().map(key => {
+                const friendlyName = logisticsService.getFriendlyGasStationName(key);
+                return `<th colspan="2" class="p-3 text-center border-b border-r border-slate-600">${friendlyName}</th>`;
+            }).join('');
+
+            const subHeaderCells = logisticsService.getAllGasStationKeys().map(() => `
+                <th class="p-2 text-center bg-yellow-600/80 text-white border-r border-slate-600">ลิตร</th>
+                <th class="p-2 text-center bg-yellow-600/80 text-white border-r border-slate-600">บาท</th>
+            `).join('');
+
             return renderCard(`
                 <div class="overflow-x-auto">
                     <table class="w-full text-left table-fixed">
@@ -650,25 +655,11 @@
                                 <th rowspan="2" class="p-3 border-r border-slate-600 align-middle w-40">ต้นทาง</th>
                                 <th rowspan="2" class="p-3 border-r border-slate-600 align-middle w-40">ปลายทาง</th>
                                 <th rowspan="2" class="p-3 text-right border-r border-slate-600 align-middle w-28">จำนวน<br>น้ำมัน</th>
-                                <th class="p-3 text-center border-b border-r border-slate-600">${GAS_STATION_FRIENDLY_NAMES.nissan_singburi}</th>
-                                <th colspan="2" class="p-3 text-center border-b border-r border-slate-600">${GAS_STATION_FRIENDLY_NAMES.jittamas_bangpain}</th>
-                                <th class="p-3 text-center border-b border-r border-slate-600">${GAS_STATION_FRIENDLY_NAMES.srinakorn_klongklung}</th>
-                                <th class="p-3 text-center border-b border-r border-slate-600">${GAS_STATION_FRIENDLY_NAMES.daopaisan_nakhonsawan}</th>
-                                <th class="p-3 text-center border-b border-r border-slate-600">${GAS_STATION_FRIENDLY_NAMES.ekawitat_nonthaburi}</th>
-                                <th class="p-3 text-center border-b border-r border-slate-600">${GAS_STATION_FRIENDLY_NAMES.daourai_sai3}</th>
-                                <th colspan="2" class="p-3 text-center border-b border-r border-slate-600">${GAS_STATION_FRIENDLY_NAMES.tekyong_chonburi}</th>
+                                ${stationHeaderCells}
                                 <th rowspan="2" class="p-3 text-center align-middle w-24">จัดการ</th>
                             </tr>
                             <tr>
-                                <th class="p-2 text-center bg-yellow-600/80 text-white border-r border-slate-600">ลิตร</th>
-                                <th class="p-2 text-center bg-yellow-600/80 text-white border-r border-slate-600">ลิตร</th>
-                                <th class="p-2 text-center bg-yellow-600/80 text-white border-r border-slate-600">บาท</th>
-                                <th class="p-2 text-center bg-yellow-600/80 text-white border-r border-slate-600">ลิตร</th>
-                                <th class="p-2 text-center bg-yellow-600/80 text-white border-r border-slate-600">ลิตร</th>
-                                <th class="p-2 text-center bg-yellow-600/80 text-white border-r border-slate-600">ลิตร</th>
-                                <th class="p-2 text-center bg-yellow-600/80 text-white border-r border-slate-600">ลิตร</th>
-                                <th class="p-2 text-center bg-yellow-600/80 text-white border-r border-slate-600">ลิตร</th>
-                                <th class="p-2 text-center bg-yellow-600/80 text-white border-r border-slate-600">บาท</th>
+                                ${subHeaderCells}
                             </tr>
                         </thead>
                         <tbody id="routes-table-body">${tableRows}</tbody>
