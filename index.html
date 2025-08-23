@@ -2365,7 +2365,19 @@
             document.getElementById('fuel-record-edit-form').addEventListener('submit', handleFuelRecordEditFormSubmit);
         };
         
-        const handleFuelRecordEditFormSubmit = async (e) => {
+        
+
+const handleDeleteFuelRecord = async (id) => {
+    if (confirm('คุณต้องการลบรายการน้ำมันนี้ใช่หรือไม่?')) {
+        try {
+            await logisticsService.deleteFuelRecord(id);
+        } catch (error) {
+            console.error("Failed to delete fuel record:", error);
+            alert("เกิดข้อผิดพลาดในการลบข้อมูล: " + error.message);
+        }
+    }
+};
+const handleFuelRecordEditFormSubmit = async (e) => {
             e.preventDefault();
             const form = e.target;
             const formData = new FormData(form);
