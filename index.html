@@ -87,9 +87,22 @@
             Download: `<svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>`,
             Refresh: `<svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h5m-5-5a9 9 0 0115.54 5.54M20 20v-5h-5m5 5a9 9 0 01-15.54-5.54" /></svg>`,
             Clear: `<svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>`,
+            Sort: `<svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 4h13M3 8h9M3 12h9m-9 4h13m0-4l-3-3m0 6l3-3m0 6l3 3" /></svg>`,
+            SortAsc: `<svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 text-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 4h13M3 8h9M3 12h9m-9 4h13m0-4l-3-3m0 6l3-3" /></svg>`,
+            SortDesc: `<svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 text-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 4h13M3 8h9M3 12h9m-9 4h13m0 0l-3 3m0-6l3 3m0-6l3-3" /></svg>`,
         };
         
-        // --- Time Utility Functions ---
+        // --- Utility Functions ---
+        const debounce = (func, delay) => {
+            let timeoutId;
+            return (...args) => {
+                clearTimeout(timeoutId);
+                timeoutId = setTimeout(() => {
+                    func.apply(this, args);
+                }, delay);
+            };
+        };
+
         const minutesToHoursAndMinutes = (totalMinutes) => {
             if (totalMinutes === null || totalMinutes === undefined || isNaN(totalMinutes) || totalMinutes === 0) {
                 return '';
@@ -137,7 +150,15 @@
                 recordLimit: 50,
             },
             // Data Management-specific state
-            dataManagementFilter: '',
+            routeSort: { key: 'vehicleType', direction: 'asc' },
+            routeFilters: {
+                vehicleType: '',
+                origin: '',
+                destination: '',
+                driverAllowance: '',
+                kilometers: '',
+                travelTime: ''
+            },
             vehicleManagementFilter: '',
             editingRoute: null,
             editingFuelRecord: null,
@@ -704,32 +725,57 @@
             `;
         };
 
-        const renderDataManagementContent = () => {
-            const filter = appState.dataManagementFilter.toLowerCase();
-            const routes = logisticsService.getRoutes();
-            const filteredRoutes = filter ? routes.filter(r => 
-                (r.vehicleType || '').toLowerCase().includes(filter) ||
-                (r.origin || '').toLowerCase().includes(filter) ||
-                (r.destination || '').toLowerCase().includes(filter)
-            ) : routes;
+        const updateRoutesTableBody = () => {
+            let routes = logisticsService.getRoutes();
 
-            // Sort routes for consistent display
-            filteredRoutes.sort((a, b) => {
-                const vehicleTypeCompare = (a.vehicleType || '').localeCompare(b.vehicleType || '', 'th');
-                if (vehicleTypeCompare !== 0) return vehicleTypeCompare;
+            // 1. Filtering
+            const activeFilters = Object.entries(appState.routeFilters).filter(([, value]) => value);
+            if (activeFilters.length > 0) {
+                routes = routes.filter(route => {
+                    return activeFilters.every(([key, filterValue]) => {
+                        const routeValue = route[key];
+                        if (filterValue === null || filterValue === '') return true;
+                        if (key === 'travelTime') {
+                             return (minutesToHoursAndMinutes(routeValue) || '').includes(filterValue);
+                        }
+                        return (routeValue?.toString().toLowerCase() || '').includes(filterValue.toLowerCase());
+                    });
+                });
+            }
 
-                const originCompare = (a.origin || '').localeCompare(b.origin || '', 'th');
-                if (originCompare !== 0) return originCompare;
+            // 2. Sorting
+            const { key: sortKey, direction: sortDirection } = appState.routeSort;
+            if (sortKey) {
+                const isNumeric = ['driverAllowance', 'kilometers', 'travelTime', 'totalLiters', 'totalBaht'].includes(sortKey);
+                routes.sort((a, b) => {
+                    const valA = a[sortKey] || (isNumeric ? 0 : '');
+                    const valB = b[sortKey] || (isNumeric ? 0 : '');
+                    let comparison = 0;
+                    if (isNumeric) {
+                        comparison = valA - valB;
+                    } else {
+                        comparison = (valA.toString()).localeCompare(valB.toString(), 'th');
+                    }
+                    return sortDirection === 'asc' ? comparison : -comparison;
+                });
+            }
+            
+            const tableBody = document.getElementById('routes-table-body');
+            if (!tableBody) return;
 
-                return (a.destination || '').localeCompare(b.destination || '', 'th');
-            });
+            if (routes.length === 0) {
+                const stationCount = logisticsService.getAllGasStationKeys().length;
+                const colspan = 7 + (stationCount * 2) + 1; // 7 base + 2 per station + 1 actions
+                tableBody.innerHTML = `<tr><td colspan="${colspan}" class="text-center py-8 text-gray-500">ไม่พบข้อมูลเส้นทางที่ตรงตามเงื่อนไข</td></tr>`;
+                return;
+            }
 
             const tableColumns = logisticsService.getAllGasStationKeys().map(key => ({
                 key,
                 units: ['Liters', 'Baht']
             }));
 
-            const tableRows = filteredRoutes.map(route => {
+            const tableRows = routes.map(route => {
                 const stationCells = tableColumns.map(col => {
                     return col.units.map(unit => {
                         const value = (unit === 'Liters') 
@@ -764,6 +810,28 @@
                 </tr>
             `}).join('');
 
+            tableBody.innerHTML = tableRows;
+        };
+
+        const renderDataManagementContent = () => {
+            // This function now only renders the table structure, headers, and filters.
+            // The initial population of the tbody is handled by attachDataManagementListeners -> updateRoutesTableBody
+            const renderSortableHeader = (key, label, extraClasses = '') => {
+                let icon = ICONS.Sort;
+                if (appState.routeSort.key === key) {
+                    icon = appState.routeSort.direction === 'asc' ? ICONS.SortAsc : ICONS.SortDesc;
+                }
+                return `<th rowspan="2" data-action="sort-routes" data-key="${key}" class="p-3 border-r border-slate-600 align-middle cursor-pointer hover:bg-slate-700 ${extraClasses}">
+                    <div class="flex items-center justify-center gap-2">${label}${icon}</div>
+                </th>`;
+            };
+            
+            const renderFilterInput = (key) => {
+                 return `<td class="p-1 border-r border-slate-700 bg-slate-900">
+                    <input type="text" data-filter-key="${key}" value="${appState.routeFilters[key] || ''}" class="w-full bg-slate-800 border-none rounded-sm px-2 py-1 text-white text-xs focus:outline-none focus:ring-1 focus:ring-accent" />
+                </td>`;
+            }
+
             const stationHeaderCells = logisticsService.getAllGasStationKeys().map(key => {
                 const friendlyName = logisticsService.getFriendlyGasStationName(key);
                 return `<th colspan="2" class="p-3 text-center border-b border-r border-slate-600">${friendlyName}</th>`;
@@ -773,29 +841,46 @@
                 <th class="p-2 text-center bg-yellow-600/80 text-white border-r border-slate-600">ลิตร</th>
                 <th class="p-2 text-center bg-yellow-600/80 text-white border-r border-slate-600">บาท</th>
             `).join('');
+            
+            const stationFilterCells = logisticsService.getAllGasStationKeys().map(() => `
+                <td class="p-1 border-r border-slate-700 bg-slate-900" colspan="2"></td>
+            `).join('');
+
+            // Initial table body is empty, it will be populated by updateRoutesTableBody
+            const initialTableBody = `<tr><td colspan="24" class="text-center py-8 text-gray-500">กำลังโหลดข้อมูล...</td></tr>`;
 
             return renderCard(`
                 <div class="overflow-x-auto max-h-[75vh]">
                     <table class="w-full text-left table-fixed">
                         <thead class="bg-slate-800 text-sm text-gray-400 uppercase sticky top-0 z-10">
                             <tr>
-                                <th rowspan="2" class="p-3 border-r border-slate-600 align-middle w-32">ประเภทรถ</th>
-                                <th rowspan="2" class="p-3 border-r border-slate-600 align-middle w-40">ต้นทาง</th>
-                                <th rowspan="2" class="p-3 border-r border-slate-600 align-middle w-40">ปลายทาง</th>
+                                ${renderSortableHeader('vehicleType', 'ประเภทรถ', 'w-32')}
+                                ${renderSortableHeader('origin', 'ต้นทาง', 'w-40')}
+                                ${renderSortableHeader('destination', 'ปลายทาง', 'w-40')}
                                 <th rowspan="2" class="p-3 text-center border-r border-slate-600 align-middle w-28">จำนวน<br>น้ำมัน</th>
-                                <th rowspan="2" class="p-3 text-center border-r border-slate-600 align-middle w-24">เบี้ยขับ<br>(บาท)</th>
-                                <th rowspan="2" class="p-3 text-center border-r border-slate-600 align-middle w-24">ระยะทาง<br>(กม.)</th>
-                                <th rowspan="2" class="p-3 text-center border-r border-slate-600 align-middle w-24">เวลา<br>(ชม.)</th>
+                                ${renderSortableHeader('driverAllowance', 'เบี้ยขับ<br>(บาท)', 'w-24')}
+                                ${renderSortableHeader('kilometers', 'ระยะทาง<br>(กม.)', 'w-24')}
+                                ${renderSortableHeader('travelTime', 'เวลา<br>(ชม.)', 'w-24')}
                                 ${stationHeaderCells}
                                 <th rowspan="2" class="p-3 text-center align-middle w-24">จัดการ</th>
                             </tr>
                             <tr>
                                 ${subHeaderCells}
                             </tr>
+                            <tr id="routes-table-filter-row">
+                                ${renderFilterInput('vehicleType')}
+                                ${renderFilterInput('origin')}
+                                ${renderFilterInput('destination')}
+                                <td class="p-1 border-r border-slate-700 bg-slate-900"></td>
+                                ${renderFilterInput('driverAllowance')}
+                                ${renderFilterInput('kilometers')}
+                                ${renderFilterInput('travelTime')}
+                                ${stationFilterCells}
+                                <td class="p-1 bg-slate-900"></td>
+                            </tr>
                         </thead>
-                        <tbody id="routes-table-body">${tableRows}</tbody>
+                        <tbody id="routes-table-body">${initialTableBody}</tbody>
                     </table>
-                    ${filteredRoutes.length === 0 ? '<p class="text-center py-8 text-gray-500">ไม่พบข้อมูลเส้นทาง</p>' : ''}
                 </div>
             `);
         };
@@ -808,7 +893,6 @@
                         <div class="flex flex-wrap justify-between items-center gap-4">
                             <h2 class="text-2xl font-bold text-white flex items-center gap-3">${ICONS.Database}จัดการข้อมูลเส้นทาง</h2>
                             <div class="flex items-center gap-4">
-                                <input type="text" id="data-management-filter" value="${appState.dataManagementFilter}" placeholder="ค้นหา..." class="w-full md:w-64 bg-slate-800 border border-slate-600 rounded-md px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent" />
                                 <button id="refresh-routes-btn" title="รีเฟรชข้อมูล" class="bg-sky-600 hover:bg-sky-700 text-white font-bold p-2 rounded-lg shadow-md transition-transform transform hover:scale-105">
                                     ${ICONS.Refresh}
                                 </button>
@@ -1171,6 +1255,7 @@
             if (action === 'edit-route') handleEditRoute(id);
             if (action === 'delete-route') handleDeleteRoute(id);
             if (action === 'add-route-distribution') handleAddRouteDistribution(target);
+            if (action === 'sort-routes') handleSortRoutes(target.dataset.key);
 
             // --- Fuel Record Actions ---
             if (action === 'edit-fuel-record') handleEditFuelRecord(id);
@@ -1277,24 +1362,52 @@
                 exportBtn.addEventListener('click', handleExportToExcel);
             }
         };
-
+        
         const attachDataManagementListeners = () => {
-            const filterInput = document.getElementById('data-management-filter');
-            if (filterInput) {
-                filterInput.addEventListener('input', (e) => {
-                    appState.dataManagementFilter = e.target.value;
-                    const content = document.getElementById('data-management-content');
-                    if(content) content.innerHTML = renderDataManagementContent();
+            // Initial population of the table body
+            updateRoutesTableBody(); 
+            
+            const filterRow = document.getElementById('routes-table-filter-row');
+            if (filterRow) {
+                const debouncedUpdate = debounce(updateRoutesTableBody, 300);
+                filterRow.addEventListener('input', (e) => {
+                    const target = e.target;
+                    const key = target.dataset.filterKey;
+                    if (key) {
+                        appState.routeFilters[key] = target.value;
+                        debouncedUpdate();
+                    }
                 });
             }
-             const refreshBtn = document.getElementById('refresh-routes-btn');
-            if(refreshBtn) {
-                refreshBtn.addEventListener('click', () => {
-                    const content = document.getElementById('data-management-content');
-                    if(content) content.innerHTML = renderDataManagementContent();
-                });
+
+            const refreshBtn = document.getElementById('refresh-routes-btn');
+            if (refreshBtn) {
+                refreshBtn.addEventListener('click', updateRoutesTableBody);
             }
         };
+
+        const handleSortRoutes = (key) => {
+            if (!key) return;
+            const currentSort = appState.routeSort;
+
+            if (currentSort.key === key) {
+                if (currentSort.direction === 'asc') {
+                    appState.routeSort.direction = 'desc';
+                } else {
+                    appState.routeSort = { key: 'vehicleType', direction: 'asc' };
+                }
+            } else {
+                appState.routeSort = { key, direction: 'asc' };
+            }
+            // After changing sort state, we need to update the UI
+            const content = document.getElementById('data-management-content');
+            if(content) {
+                // We need to re-render the headers to show the new sort icon state, then update the body
+                content.innerHTML = renderDataManagementContent();
+                updateRoutesTableBody();
+            }
+        };
+
 
          const attachVehicleManagementListeners = () => {
             const filterInput = document.getElementById('vehicle-management-filter');
