@@ -88,6 +88,31 @@
             Refresh: `<svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h5m-5-5a9 9 0 0115.54 5.54M20 20v-5h-5m5 5a9 9 0 01-15.54-5.54" /></svg>`,
             Clear: `<svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>`,
         };
+        
+        // --- Time Utility Functions ---
+        const minutesToHoursAndMinutes = (totalMinutes) => {
+            if (totalMinutes === null || totalMinutes === undefined || isNaN(totalMinutes) || totalMinutes === 0) {
+                return '';
+            }
+            const hours = Math.floor(totalMinutes / 60);
+            const minutes = totalMinutes % 60;
+            const paddedMinutes = minutes < 10 ? '0' + minutes : minutes;
+            return `${hours}.${paddedMinutes}`;
+        };
+
+        const hoursAndMinutesToMinutes = (timeString) => {
+            if (!timeString || typeof timeString !== 'string') {
+                return 0;
+            }
+            const parts = timeString.split('.');
+            const hours = parseInt(parts[0], 10) || 0;
+            const minutes = parseInt(parts[1], 10) || 0;
+            if (isNaN(hours) || isNaN(minutes)) {
+                return 0;
+            }
+            return (hours * 60) + minutes;
+        };
+
 
         // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         // 2. APPLICATION STATE
@@ -127,8 +152,9 @@
 
         const formatZeroAsEmpty = (value) => {
             const num = Number(value);
-            if (!num || num === 0) return '';
-            return num.toLocaleString();
+            if (value === '' || value === null || value === undefined || (!num && num !== 0)) return '';
+            if (num === 0) return '';
+            return typeof value === 'number' ? value.toLocaleString() : value;
         };
 
         const logisticsService = {
@@ -386,6 +412,17 @@
                                    <label class="block text-sm font-medium text-gray-400 mb-1">เบี้ยขับ (บาท)</label>
                                    <input type="number" id="form-driver-allowance" placeholder="ข้อมูลจะแสดงอัตโนมัติ (แก้ไขได้)" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent" />
                                 </div>
+                                
+                                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                    <div>
+                                       <label class="block text-sm font-medium text-gray-400 mb-1">ระยะทาง (กม.)</label>
+                                       <input type="number" id="form-kilometers" placeholder="ข้อมูลจะแสดงอัตโนมัติ (แก้ไขได้)" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent" />
+                                    </div>
+                                    <div>
+                                       <label class="block text-sm font-medium text-gray-400 mb-1">เวลาเดินทาง (ชม.)</label>
+                                       <input type="text" id="form-travel-time" placeholder="เช่น 4.30 (4 ชม. 30 นาที)" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent" />
+                                    </div>
+                                </div>
 
                                 <div>
                                    <label class="block text-sm font-medium text-gray-400 mb-1">รายละเอียด</label>
@@ -446,6 +483,10 @@
                     <td class="p-3 text-right font-semibold text-accent">${formatZeroAsEmpty(record.totalLiters)}</td>
                     <td class="p-3 text-right font-semibold text-accent">${formatZeroAsEmpty(record.totalBaht)}</td>
                     <td class="p-3 text-right font-semibold text-success">${formatZeroAsEmpty(record.driverAllowance)}</td>
+                    <td class="p-3 text-right">${formatZeroAsEmpty(record.kilometers)}</td>
+                    <td class="p-3 text-right">${minutesToHoursAndMinutes(record.travelTime)}</td>
+                    <td class="p-3 text-sm text-gray-400">${record.details || ''}</td>
+                    <td class="p-3 text-sm text-gray-400">${record.notes || ''}</td>
                     <td class="p-3 text-center">
                         <div class="flex justify-center gap-2">
                             <button data-action="edit-fuel-record" data-id="${record.id}" class="text-blue-400 hover:text-blue-300 p-2 rounded-full transition-colors">${ICONS.Pencil}</button>
@@ -610,6 +651,10 @@
                                     <th class="p-3 text-right">รวม (ลิตร)</th>
                                     <th class="p-3 text-right">รวม (บาท)</th>
                                     <th class="p-3 text-right">เบี้ยขับ (บาท)</th>
+                                    <th class="p-3 text-right">ระยะทาง (กม.)</th>
+                                    <th class="p-3 text-right">เวลา (ชม.)</th>
+                                    <th class="p-3">รายละเอียด</th>
+                                    <th class="p-3">หมายเหตุ</th>
                                     <th class="p-3 text-center">จัดการ</th>
                                 </tr>
                             </thead>
@@ -707,6 +752,8 @@
                         ${totalBahtText ? `<div>${totalBahtText} B</div>` : ''}
                     </td>
                     <td class="p-3 text-right font-mono border-r border-slate-700">${formatZeroAsEmpty(route.driverAllowance)}</td>
+                    <td class="p-3 text-right font-mono border-r border-slate-700">${formatZeroAsEmpty(route.kilometers)}</td>
+                    <td class="p-3 text-right font-mono border-r border-slate-700">${minutesToHoursAndMinutes(route.travelTime)}</td>
                     ${stationCells}
                     <td class="p-3 text-center">
                         <div class="flex justify-center gap-2">
@@ -737,6 +784,8 @@
                                 <th rowspan="2" class="p-3 border-r border-slate-600 align-middle w-40">ปลายทาง</th>
                                 <th rowspan="2" class="p-3 text-center border-r border-slate-600 align-middle w-28">จำนวน<br>น้ำมัน</th>
                                 <th rowspan="2" class="p-3 text-center border-r border-slate-600 align-middle w-24">เบี้ยขับ<br>(บาท)</th>
+                                <th rowspan="2" class="p-3 text-center border-r border-slate-600 align-middle w-24">ระยะทาง<br>(กม.)</th>
+                                <th rowspan="2" class="p-3 text-center border-r border-slate-600 align-middle w-24">เวลา<br>(ชม.)</th>
                                 ${stationHeaderCells}
                                 <th rowspan="2" class="p-3 text-center align-middle w-24">จัดการ</th>
                             </tr>
@@ -924,6 +973,16 @@
                             <input type="number" name="driverAllowance" value="${route?.driverAllowance || ''}" placeholder="0" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent" />
                         </div>
                     </div>
+                     <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-400 mb-1">ระยะทาง (กม.)</label>
+                            <input type="number" name="kilometers" value="${route?.kilometers || ''}" placeholder="0" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent" />
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-400 mb-1">เวลาเดินทาง (ชม.)</label>
+                            <input type="text" name="travelTime" value="${minutesToHoursAndMinutes(route?.travelTime)}" placeholder="เช่น 4.30 (4 ชม. 30 นาที)" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent" />
+                        </div>
+                    </div>
 
                     <div class="space-y-4 rounded-lg border border-slate-600 p-4">
                         <h3 class="font-semibold text-lg text-white">การกระจายน้ำมัน (ลิตร)</h3>
@@ -1005,6 +1064,17 @@
                     <div>
                         <label class="block text-sm font-medium text-gray-400 mb-1">เบี้ยขับ (บาท)</label>
                         <input type="number" name="driverAllowance" value="${record.driverAllowance || ''}" placeholder="0" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white" />
+                    </div>
+
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-400 mb-1">ระยะทาง (กม.)</label>
+                            <input type="number" name="kilometers" value="${record.kilometers || ''}" placeholder="0" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white" />
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-400 mb-1">เวลาเดินทาง (ชม.)</label>
+                            <input type="text" name="travelTime" value="${minutesToHoursAndMinutes(record.travelTime)}" placeholder="เช่น 4.30 (4 ชม. 30 นาที)" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white" />
+                        </div>
                     </div>
 
                     <!-- Liters Distribution -->
@@ -1302,10 +1372,14 @@
             const distributionListLiters = document.getElementById('distribution-list-liters');
             const distributionListBaht = document.getElementById('distribution-list-baht');
             const driverAllowanceInput = document.getElementById('form-driver-allowance');
+            const kilometersInput = document.getElementById('form-kilometers');
+            const travelTimeInput = document.getElementById('form-travel-time');
             
             if(distributionListLiters) distributionListLiters.innerHTML = '';
             if(distributionListBaht) distributionListBaht.innerHTML = '';
             if(driverAllowanceInput) driverAllowanceInput.value = '';
+            if(kilometersInput) kilometersInput.value = '';
+            if(travelTimeInput) travelTimeInput.value = '';
 
             if (route) {
                 if (distributionListLiters && route.gasStationsLiters) {
@@ -1322,6 +1396,12 @@
                 }
                 if (driverAllowanceInput) {
                     driverAllowanceInput.value = route.driverAllowance || '';
+                }
+                if (kilometersInput) {
+                    kilometersInput.value = route.kilometers || '';
+                }
+                if (travelTimeInput) {
+                    travelTimeInput.value = route.travelTime ? minutesToHoursAndMinutes(route.travelTime) : '';
                 }
             }
             
@@ -1358,6 +1438,15 @@
                     <div class="flex justify-between items-center">
                         <span class="font-semibold text-gray-300">เส้นทาง:</span>
                         <span class="text-right">${route.origin} → ${route.destination}</span>
+                    </div>
+                     <hr class="border-slate-600 my-2">
+                    <div class="flex justify-between items-center text-sm">
+                        <span class="text-gray-400">ระยะทาง:</span>
+                        <span class="font-semibold">${(route.kilometers || 0).toLocaleString()} กม.</span>
+                    </div>
+                    <div class="flex justify-between items-center text-sm">
+                        <span class="text-gray-400">เวลาเดินทาง:</span>
+                        <span class="font-semibold">${minutesToHoursAndMinutes(route.travelTime) || '0.00'} ชม.</span>
                     </div>
                     <hr class="border-slate-600 my-2">
                     <div class="flex justify-between items-center text-lg">
@@ -1417,6 +1506,8 @@
                 document.getElementById('form-total-liters').value = '';
                 document.getElementById('form-total-baht').value = '';
                 document.getElementById('form-driver-allowance').value = '';
+                document.getElementById('form-kilometers').value = '';
+                document.getElementById('form-travel-time').value = '';
                 updateVlookupCard();
                 const status = document.getElementById('form-status');
                 if (status) status.innerHTML = '';
@@ -1445,6 +1536,7 @@
             const vehicleType = form.querySelector('#form-vehicle-type').value;
             const origin = form.querySelector('#form-origin').value;
             const destination = form.querySelector('#form-destination').value;
+            const travelTimeString = form.querySelector('#form-travel-time').value;
 
             const record = {
                 date: form.querySelector('#form-date').value,
@@ -1459,6 +1551,8 @@
                 fuelDistributionBaht: getDistributionData('baht'),
                 totalBaht: Number(form.querySelector('#form-total-baht').value) || 0,
                 driverAllowance: Number(form.querySelector('#form-driver-allowance').value) || 0,
+                kilometers: Number(form.querySelector('#form-kilometers').value) || 0,
+                travelTime: hoursAndMinutesToMinutes(travelTimeString),
             };
 
             if (!record.date || !record.vehicleRegistration || !record.vehicleType || !record.origin || !record.destination) {
@@ -1556,6 +1650,8 @@
                 origin: formData.get('origin'),
                 destination: formData.get('destination'),
                 driverAllowance: Number(formData.get('driverAllowance')) || 0,
+                kilometers: Number(formData.get('kilometers')) || 0,
+                travelTime: hoursAndMinutesToMinutes(formData.get('travelTime')),
                 gasStationsLiters: getDistributionData('Liters'),
                 gasStationsBaht: getDistributionData('Baht'),
             };
@@ -1626,6 +1722,8 @@
                 fuelDistributionLiters: getDistributionData('Liters'),
                 fuelDistributionBaht: getDistributionData('Baht'),
                 driverAllowance: Number(formData.get('driverAllowance')) || 0,
+                kilometers: Number(formData.get('kilometers')) || 0,
+                travelTime: hoursAndMinutesToMinutes(formData.get('travelTime')),
             };
 
             updatedRecord.totalLiters = Object.values(updatedRecord.fuelDistributionLiters).reduce((sum, val) => sum + Number(val), 0);
@@ -1729,9 +1827,11 @@
                     'ประเภทรถ': record.vehicleType,
                     'ต้นทาง': record.origin,
                     'ปลายทาง': record.destination,
-                    'รวม (ลิตร)': record.totalLiters || 0,
-                    'รวม (บาท)': record.totalBaht || 0,
-                    'เบี้ยขับ (บาท)': record.driverAllowance || 0,
+                    'ระยะทาง (กม.)': record.kilometers || '',
+                    'เวลาเดินทาง (ชม.)': record.travelTime ? minutesToHoursAndMinutes(record.travelTime) : '',
+                    'รวม (ลิตร)': record.totalLiters || '',
+                    'รวม (บาท)': record.totalBaht || '',
+                    'เบี้ยขับ (บาท)': record.driverAllowance || '',
                     'รายละเอียด': record.details || '',
                     'หมายเหตุ': record.notes || ''
                 };
