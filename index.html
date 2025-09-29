@@ -31,7 +31,7 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <link rel="stylesheet" href="/index.css">
 </head>
-<body class="bg-base-100 text-gray-300 font-sans">
+<body class="bg-base-100 text-gray-300 font-sans text-base">
     <div id="app-container">
         <!-- App will be rendered here -->
     </div>
@@ -91,6 +91,7 @@
             SortAsc: `<svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 text-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 4h13M3 8h9M3 12h9m-9 4h13m0-4l-3-3m0 6l3-3" /></svg>`,
             SortDesc: `<svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 text-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 4h13M3 8h9M3 12h9m-9 4h13m0 0l-3 3m0-6l3 3m0-6l3-3" /></svg>`,
             Wallet: `<svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12V8a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4"></path><path d="M20 12h-8a2 2 0 0 1 0-4h8v4z"></path></svg>`,
+            ChevronDown: `<svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 transition-transform duration-200" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" /></svg>`,
         };
         
         // --- Utility Functions ---
@@ -392,7 +393,7 @@
                             <div class="bg-gray-200 p-2 rounded-full">
                                <svg xmlns="http://www.w3.org/2000/svg" class="w-8 h-8" viewBox="0 0 24 24" fill="#0369a1"><path d="M12 22a7 7 0 0 0 7-7c0-2-1-3.9-3-5.5s-3.5-4-4-6.5c-.5 2.5-2 4.9-4 6.5C6 11.1 5 13 5 15a7 7 0 0 0 7 7z"></path></svg>
                             </div>
-                            <h1 class="text-xl sm:text-2xl font-bold text-white tracking-wider">NeoSiamLogistics & Transport Fuel</h1>
+                            <h1 class="text-2xl sm:text-3xl font-bold text-white tracking-wider">NeoSiamLogistics & Transport Fuel</h1>
                         </div>
                         <div class="flex items-center gap-2 sm:gap-4">
                             ${navButton('form', ICONS.Truck, 'บันทึกน้ำมัน')}
@@ -411,7 +412,7 @@
         const renderAutocomplete = (id, label, placeholder, options) => {
             return `
                 <div class="relative autocomplete-container" data-id="${id}">
-                    <label class="block text-sm font-medium text-gray-400 mb-1">${label}</label>
+                    <label class="block text-base font-medium text-gray-400 mb-1">${label}</label>
                     <input
                         type="text"
                         id="${id}"
@@ -433,24 +434,24 @@
                 <div class="max-w-4xl mx-auto grid grid-cols-1 md:grid-cols-3 gap-8">
                     <div class="md:col-span-2">
                         ${renderCard(`
-                            <h2 class="text-2xl font-bold text-white mb-6 border-b border-slate-600 pb-2 flex items-center gap-2">
+                            <h2 class="text-3xl font-bold text-white mb-6 border-b border-slate-600 pb-2 flex items-center gap-2">
                                 ${ICONS.DocumentAdd} บันทึกรายการน้ำมันใหม่
                             </h2>
                             <form id="fuel-record-form" class="space-y-6">
                                 <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
                                     <div>
-                                        <label class="block text-sm font-medium text-gray-400 mb-1">วันที่</label>
+                                        <label class="block text-base font-medium text-gray-400 mb-1">วันที่</label>
                                         <input type="date" id="form-date" value="${new Date().toISOString().split('T')[0]}" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent" />
                                     </div>
                                     ${renderAutocomplete('form-vehicle-registration', 'ทะเบียนรถ', 'ค้นหาทะเบียนรถ', logisticsService.getVehicleRegistrations())}
                                     <div>
-                                        <label class="block text-sm font-medium text-gray-400 mb-1">ชื่อพนักงานขับรถ</label>
+                                        <label class="block text-base font-medium text-gray-400 mb-1">ชื่อพนักงานขับรถ</label>
                                         <input type="text" id="form-driver-name" placeholder="ชื่อจะแสดงอัตโนมัติ (แก้ไขได้)" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent" />
                                     </div>
                                 </div>
                                  
                                 <div>
-                                    <label class="block text-sm font-medium text-gray-400 mb-1">ประเภทรถ (สังกัด)</label>
+                                    <label class="block text-base font-medium text-gray-400 mb-1">ประเภทรถ (สังกัด)</label>
                                     <div id="vehicle-ownership-radios" class="flex items-center gap-6">
                                         <label class="flex items-center gap-2 cursor-pointer">
                                             <input type="radio" name="vehicleOwnership" value="company" checked class="radio radio-primary text-accent focus:ring-accent" />
@@ -465,7 +466,7 @@
 
                                 <div id="subcontractor-details" class="hidden space-y-4 p-4 border border-slate-600 rounded-lg">
                                     <div>
-                                        <label class="block text-sm font-medium text-gray-400 mb-1">บริษัทขนส่ง <span class="text-red-400">*</span></label>
+                                        <label class="block text-base font-medium text-gray-400 mb-1">บริษัทขนส่ง <span class="text-red-400">*</span></label>
                                         <select id="form-transport-company" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent">
                                             <option value="">-- กรุณาเลือกบริษัทขนส่ง --</option>
                                             ${transportCompanyOptions}
@@ -484,7 +485,7 @@
                                     <div class="flex justify-between items-center">
                                         <h3 class="font-semibold text-lg text-white">การกระจายน้ำมัน (ลิตร)</h3>
                                         <div class="flex items-center gap-2">
-                                            <label class="text-sm font-medium text-gray-400">ปริมาณรวม</label>
+                                            <label class="text-base font-medium text-gray-400">ปริมาณรวม</label>
                                             <input type="number" id="form-total-liters" placeholder="0" readonly class="w-28 text-right bg-slate-900 cursor-not-allowed border border-slate-600 rounded-md shadow-sm px-3 py-1 text-white" />
                                         </div>
                                     </div>
@@ -497,7 +498,7 @@
                                      <div class="flex justify-between items-center">
                                         <h3 class="font-semibold text-lg text-white">การกระจายน้ำมัน (บาท)</h3>
                                         <div class="flex items-center gap-2">
-                                            <label class="text-sm font-medium text-gray-400">ปริมาณรวม</label>
+                                            <label class="text-base font-medium text-gray-400">ปริมาณรวม</label>
                                             <input type="number" id="form-total-baht" placeholder="0" readonly class="w-28 text-right bg-slate-900 cursor-not-allowed border border-slate-600 rounded-md shadow-sm px-3 py-1 text-white" />
                                         </div>
                                     </div>
@@ -507,33 +508,33 @@
                                 
                                 <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
                                      <div>
-                                        <label class="block text-sm font-medium text-gray-400 mb-1">ค่าขนส่ง (บาท)</label>
+                                        <label class="block text-base font-medium text-gray-400 mb-1">ค่าขนส่ง (บาท)</label>
                                         <input type="number" id="form-shipping-cost" placeholder="ข้อมูลจะแสดงอัตโนมัติ (แก้ไขได้)" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent" />
                                     </div>
                                     <div id="driver-allowance-wrapper">
-                                       <label class="block text-sm font-medium text-gray-400 mb-1">เบี้ยขับ (บาท)</label>
+                                       <label class="block text-base font-medium text-gray-400 mb-1">เบี้ยขับ (บาท)</label>
                                        <input type="number" id="form-driver-allowance" placeholder="ข้อมูลจะแสดงอัตโนมัติ (แก้ไขได้)" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent" />
                                     </div>
                                 </div>
                                 
                                 <div id="km-time-grid" class="grid grid-cols-1 sm:grid-cols-2 gap-4">
                                     <div>
-                                       <label class="block text-sm font-medium text-gray-400 mb-1">ระยะทาง (กม.)</label>
+                                       <label class="block text-base font-medium text-gray-400 mb-1">ระยะทาง (กม.)</label>
                                        <input type="number" id="form-kilometers" placeholder="ข้อมูลจะแสดงอัตโนมัติ (แก้ไขได้)" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent" />
                                     </div>
                                     <div>
-                                       <label class="block text-sm font-medium text-gray-400 mb-1">เวลาเดินทาง (ชม.)</label>
+                                       <label class="block text-base font-medium text-gray-400 mb-1">เวลาเดินทาง (ชม.)</label>
                                        <input type="text" id="form-travel-time" placeholder="เช่น 4.30 (4 ชม. 30 นาที)" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent" />
                                     </div>
                                 </div>
 
                                 <div>
-                                   <label class="block text-sm font-medium text-gray-400 mb-1">รายละเอียด</label>
+                                   <label class="block text-base font-medium text-gray-400 mb-1">รายละเอียด</label>
                                    <textarea id="form-details" placeholder="รายละเอียดเพิ่มเติม" rows="3" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent"></textarea>
                                 </div>
 
                                 <div>
-                                   <label class="block text-sm font-medium text-gray-400 mb-1">หมายเหตุ</label>
+                                   <label class="block text-base font-medium text-gray-400 mb-1">หมายเหตุ</label>
                                    <textarea id="form-notes" placeholder="หมายเหตุเพิ่มเติมเกี่ยวกับการเดินทาง" rows="3" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent"></textarea>
                                 </div>
                                 <div class="flex justify-end pt-4 gap-4">
@@ -585,7 +586,7 @@
                     allowanceCellHtml = `
                         <div class="flex flex-col items-end">
                             <span>${netAllowance > 0 ? netAllowance.toLocaleString() : '0'}</span>
-                            <span class="text-xs text-yellow-400">(สะสม 200)</span>
+                            <span class="text-sm text-yellow-400">(สะสม 200)</span>
                         </div>`;
                 } else {
                     allowanceCellHtml = formatZeroAsEmpty(record.driverAllowance);
@@ -605,8 +606,8 @@
                     <td class="p-3 text-right font-semibold text-success">${allowanceCellHtml}</td>
                     <td class="p-3 text-right">${formatZeroAsEmpty(record.kilometers)}</td>
                     <td class="p-3 text-right">${minutesToHoursAndMinutes(record.travelTime)}</td>
-                    <td class="p-3 text-sm text-gray-400">${record.details || ''}</td>
-                    <td class="p-3 text-sm text-gray-400">${record.notes || ''}</td>
+                    <td class="p-3 text-base text-gray-400">${record.details || ''}</td>
+                    <td class="p-3 text-base text-gray-400">${record.notes || ''}</td>
                     <td class="p-3 text-center">
                         <div class="flex justify-center gap-2">
                             <button data-action="edit-fuel-record" data-id="${record.id}" class="text-blue-400 hover:text-blue-300 p-2 rounded-full transition-colors">${ICONS.Pencil}</button>
@@ -655,13 +656,13 @@
                 }).join('');
 
                 return renderCard(`
-                    <h3 class="text-xl font-bold mb-4 flex items-center gap-2">
+                    <h3 class="text-2xl font-bold mb-4 flex items-center gap-2">
                         <svg xmlns="http://www.w3.org/2000/svg" class="w-6 h-6 text-accent" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 11h1.5a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2h-1.5a2 2 0 0 1-2-2v-2a1 1 0 0 0-1-1h-2a1 1 0 0 0-1 1v2a2 2 0 0 1-2 2H5.5a2 2 0 0 1-2-2v-6a2 2 0 0 1 2-2H7"></path><path d="M14 11V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v7"></path><path d="M4 15h5"></path><path d="M15 4h2"></path></svg>
                         <span>${friendlyNames[key] || key}</span>
                     </h3>
                     <div class="overflow-x-auto max-h-[300px]">
                         <table class="w-full text-left table-auto">
-                            <thead class="bg-slate-800 text-sm text-gray-400 uppercase sticky top-0 z-10">
+                            <thead class="bg-slate-800 text-base text-gray-400 uppercase sticky top-0 z-10">
                                 <tr>
                                     <th class="p-3 whitespace-nowrap">วันที่</th>
                                     <th class="p-3 whitespace-nowrap">ทะเบียน</th>
@@ -670,7 +671,7 @@
                                     <th class="p-3 text-right whitespace-nowrap">ค่าใช้จ่าย (บาท)</th>
                                 </tr>
                             </thead>
-                            <tbody class="text-sm">
+                            <tbody class="text-base">
                                 ${stationRecords.length > 0 ? tableRows : `<tr><td colspan="5" class="text-center py-8 text-gray-500">ไม่มีข้อมูลการเติมน้ำมัน</td></tr>`}
                             </tbody>
                         </table>
@@ -699,7 +700,7 @@
                     allowanceCellHtml = `
                         <div class="flex flex-col items-end">
                             <span>${netAllowance > 0 ? netAllowance.toLocaleString() : '0'}</span>
-                            <span class="text-xs text-yellow-400">(สะสม 200)</span>
+                            <span class="text-sm text-yellow-400">(สะสม 200)</span>
                         </div>`;
                 } else {
                     allowanceCellHtml = formatZeroAsEmpty(record.driverAllowance);
@@ -716,13 +717,13 @@
             `}).join('');
 
             const allowanceSummaryTableHtml = renderCard(`
-                <h3 class="text-xl font-bold mb-4 flex items-center gap-2">
+                <h3 class="text-2xl font-bold mb-4 flex items-center gap-2">
                     <svg xmlns="http://www.w3.org/2000/svg" class="w-6 h-6 text-success" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"></path></svg>
                     <span>สรุปยอดเบี้ยขับ</span>
                 </h3>
                 <div class="overflow-x-auto max-h-[400px]">
                     <table class="w-full text-left table-auto">
-                        <thead class="bg-slate-800 text-sm text-gray-400 uppercase sticky top-0 z-10">
+                        <thead class="bg-slate-800 text-base text-gray-400 uppercase sticky top-0 z-10">
                             <tr>
                                 <th class="p-3 whitespace-nowrap">วันที่</th>
                                 <th class="p-3 whitespace-nowrap">ทะเบียน</th>
@@ -732,7 +733,7 @@
                                 <th class="p-3 text-right whitespace-nowrap">เบี้ยขับ (บาท)</th>
                             </tr>
                         </thead>
-                        <tbody class="text-sm">
+                        <tbody class="text-base">
                             ${allowanceRecords.length > 0 ? allowanceTableRows : `<tr><td colspan="6" class="text-center py-8 text-gray-500">ไม่มีข้อมูลเบี้ยขับ</td></tr>`}
                         </tbody>
                         ${allowanceRecords.length > 0 ? `
@@ -763,13 +764,13 @@
             `).join('');
 
             const subcontractorSummaryTableHtml = renderCard(`
-                <h3 class="text-xl font-bold mb-4 flex items-center gap-2">
+                <h3 class="text-2xl font-bold mb-4 flex items-center gap-2">
                      <svg xmlns="http://www.w3.org/2000/svg" class="w-6 h-6 text-info" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"></path><rect x="8" y="2" width="8" height="4" rx="1" ry="1"></rect></svg>
                     <span>รายงานรถร่วมขนส่ง</span>
                 </h3>
                 <div class="overflow-x-auto max-h-[400px]">
                     <table class="w-full text-left table-auto">
-                        <thead class="bg-slate-800 text-sm text-gray-400 uppercase sticky top-0 z-10">
+                        <thead class="bg-slate-800 text-base text-gray-400 uppercase sticky top-0 z-10">
                             <tr>
                                 <th class="p-3 whitespace-nowrap">วันที่</th>
                                 <th class="p-3 whitespace-nowrap">ทะเบียน</th>
@@ -780,7 +781,7 @@
                                 <th class="p-3 text-right whitespace-nowrap">ค่าขนส่ง (บาท)</th>
                             </tr>
                         </thead>
-                        <tbody class="text-sm">
+                        <tbody class="text-base">
                             ${subcontractorRecords.length > 0 ? subcontractorTableRows : `<tr><td colspan="7" class="text-center py-8 text-gray-500">ไม่มีข้อมูลรถร่วมขนส่ง</td></tr>`}
                         </tbody>
                         ${subcontractorRecords.length > 0 ? `
@@ -807,7 +808,7 @@
                 </div>
 
                 <div class="space-y-6">
-                    <h2 class="text-2xl font-bold text-white mt-8 border-b border-slate-600 pb-2">สรุปยอดเติมน้ำมันรายปั๊ม</h2>
+                    <h2 class="text-3xl font-bold text-white mt-8 border-b border-slate-600 pb-2">สรุปยอดเติมน้ำมันรายปั๊ม</h2>
                     <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
                         ${stationTablesHtml}
                     </div>
@@ -824,9 +825,9 @@
                 <div class="mt-8">
                 ${renderCard(`
                     <div class="flex flex-wrap justify-between items-center gap-4 mb-4">
-                        <h3 class="text-xl font-bold">รายการน้ำมันล่าสุดทั้งหมด</h3>
+                        <h3 class="text-2xl font-bold">รายการน้ำมันล่าสุดทั้งหมด</h3>
                         <div class="flex items-center gap-2">
-                            <label for="record-limit-select" class="text-sm text-gray-400">แสดง:</label>
+                            <label for="record-limit-select" class="text-base text-gray-400">แสดง:</label>
                             <select id="record-limit-select" class="bg-slate-800 border border-slate-600 rounded-md px-2 py-1 text-white focus:outline-none focus:ring-1 focus:ring-accent">
                                 ${limitOptions}
                             </select>
@@ -834,7 +835,7 @@
                     </div>
                     <div class="overflow-x-auto max-h-[600px]">
                         <table class="w-full text-left">
-                            <thead class="bg-slate-800 text-sm text-gray-400 uppercase sticky top-0 z-10">
+                            <thead class="bg-slate-800 text-base text-gray-400 uppercase sticky top-0 z-10">
                                 <tr>
                                     <th class="p-3">วันที่</th>
                                     <th class="p-3">ทะเบียน</th>
@@ -872,7 +873,7 @@
                 <div class="space-y-8">
                     ${renderCard(`
                         <div class="flex flex-wrap justify-between items-center gap-4 mb-4">
-                             <h2 class="text-2xl font-bold">ตัวกรองแดชบอร์ด</h2>
+                             <h2 class="text-3xl font-bold">ตัวกรองแดชบอร์ด</h2>
                             <div class="flex items-center gap-2">
                                 <button id="clear-dashboard-filters-btn" class="flex items-center gap-2 bg-yellow-600 hover:bg-yellow-700 text-white font-bold py-2 px-4 rounded-lg shadow-md transition-transform transform hover:scale-105">
                                     ${ICONS.Clear} ล้างตัวกรอง
@@ -899,6 +900,42 @@
             `;
         };
 
+        const renderStationBreakdown = (route) => {
+            const liters = route.gasStationsLiters || {};
+            const baht = route.gasStationsBaht || {};
+            const allStations = new Set([...Object.keys(liters), ...Object.keys(baht)]);
+
+            if (allStations.size === 0) {
+                return `
+                    <div class="md:col-span-2">
+                        <h4 class="font-bold text-gray-300 mb-2">การกระจายน้ำมัน</h4>
+                        <p class="text-base text-gray-500">ไม่มีข้อมูลการเติมน้ำมันสำหรับเส้นทางนี้</p>
+                    </div>
+                `;
+            }
+
+            const stationList = Array.from(allStations).map(key => `
+                <div class="flex justify-between">
+                    <dt class="text-gray-400">${logisticsService.getFriendlyGasStationName(key)}:</dt>
+                    <dd class="font-mono text-right">
+                        ${liters[key] ? `<span class="text-accent">${liters[key].toLocaleString()} L</span>` : ''}
+                        ${liters[key] && baht[key] ? `<span class="text-gray-500 mx-1">/</span>` : ''}
+                        ${baht[key] ? `<span class="text-yellow-400">${baht[key].toLocaleString()} B</span>` : ''}
+                    </dd>
+                </div>
+            `).join('');
+
+            return `
+                <div class="md:col-span-2">
+                    <h4 class="font-bold text-gray-300 mb-2">การกระจายน้ำมัน</h4>
+                    <dl class="space-y-1 text-base">
+                        ${stationList}
+                    </dl>
+                </div>
+            `;
+        }
+
+
         const updateRoutesTableBody = () => {
             let routes = logisticsService.getRoutes();
 
@@ -906,8 +943,6 @@
             const activeFilters = Object.entries(appState.routeFilters).filter(([, value]) => value);
             if (activeFilters.length > 0) {
                 routes = routes.filter(route => {
-                    // ใช้ .every() เพื่อให้แน่ใจว่า route ที่จะแสดงนั้น
-                    // ต้องตรงกับ "ทุก" เงื่อนไข (filter) ที่ผู้ใช้กรอกเข้ามา
                     return activeFilters.every(([key, filterValue]) => {
                         const routeValue = route[key];
                         if (filterValue === null || filterValue === '') return true;
@@ -924,8 +959,12 @@
             if (sortKey) {
                 const isNumeric = ['driverAllowance', 'kilometers', 'travelTime', 'totalLiters', 'totalBaht', 'shippingCost'].includes(sortKey);
                 routes.sort((a, b) => {
-                    const valA = a[sortKey] || (isNumeric ? 0 : '');
-                    const valB = b[sortKey] || (isNumeric ? 0 : '');
+                    let valA = a[sortKey] || (isNumeric ? 0 : '');
+                    let valB = b[sortKey] || (isNumeric ? 0 : '');
+                    if (sortKey === 'origin') { // special sort for combined route
+                        valA = `${a.origin} ${a.destination}`;
+                        valB = `${b.origin} ${b.destination}`;
+                    }
                     let comparison = 0;
                     if (isNumeric) {
                         comparison = valA - valB;
@@ -940,128 +979,115 @@
             if (!tableBody) return;
 
             if (routes.length === 0) {
-                const stationCount = logisticsService.getAllGasStationKeys().length;
-                const colspan = 9 + (stationCount * 2) + 1; // 9 base + 2 per station + 1 actions
-                tableBody.innerHTML = `<tr><td colspan="${colspan}" class="text-center py-8 text-gray-500">ไม่พบข้อมูลเส้นทางที่ตรงตามเงื่อนไข</td></tr>`;
+                tableBody.innerHTML = `<tr><td colspan="8" class="text-center py-8 text-gray-500">ไม่พบข้อมูลเส้นทางที่ตรงตามเงื่อนไข</td></tr>`;
                 return;
             }
 
-            const tableColumns = logisticsService.getAllGasStationKeys().map(key => ({
-                key,
-                units: ['Liters', 'Baht']
-            }));
-
             const tableRows = routes.map(route => {
-                const stationCells = tableColumns.map(col => {
-                    return col.units.map(unit => {
-                        const value = (unit === 'Liters') 
-                            ? route.gasStationsLiters?.[col.key] 
-                            : route.gasStationsBaht?.[col.key];
-                        return `<td class="p-3 text-right font-mono border-r border-slate-700">${formatZeroAsEmpty(value)}</td>`;
-                    }).join('');
-                }).join('');
-
                 const totalLitersText = formatZeroAsEmpty(route.totalLiters);
                 const totalBahtText = formatZeroAsEmpty(route.totalBaht);
 
-                return `
-                <tr key="${route.id}" class="border-b border-slate-600 hover:bg-slate-700/20">
-                    <td class="p-3 border-r border-slate-700">${route.vehicleType}</td>
-                    <td class="p-3 border-r border-slate-700">${route.origin}</td>
-                    <td class="p-3 border-r border-slate-700">${route.destination}</td>
-                    <td class="p-3 border-r border-slate-700">${route.transportCompany || ''}</td>
-                    <td class="p-3 text-right font-mono border-r border-slate-700">${formatZeroAsEmpty(route.shippingCost)}</td>
-                    <td class="p-3 text-right font-semibold text-accent border-r border-slate-700">
-                        ${totalLitersText ? `<div>${totalLitersText} L</div>` : ''}
-                        ${totalBahtText ? `<div>${totalBahtText} B</div>` : ''}
+                const mainRow = `
+                <tr key="${route.id}" class="border-b border-slate-700 hover:bg-slate-700/20">
+                    <td class="p-2 text-center">
+                         <button data-action="toggle-route-details" data-target-id="${route.id}" class="p-2 rounded-full hover:bg-slate-600">
+                           ${ICONS.ChevronDown}
+                        </button>
                     </td>
-                    <td class="p-3 text-right font-mono border-r border-slate-700">${formatZeroAsEmpty(route.driverAllowance)}</td>
-                    <td class="p-3 text-right font-mono border-r border-slate-700">${formatZeroAsEmpty(route.kilometers)}</td>
-                    <td class="p-3 text-right font-mono border-r border-slate-700">${minutesToHoursAndMinutes(route.travelTime)}</td>
-                    ${stationCells}
-                    <td class="p-3 text-center">
-                        <div class="flex justify-center gap-2">
+                    <td class="p-3 align-top">${route.vehicleType}</td>
+                    <td class="p-3 align-top">${route.origin} → ${route.destination}</td>
+                    <td class="p-3 align-top">${route.transportCompany || '-'}</td>
+                    <td class="p-3 text-right align-top">
+                        <div class="font-semibold text-accent">${totalLitersText ? `${totalLitersText} L` : ''}</div>
+                        <div class="text-base text-yellow-400">${totalBahtText ? `${totalBahtText} B` : ''}</div>
+                    </td>
+                    <td class="p-3 text-right font-mono align-top">${formatZeroAsEmpty(route.driverAllowance)}</td>
+                    <td class="p-3 text-right font-mono align-top">${formatZeroAsEmpty(route.shippingCost)}</td>
+                    <td class="p-3 text-center align-top">
+                        <div class="flex justify-center items-start gap-2">
                             <button data-action="edit-route" data-id="${route.id}" class="text-blue-400 hover:text-blue-300 p-2 rounded-full transition-colors">${ICONS.Pencil}</button>
                             <button data-action="delete-route" data-id="${route.id}" class="text-red-500 hover:text-red-400 p-2 rounded-full transition-colors">${ICONS.Trash}</button>
                         </div>
                     </td>
-                </tr>
-            `}).join('');
+                </tr>`;
+
+                const detailsRow = `
+                <tr id="details-${route.id}" class="hidden">
+                    <td colspan="8" class="p-0 border-b border-slate-700">
+                        <div class="bg-slate-900/50 p-6 grid grid-cols-1 md:grid-cols-3 gap-6">
+                            <div>
+                                <h4 class="font-bold text-gray-300 mb-2">ข้อมูลการเดินทาง</h4>
+                                <dl class="space-y-1 text-base">
+                                    <div class="flex justify-between">
+                                        <dt class="text-gray-400">ระยะทาง:</dt>
+                                        <dd class="font-mono">${formatZeroAsEmpty(route.kilometers) || '-'} กม.</dd>
+                                    </div>
+                                    <div class="flex justify-between">
+                                        <dt class="text-gray-400">เวลา:</dt>
+                                        <dd class="font-mono">${minutesToHoursAndMinutes(route.travelTime) || '-'} ชม.</dd>
+                                    </div>
+                                </dl>
+                            </div>
+                            ${renderStationBreakdown(route)}
+                        </div>
+                    </td>
+                </tr>`;
+
+                return mainRow + detailsRow;
+            }).join('');
+
 
             tableBody.innerHTML = tableRows;
         };
 
         const renderDataManagementContent = () => {
-            // This function now only renders the table structure, headers, and filters.
-            // The initial population of the tbody is handled by attachDataManagementListeners -> updateRoutesTableBody
             const renderSortableHeader = (key, label, extraClasses = '') => {
                 let icon = ICONS.Sort;
                 if (appState.routeSort.key === key) {
                     icon = appState.routeSort.direction === 'asc' ? ICONS.SortAsc : ICONS.SortDesc;
                 }
-                return `<th rowspan="2" data-action="sort-routes" data-key="${key}" class="p-3 border-r border-slate-600 align-middle cursor-pointer hover:bg-slate-700 ${extraClasses}">
-                    <div class="flex items-center justify-center gap-2">${label}${icon}</div>
+                return `<th data-action="sort-routes" data-key="${key}" class="p-3 align-middle cursor-pointer hover:bg-slate-700 ${extraClasses}">
+                    <div class="flex items-center gap-2">${label}${icon}</div>
                 </th>`;
             };
             
-            const renderFilterInput = (key) => {
-                 return `<td class="p-1 border-r border-slate-700 bg-slate-900">
-                    <input type="text" data-filter-key="${key}" value="${appState.routeFilters[key] || ''}" class="w-full bg-slate-800 border-none rounded-sm px-2 py-1 text-white text-xs focus:outline-none focus:ring-1 focus:ring-accent" />
-                </td>`;
+            const renderFilterInput = (key, placeholder = '') => {
+                 return `<input type="text" data-filter-key="${key}" value="${appState.routeFilters[key] || ''}" placeholder="${placeholder}" class="w-full bg-slate-800 border-none rounded-sm px-2 py-1 text-white text-sm focus:outline-none focus:ring-1 focus:ring-accent" />`;
             }
 
-            const stationHeaderCells = logisticsService.getAllGasStationKeys().map(key => {
-                const friendlyName = logisticsService.getFriendlyGasStationName(key);
-                return `<th colspan="2" class="p-3 text-center border-b border-r border-slate-600">${friendlyName}</th>`;
-            }).join('');
-
-            const subHeaderCells = logisticsService.getAllGasStationKeys().map(() => `
-                <th class="p-2 text-center bg-yellow-600/80 text-white border-r border-slate-600">ลิตร</th>
-                <th class="p-2 text-center bg-yellow-600/80 text-white border-r border-slate-600">บาท</th>
-            `).join('');
-            
-            const stationFilterCells = logisticsService.getAllGasStationKeys().map(() => `
-                <td class="p-1 border-r border-slate-700 bg-slate-900" colspan="2"></td>
-            `).join('');
-
-            // Initial table body is empty, it will be populated by updateRoutesTableBody
-            const initialTableBody = `<tr><td colspan="26" class="text-center py-8 text-gray-500">กำลังโหลดข้อมูล...</td></tr>`;
+            const initialTableBody = `<tr><td colspan="8" class="text-center py-8 text-gray-500">กำลังโหลดข้อมูล...</td></tr>`;
 
             return renderCard(`
-                <div class="overflow-x-auto max-h-[75vh]">
-                    <table class="w-full text-left table-fixed">
-                        <thead class="bg-slate-800 text-sm text-gray-400 uppercase sticky top-0 z-10">
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left">
+                        <thead class="bg-slate-800 text-base text-gray-400 uppercase sticky top-0 z-10">
                             <tr>
+                                <th class="p-3 w-12"></th>
                                 ${renderSortableHeader('vehicleType', 'ประเภทรถ', 'w-32')}
-                                ${renderSortableHeader('origin', 'ต้นทาง', 'w-40')}
-                                ${renderSortableHeader('destination', 'ปลายทาง', 'w-40')}
+                                ${renderSortableHeader('origin', 'เส้นทาง', 'w-64')}
                                 ${renderSortableHeader('transportCompany', 'บริษัทขนส่ง', 'w-40')}
-                                ${renderSortableHeader('shippingCost', 'ค่าขนส่ง<br>(บาท)', 'w-28')}
-                                <th rowspan="2" class="p-3 text-center border-r border-slate-600 align-middle w-28">จำนวน<br>น้ำมัน</th>
-                                ${renderSortableHeader('driverAllowance', 'เบี้ยขับ<br>(บาท)', 'w-24')}
-                                ${renderSortableHeader('kilometers', 'ระยะทาง<br>(กม.)', 'w-24')}
-                                ${renderSortableHeader('travelTime', 'เวลา<br>(ชม.)', 'w-24')}
-                                ${stationHeaderCells}
-                                <th rowspan="2" class="p-3 text-center align-middle w-24">จัดการ</th>
+                                <th class="p-3 w-32">รวมน้ำมัน</th>
+                                ${renderSortableHeader('driverAllowance', 'เบี้ยขับ (บาท)', 'w-28')}
+                                ${renderSortableHeader('shippingCost', 'ค่าขนส่ง (บาท)', 'w-28')}
+                                <th class="p-3 w-24 text-center">จัดการ</th>
                             </tr>
-                            <tr>
-                                ${subHeaderCells}
-                            </tr>
-                            <tr id="routes-table-filter-row">
-                                ${renderFilterInput('vehicleType')}
-                                ${renderFilterInput('origin')}
-                                ${renderFilterInput('destination')}
-                                ${renderFilterInput('transportCompany')}
-                                ${renderFilterInput('shippingCost')}
-                                <td class="p-1 border-r border-slate-700 bg-slate-900"></td>
-                                ${renderFilterInput('driverAllowance')}
-                                ${renderFilterInput('kilometers')}
-                                ${renderFilterInput('travelTime')}
-                                ${stationFilterCells}
-                                <td class="p-1 bg-slate-900"></td>
+                             <tr id="routes-table-filter-row" class="bg-slate-900">
+                                <td class="p-1"></td>
+                                <td class="p-1">${renderFilterInput('vehicleType')}</td>
+                                <td class="p-1">
+                                    <div class="flex gap-1">
+                                        ${renderFilterInput('origin', 'ต้นทาง...')}
+                                        ${renderFilterInput('destination', 'ปลายทาง...')}
+                                    </div>
+                                </td>
+                                <td class="p-1">${renderFilterInput('transportCompany')}</td>
+                                <td class="p-1"></td>
+                                <td class="p-1">${renderFilterInput('driverAllowance')}</td>
+                                <td class="p-1">${renderFilterInput('shippingCost')}</td>
+                                <td class="p-1"></td>
                             </tr>
                         </thead>
-                        <tbody id="routes-table-body">${initialTableBody}</tbody>
+                        <tbody id="routes-table-body" class="text-base">${initialTableBody}</tbody>
                     </table>
                 </div>
             `);
@@ -1073,7 +1099,7 @@
                 <div class="space-y-8">
                     ${renderCard(`
                         <div class="flex flex-wrap justify-between items-center gap-4">
-                            <h2 class="text-2xl font-bold text-white flex items-center gap-3">${ICONS.Database}จัดการข้อมูลเส้นทาง</h2>
+                            <h2 class="text-3xl font-bold text-white flex items-center gap-3">${ICONS.Database}จัดการข้อมูลเส้นทาง</h2>
                             <div class="flex items-center gap-4">
                                 <button id="refresh-routes-btn" title="รีเฟรชข้อมูล" class="bg-sky-600 hover:bg-sky-700 text-white font-bold p-2 rounded-lg shadow-md transition-transform transform hover:scale-105">
                                     ${ICONS.Refresh}
@@ -1115,7 +1141,7 @@
             return renderCard(`
                 <div class="overflow-x-auto">
                     <table class="w-full text-left">
-                        <thead class="bg-slate-800 text-sm text-gray-400 uppercase">
+                        <thead class="bg-slate-800 text-base text-gray-400 uppercase">
                             <tr>
                                 <th class="p-3">ทะเบียนรถ</th><th class="p-3">ประเภทรถ</th><th class="p-3 text-center">จัดการ</th>
                             </tr>
@@ -1133,7 +1159,7 @@
                 <div class="space-y-8">
                     ${renderCard(`
                         <div class="flex flex-wrap justify-between items-center gap-4">
-                            <h2 class="text-2xl font-bold text-white flex items-center gap-3">${ICONS.IdCard}จัดการข้อมูลทะเบียนรถ</h2>
+                            <h2 class="text-3xl font-bold text-white flex items-center gap-3">${ICONS.IdCard}จัดการข้อมูลทะเบียนรถ</h2>
                             <div class="flex items-center gap-4">
                                 <input type="text" id="vehicle-management-filter" value="${appState.vehicleManagementFilter}" placeholder="ค้นหาทะเบียน/ประเภท..." class="w-full md:w-64 bg-slate-800 border border-slate-600 rounded-md px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent" />
                                  <button id="refresh-vehicles-btn" title="รีเฟรชข้อมูล" class="bg-sky-600 hover:bg-sky-700 text-white font-bold p-2 rounded-lg shadow-md transition-transform transform hover:scale-105">
@@ -1215,7 +1241,7 @@
                     <td class="p-3 text-right text-yellow-400">${driver.totalPaid.toLocaleString()}</td>
                     <td class="p-3 text-right font-bold text-success">${driver.netBalance.toLocaleString()}</td>
                     <td class="p-3 text-center">
-                        <button data-action="show-driver-savings-details" data-driver-name="${driver.driverName}" class="bg-sky-600 hover:bg-sky-700 text-white text-xs font-bold py-1 px-3 rounded-md transition">
+                        <button data-action="show-driver-savings-details" data-driver-name="${driver.driverName}" class="bg-sky-600 hover:bg-sky-700 text-white text-sm font-bold py-1 px-3 rounded-md transition">
                             รายละเอียด
                         </button>
                     </td>
@@ -1225,7 +1251,7 @@
             return renderCard(`
                 <div class="overflow-x-auto">
                     <table class="w-full text-left">
-                        <thead class="bg-slate-800 text-sm text-gray-400 uppercase">
+                        <thead class="bg-slate-800 text-base text-gray-400 uppercase">
                             <tr>
                                 <th class="p-3 text-center w-16">#</th>
                                 <th class="p-3">ชื่อพนักงานขับรถ</th>
@@ -1250,7 +1276,7 @@
                 <div class="space-y-8">
                     ${renderCard(`
                         <div class="flex flex-wrap justify-between items-center gap-4">
-                            <h2 class="text-2xl font-bold text-white flex items-center gap-3">${ICONS.Wallet}รายงานเงินสะสมพนักงานขับรถ (หักเที่ยวละ 200 บาท)</h2>
+                            <h2 class="text-3xl font-bold text-white flex items-center gap-3">${ICONS.Wallet}รายงานเงินสะสมพนักงานขับรถ (หักเที่ยวละ 200 บาท)</h2>
                             <div class="flex items-center gap-4">
                                 <button id="add-new-carryover-btn" data-action="add-new-carryover" class="flex items-center gap-2 bg-success hover:bg-green-600 text-white font-bold py-2 px-4 rounded-lg shadow-md transition-transform transform hover:scale-105">
                                     ${ICONS.Plus} เพิ่มยอดยกมา
@@ -1282,7 +1308,7 @@
                 <div class="fixed inset-0 bg-black bg-opacity-70 z-40 flex justify-center items-center">
                     <div class="bg-neutral rounded-xl shadow-2xl w-full ${maxWidth} max-h-[90vh] flex flex-col">
                         <header class="flex justify-between items-center p-4 border-b border-slate-600">
-                            <h2 class="text-xl font-bold text-white">${title}</h2>
+                            <h2 class="text-2xl font-bold text-white">${title}</h2>
                             <button data-action="close-modal" class="text-gray-400 hover:text-white transition-colors">
                                 <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
                             </button>
@@ -1305,7 +1331,7 @@
                 <div class="fixed inset-0 bg-black bg-opacity-70 z-40 flex justify-center items-center">
                     <div class="bg-neutral rounded-xl shadow-2xl w-full max-w-md">
                         <header class="flex justify-between items-center p-4 border-b border-slate-600">
-                            <h2 class="text-xl font-bold text-white">เข้าสู่หน้าจัดการข้อมูล</h2>
+                            <h2 class="text-2xl font-bold text-white">เข้าสู่หน้าจัดการข้อมูล</h2>
                             <button data-action="close-modal" class="text-gray-400 hover:text-white transition-colors">
                                 <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
                             </button>
@@ -1313,7 +1339,7 @@
                         <main class="p-6">
                              <form id="auth-form" class="space-y-4">
                                 <div>
-                                    <label for="password" class="block text-sm font-medium text-gray-400 mb-1">กรุณากรอกรหัสผ่านเพื่อดำเนินการต่อ</label>
+                                    <label for="password" class="block text-base font-medium text-gray-400 mb-1">กรุณากรอกรหัสผ่านเพื่อดำเนินการต่อ</label>
                                     <input id="password" type="password" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent" autofocus />
                                 </div>
                                 <p id="auth-error" class="text-sm text-red-400 hidden"></p>
@@ -1341,41 +1367,41 @@
                     <input type="hidden" name="id" value="${route?.id || ''}" />
                     <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         <div>
-                            <label class="block text-sm font-medium text-gray-400 mb-1">ประเภทรถ</label>
+                            <label class="block text-base font-medium text-gray-400 mb-1">ประเภทรถ</label>
                             <input type="text" name="vehicleType" value="${route?.vehicleType || ''}" placeholder="เช่น, 18 ล้อ" required class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent" />
                         </div>
                         <div>
-                            <label class="block text-sm font-medium text-gray-400 mb-1">ต้นทาง</label>
+                            <label class="block text-base font-medium text-gray-400 mb-1">ต้นทาง</label>
                             <input type="text" name="origin" value="${route?.origin || ''}" placeholder="เช่น, กทม" required class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent" />
                         </div>
                     </div>
                     <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         <div>
-                            <label class="block text-sm font-medium text-gray-400 mb-1">ปลายทาง</label>
+                            <label class="block text-base font-medium text-gray-400 mb-1">ปลายทาง</label>
                             <input type="text" name="destination" value="${route?.destination || ''}" placeholder="เช่น, เชียงใหม่" required class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent" />
                         </div>
                          <div>
-                            <label class="block text-sm font-medium text-gray-400 mb-1">บริษัทขนส่ง</label>
+                            <label class="block text-base font-medium text-gray-400 mb-1">บริษัทขนส่ง</label>
                             <input type="text" name="transportCompany" value="${route?.transportCompany || ''}" placeholder="ชื่อบริษัท" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent" />
                         </div>
                     </div>
                     <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         <div>
-                            <label class="block text-sm font-medium text-gray-400 mb-1">ราคาค่าขนส่ง (บาท)</label>
+                            <label class="block text-base font-medium text-gray-400 mb-1">ราคาค่าขนส่ง (บาท)</label>
                             <input type="number" name="shippingCost" value="${route?.shippingCost || ''}" placeholder="0" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent" />
                         </div>
                         <div>
-                            <label class="block text-sm font-medium text-gray-400 mb-1">เบี้ยขับ (บาท)</label>
+                            <label class="block text-base font-medium text-gray-400 mb-1">เบี้ยขับ (บาท)</label>
                             <input type="number" name="driverAllowance" value="${route?.driverAllowance || ''}" placeholder="0" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent" />
                         </div>
                     </div>
                      <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         <div>
-                            <label class="block text-sm font-medium text-gray-400 mb-1">ระยะทาง (กม.)</label>
+                            <label class="block text-base font-medium text-gray-400 mb-1">ระยะทาง (กม.)</label>
                             <input type="number" name="kilometers" value="${route?.kilometers || ''}" placeholder="0" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent" />
                         </div>
                         <div>
-                            <label class="block text-sm font-medium text-gray-400 mb-1">เวลาเดินทาง (ชม.)</label>
+                            <label class="block text-base font-medium text-gray-400 mb-1">เวลาเดินทาง (ชม.)</label>
                             <input type="text" name="travelTime" value="${minutesToHoursAndMinutes(route?.travelTime)}" placeholder="เช่น 4.30 (4 ชม. 30 นาที)" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent" />
                         </div>
                     </div>
@@ -1410,11 +1436,11 @@
                 <form id="vehicle-form" class="space-y-6">
                     <input type="hidden" name="id" value="${vehicle?.id || ''}" />
                     <div>
-                        <label class="block text-sm font-medium text-gray-400 mb-1">ทะเบียนรถ</label>
+                        <label class="block text-base font-medium text-gray-400 mb-1">ทะเบียนรถ</label>
                         <input type="text" name="registrationNumber" value="${vehicle?.registrationNumber || ''}" placeholder="เช่น, 70-1234" required class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent" />
                     </div>
                     <div>
-                        <label class="block text-sm font-medium text-gray-400 mb-1">ประเภทรถ</label>
+                        <label class="block text-base font-medium text-gray-400 mb-1">ประเภทรถ</label>
                         <input type="text" name="vehicleType" value="${vehicle?.vehicleType || ''}" placeholder="เช่น, 18 ล้อ HINO" required class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent" />
                     </div>
                     <footer class="flex justify-end gap-4 pt-4">
@@ -1436,24 +1462,24 @@
                     <input type="hidden" name="id" value="${record.id}" />
                     <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         <div>
-                            <label class="block text-sm font-medium text-gray-400 mb-1">วันที่</label>
+                            <label class="block text-base font-medium text-gray-400 mb-1">วันที่</label>
                             <input type="date" name="date" value="${record.date}" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white" />
                         </div>
                         <div>
-                            <label class="block text-sm font-medium text-gray-400 mb-1">ทะเบียนรถ</label>
+                            <label class="block text-base font-medium text-gray-400 mb-1">ทะเบียนรถ</label>
                             <input type="text" name="vehicleRegistration" value="${record.vehicleRegistration}" placeholder="เช่น, กข-1234" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white" />
                         </div>
                     </div>
                      <div>
-                        <label class="block text-sm font-medium text-gray-400 mb-1">ชื่อพนักงานขับรถ</label>
+                        <label class="block text-base font-medium text-gray-400 mb-1">ชื่อพนักงานขับรถ</label>
                         <input type="text" name="driverName" value="${record.driverName || ''}" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white" />
                     </div>
                      <div>
-                        <label class="block text-sm font-medium text-gray-400 mb-1">ประเภทรถ</label>
+                        <label class="block text-base font-medium text-gray-400 mb-1">ประเภทรถ</label>
                         <input type="text" name="vehicleType" value="${record.vehicleType}" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white" />
                     </div>
                      <div>
-                        <label class="block text-sm font-medium text-gray-400 mb-1">ประเภทรถ (สังกัด)</label>
+                        <label class="block text-base font-medium text-gray-400 mb-1">ประเภทรถ (สังกัด)</label>
                         <div class="flex items-center gap-6">
                             <label class="flex items-center gap-2 cursor-pointer">
                                 <input type="radio" name="vehicleOwnership" value="company" ${record.vehicleOwnership === 'company' || !record.vehicleOwnership ? 'checked' : ''} />
@@ -1466,7 +1492,7 @@
                         </div>
                     </div>
                     <div id="edit-subcontractor-details" class="${record.vehicleOwnership === 'subcontractor' ? '' : 'hidden'}">
-                        <label class="block text-sm font-medium text-gray-400 mb-1">บริษัทขนส่ง <span class="text-red-400">*</span></label>
+                        <label class="block text-base font-medium text-gray-400 mb-1">บริษัทขนส่ง <span class="text-red-400">*</span></label>
                         <select name="transportCompany" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white">
                             <option value="">-- กรุณาเลือกบริษัทขนส่ง --</option>
                             ${transportCompanyOptions}
@@ -1475,33 +1501,33 @@
 
                     <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
                          <div>
-                            <label class="block text-sm font-medium text-gray-400 mb-1">ต้นทาง</label>
+                            <label class="block text-base font-medium text-gray-400 mb-1">ต้นทาง</label>
                             <input type="text" name="origin" value="${record.origin}" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white" />
                         </div>
                         <div>
-                            <label class="block text-sm font-medium text-gray-400 mb-1">ปลายทาง</label>
+                            <label class="block text-base font-medium text-gray-400 mb-1">ปลายทาง</label>
                             <input type="text" name="destination" value="${record.destination}" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white" />
                         </div>
                     </div>
                     
                     <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         <div>
-                            <label class="block text-sm font-medium text-gray-400 mb-1">ค่าขนส่ง (บาท)</label>
+                            <label class="block text-base font-medium text-gray-400 mb-1">ค่าขนส่ง (บาท)</label>
                             <input type="number" name="shippingCost" value="${record.shippingCost || ''}" placeholder="0" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white" />
                         </div>
                         <div>
-                            <label class="block text-sm font-medium text-gray-400 mb-1">เบี้ยขับ (บาท)</label>
+                            <label class="block text-base font-medium text-gray-400 mb-1">เบี้ยขับ (บาท)</label>
                             <input type="number" name="driverAllowance" value="${record.driverAllowance || ''}" placeholder="0" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white" />
                         </div>
                     </div>
 
                     <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         <div>
-                            <label class="block text-sm font-medium text-gray-400 mb-1">ระยะทาง (กม.)</label>
+                            <label class="block text-base font-medium text-gray-400 mb-1">ระยะทาง (กม.)</label>
                             <input type="number" name="kilometers" value="${record.kilometers || ''}" placeholder="0" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white" />
                         </div>
                         <div>
-                            <label class="block text-sm font-medium text-gray-400 mb-1">เวลาเดินทาง (ชม.)</label>
+                            <label class="block text-base font-medium text-gray-400 mb-1">เวลาเดินทาง (ชม.)</label>
                             <input type="text" name="travelTime" value="${minutesToHoursAndMinutes(record.travelTime)}" placeholder="เช่น 4.30 (4 ชม. 30 นาที)" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white" />
                         </div>
                     </div>
@@ -1525,12 +1551,12 @@
                     </div>
 
                     <div>
-                        <label class="block text-sm font-medium text-gray-400 mb-1">รายละเอียด</label>
+                        <label class="block text-base font-medium text-gray-400 mb-1">รายละเอียด</label>
                         <textarea name="details" placeholder="รายละเอียดเพิ่มเติม" rows="3" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white">${record.details || ''}</textarea>
                     </div>
                     
                     <div>
-                        <label class="block text-sm font-medium text-gray-400 mb-1">หมายเหตุ</label>
+                        <label class="block text-base font-medium text-gray-400 mb-1">หมายเหตุ</label>
                         <textarea name="notes" placeholder="หมายเหตุเพิ่มเติมเกี่ยวกับการเดินทาง" rows="3" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white">${record.notes || ''}</textarea>
                     </div>
 
@@ -1606,6 +1632,15 @@
             if (action === 'delete-route') handleDeleteRoute(id);
             if (action === 'add-route-distribution') handleAddRouteDistribution(target);
             if (action === 'sort-routes') handleSortRoutes(target.dataset.key);
+            if (action === 'toggle-route-details') {
+                const detailsId = `details-${target.dataset.targetId}`;
+                const detailsRow = document.getElementById(detailsId);
+                const icon = target.querySelector('svg');
+                if (detailsRow) {
+                    detailsRow.classList.toggle('hidden');
+                    icon.classList.toggle('rotate-180');
+                }
+            }
 
             // --- Fuel Record Actions ---
             if (action === 'edit-fuel-record') handleEditFuelRecord(id);
@@ -1949,18 +1984,18 @@
 
             if (!route) {
                 cardContent.innerHTML = `
-                    <h3 class="text-xl font-bold text-white mb-4">ข้อมูลเส้นทาง</h3>
+                    <h3 class="text-2xl font-bold text-white mb-4">ข้อมูลเส้นทาง</h3>
                     <p class="text-gray-400">ไม่พบข้อมูลเส้นทางที่ตรงกัน</p>
-                    <p class="text-sm text-gray-500 mt-2">กรุณากรอกข้อมูลประเภทรถ, ต้นทาง, และปลายทางให้ครบถ้วน</p>
+                    <p class="text-base text-gray-500 mt-2">กรุณากรอกข้อมูลประเภทรถ, ต้นทาง, และปลายทางให้ครบถ้วน</p>
                 `;
                 return;
             }
             
             const stationList = (stations) => {
-                if (!stations || Object.keys(stations).length === 0) return '<p class="text-sm text-gray-500">ไม่มี</p>';
+                if (!stations || Object.keys(stations).length === 0) return '<p class="text-base text-gray-500">ไม่มี</p>';
                 return Object.entries(stations)
                     .map(([key, value]) => `
-                        <div class="flex justify-between items-center text-sm py-1">
+                        <div class="flex justify-between items-center text-base py-1">
                            <span class="text-gray-400">${logisticsService.getFriendlyGasStationName(key)}:</span>
                            <span class="font-semibold">${value.toLocaleString()}</span>
                         </div>
@@ -1968,7 +2003,7 @@
             };
 
             cardContent.innerHTML = `
-                <h3 class="text-xl font-bold text-white mb-4">ข้อมูลเส้นทาง (อัตโนมัติ)</h3>
+                <h3 class="text-2xl font-bold text-white mb-4">ข้อมูลเส้นทาง (อัตโนมัติ)</h3>
                 <div class="space-y-2">
                     <div class="flex justify-between items-center">
                         <span class="font-semibold text-gray-300">ประเภทรถ:</span>
@@ -1979,36 +2014,36 @@
                         <span class="text-right">${route.origin} → ${route.destination}</span>
                     </div>
                      <hr class="border-slate-600 my-2">
-                    <div class="flex justify-between items-center text-sm">
+                    <div class="flex justify-between items-center text-base">
                         <span class="text-gray-400">บริษัทขนส่ง:</span>
                         <span class="font-semibold">${route.transportCompany || '-'}</span>
                     </div>
-                    <div class="flex justify-between items-center text-sm">
+                    <div class="flex justify-between items-center text-base">
                         <span class="text-gray-400">ราคาค่าขนส่ง:</span>
                         <span class="font-semibold">${(route.shippingCost || 0).toLocaleString()} บาท</span>
                     </div>
-                    <div class="flex justify-between items-center text-sm">
+                    <div class="flex justify-between items-center text-base">
                         <span class="text-gray-400">ระยะทาง:</span>
                         <span class="font-semibold">${(route.kilometers || 0).toLocaleString()} กม.</span>
                     </div>
-                    <div class="flex justify-between items-center text-sm">
+                    <div class="flex justify-between items-center text-base">
                         <span class="text-gray-400">เวลาเดินทาง:</span>
                         <span class="font-semibold">${minutesToHoursAndMinutes(route.travelTime) || '0.00'} ชม.</span>
                     </div>
                     <hr class="border-slate-600 my-2">
-                    <div class="flex justify-between items-center text-lg">
+                    <div class="flex justify-between items-center text-xl">
                         <span class="font-bold text-accent">รวม (ลิตร):</span>
                         <span class="font-bold text-accent">${(route.totalLiters || 0).toLocaleString()}</span>
                     </div>
                      ${stationList(route.gasStationsLiters)}
                      <hr class="border-slate-600 my-2">
-                    <div class="flex justify-between items-center text-lg">
+                    <div class="flex justify-between items-center text-xl">
                         <span class="font-bold text-accent">รวม (บาท):</span>
                         <span class="font-bold text-accent">${(route.totalBaht || 0).toLocaleString()}</span>
                     </div>
                     ${stationList(route.gasStationsBaht)}
                     <hr class="border-slate-600 my-2">
-                    <div class="flex justify-between items-center text-lg">
+                    <div class="flex justify-between items-center text-xl">
                         <span class="font-bold text-success">เบี้ยขับ (บาท):</span>
                         <span class="font-bold text-success">${(route.driverAllowance || 0).toLocaleString()}</span>
                     </div>
@@ -2521,7 +2556,7 @@
                 <form id="savings-payout-form" class="space-y-4">
                     <input type="hidden" name="id" value="${payout?.id || ''}" />
                     <div>
-                        <label class="block text-sm font-medium text-gray-400 mb-1">พนักงานขับรถ</label>
+                        <label class="block text-base font-medium text-gray-400 mb-1">พนักงานขับรถ</label>
                         <select name="driverName" required class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent">
                             <option value="">-- เลือกพนักงานขับรถ --</option>
                             ${driverOptions}
@@ -2529,16 +2564,16 @@
                     </div>
                     <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
                          <div>
-                            <label class="block text-sm font-medium text-gray-400 mb-1">วันที่จ่าย</label>
+                            <label class="block text-base font-medium text-gray-400 mb-1">วันที่จ่าย</label>
                             <input type="date" name="payoutDate" value="${payout?.payoutDate || new Date().toISOString().split('T')[0]}" required class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white" />
                         </div>
                         <div>
-                            <label class="block text-sm font-medium text-gray-400 mb-1">จำนวนเงิน (บาท)</label>
+                            <label class="block text-base font-medium text-gray-400 mb-1">จำนวนเงิน (บาท)</label>
                             <input type="number" name="payoutAmount" value="${payout?.payoutAmount || ''}" placeholder="0" required class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white" />
                         </div>
                     </div>
                     <div>
-                        <label class="block text-sm font-medium text-gray-400 mb-1">หมายเหตุ</label>
+                        <label class="block text-base font-medium text-gray-400 mb-1">หมายเหตุ</label>
                         <textarea name="notes" placeholder="รายละเอียดเพิ่มเติม" rows="3" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white">${payout?.notes || ''}</textarea>
                     </div>
                     <footer class="flex justify-end gap-4 pt-4">
@@ -2555,7 +2590,7 @@
                 <form id="savings-carryover-form" class="space-y-4">
                     <input type="hidden" name="id" value="${carryOver?.id || ''}" />
                     <div>
-                        <label class="block text-sm font-medium text-gray-400 mb-1">พนักงานขับรถ</label>
+                        <label class="block text-base font-medium text-gray-400 mb-1">พนักงานขับรถ</label>
                         <select name="driverName" required class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent">
                             <option value="">-- เลือกพนักงานขับรถ --</option>
                             ${driverOptions}
@@ -2563,16 +2598,16 @@
                     </div>
                     <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
                          <div>
-                            <label class="block text-sm font-medium text-gray-400 mb-1">วันที่</label>
+                            <label class="block text-base font-medium text-gray-400 mb-1">วันที่</label>
                             <input type="date" name="carryOverDate" value="${carryOver?.carryOverDate || new Date().toISOString().split('T')[0]}" required class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white" />
                         </div>
                         <div>
-                            <label class="block text-sm font-medium text-gray-400 mb-1">จำนวนเงิน (บาท)</label>
+                            <label class="block text-base font-medium text-gray-400 mb-1">จำนวนเงิน (บาท)</label>
                             <input type="number" name="carryOverAmount" value="${carryOver?.carryOverAmount || ''}" placeholder="0" required class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white" />
                         </div>
                     </div>
                     <div>
-                        <label class="block text-sm font-medium text-gray-400 mb-1">หมายเหตุ</label>
+                        <label class="block text-base font-medium text-gray-400 mb-1">หมายเหตุ</label>
                         <textarea name="notes" placeholder="เช่น ยอดยกมาจากระบบเก่า" rows="3" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white">${carryOver?.notes || ''}</textarea>
                     </div>
                     <footer class="flex justify-end gap-4 pt-4">
@@ -2636,9 +2671,9 @@
             return `
                 <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
                     <div>
-                        <h3 class="text-lg font-bold text-white mb-2">รายการสะสม (จากเบี้ยขับ)</h3>
+                        <h3 class="text-xl font-bold text-white mb-2">รายการสะสม (จากเบี้ยขับ)</h3>
                         <div class="max-h-96 overflow-y-auto bg-slate-800/50 rounded-lg p-2">
-                            <table class="w-full text-sm">
+                            <table class="w-full text-base">
                                 <thead class="sticky top-0 bg-slate-800"><tr>
                                     <th class="p-2 text-left">วันที่</th><th class="p-2 text-left">ทะเบียน</th>
                                     <th class="p-2 text-left">เส้นทาง</th><th class="p-2 text-right">เบี้ยขับเต็ม</th>
@@ -2650,9 +2685,9 @@
                     </div>
                     <div class="space-y-4">
                         <div>
-                            <h3 class="text-lg font-bold text-white mb-2">รายการยอดยกมา / ปรับปรุง</h3>
+                            <h3 class="text-xl font-bold text-white mb-2">รายการยอดยกมา / ปรับปรุง</h3>
                              <div class="max-h-40 overflow-y-auto bg-slate-800/50 rounded-lg p-2">
-                                <table class="w-full text-sm">
+                                <table class="w-full text-base">
                                     <thead class="sticky top-0 bg-slate-800"><tr>
                                         <th class="p-2 text-left">วันที่</th><th class="p-2 text-right">จำนวนเงิน</th>
                                         <th class="p-2 text-left">หมายเหตุ</th><th class="p-2 text-center">จัดการ</th>
@@ -2662,9 +2697,9 @@
                             </div>
                         </div>
                         <div>
-                            <h3 class="text-lg font-bold text-white mb-2">ประวัติการจ่ายเงิน</h3>
+                            <h3 class="text-xl font-bold text-white mb-2">ประวัติการจ่ายเงิน</h3>
                              <div class="max-h-40 overflow-y-auto bg-slate-800/50 rounded-lg p-2">
-                                <table class="w-full text-sm">
+                                <table class="w-full text-base">
                                     <thead class="sticky top-0 bg-slate-800"><tr>
                                         <th class="p-2 text-left">วันที่จ่าย</th><th class="p-2 text-right">จำนวนเงิน</th>
                                         <th class="p-2 text-left">หมายเหตุ</th><th class="p-2 text-center">จัดการ</th>
