@@ -90,6 +90,7 @@
             Sort: `<svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 4h13M3 8h9M3 12h9m-9 4h13m0-4l-3-3m0 6l3-3m0 6l3 3" /></svg>`,
             SortAsc: `<svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 text-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 4h13M3 8h9M3 12h9m-9 4h13m0-4l-3-3m0 6l3-3" /></svg>`,
             SortDesc: `<svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 text-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 4h13M3 8h9M3 12h9m-9 4h13m0 0l-3 3m0-6l3 3m0-6l3-3" /></svg>`,
+            Wallet: `<svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12V8a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4"></path><path d="M20 12h-8a2 2 0 0 1 0-4h8v4z"></path></svg>`,
         };
         
         // --- Utility Functions ---
@@ -132,11 +133,13 @@
         // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         
         let appState = {
-            view: 'form', // 'form', 'dashboard', 'data', 'vehicles'
+            view: 'form', // 'form', 'dashboard', 'data', 'vehicles', 'savings'
             isAuthenticated: false,
             routes: [],
             fuelRecords: [],
             vehicles: [],
+            savingsPayouts: [],
+            savingsCarryOvers: [],
             // Form-specific state
             fuelForm: {
                 distributionLiters: [],
@@ -157,7 +160,9 @@
                 destination: '',
                 driverAllowance: '',
                 kilometers: '',
-                travelTime: ''
+                travelTime: '',
+                transportCompany: '',
+                shippingCost: ''
             },
             vehicleManagementFilter: '',
             editingRoute: null,
@@ -194,6 +199,8 @@
                 const routesRef = database.ref('routes');
                 const fuelRecordsRef = database.ref('fuelRecords').orderByChild('date').limitToLast(200);
                 const vehiclesRef = database.ref('vehicles');
+                const savingsPayoutsRef = database.ref('savingsPayouts');
+                const savingsCarryOversRef = database.ref('savingsCarryOvers');
 
                 routesRef.on('value', (snapshot) => {
                     const data = snapshot.val();
@@ -205,13 +212,25 @@
                     const data = snapshot.val();
                     appState.fuelRecords = data ? Object.entries(data).map(([id, value]) => ({ id, ...value }))
                         .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()) : [];
-                    if(appState.view === 'dashboard') renderApp();
+                    if(['dashboard', 'form', 'savings'].includes(appState.view)) renderApp();
                 });
 
                 vehiclesRef.on('value', (snapshot) => {
                     const data = snapshot.val();
                     appState.vehicles = data ? Object.entries(data).map(([id, value]) => ({ id, ...value })) : [];
                     if(['vehicles', 'form'].includes(appState.view)) renderApp();
+                });
+
+                savingsPayoutsRef.on('value', (snapshot) => {
+                    const data = snapshot.val();
+                    appState.savingsPayouts = data ? Object.entries(data).map(([id, value]) => ({ id, ...value })) : [];
+                    if(appState.view === 'savings') renderApp();
+                });
+                
+                savingsCarryOversRef.on('value', (snapshot) => {
+                    const data = snapshot.val();
+                    appState.savingsCarryOvers = data ? Object.entries(data).map(([id, value]) => ({ id, ...value })) : [];
+                    if(appState.view === 'savings') renderApp();
                 });
             },
 
@@ -245,6 +264,26 @@
                 alert("เกิดข้อผิดพลาดในการลบข้อมูล: " + error.message);
             }),
 
+            addSavingsPayout: (payoutData) => database.ref('savingsPayouts').push(payoutData),
+            updateSavingsPayout: (updatedPayout) => {
+                const { id, ...data } = updatedPayout;
+                return database.ref(`savingsPayouts/${id}`).set(data);
+            },
+            deleteSavingsPayout: (payoutId) => database.ref(`savingsPayouts/${payoutId}`).remove().catch(error => {
+                console.error("Error deleting savings payout:", error);
+                alert("เกิดข้อผิดพลาดในการลบข้อมูลการจ่ายเงิน: " + error.message);
+            }),
+            
+            addSavingsCarryOver: (carryOverData) => database.ref('savingsCarryOvers').push(carryOverData),
+            updateSavingsCarryOver: (updatedCarryOver) => {
+                const { id, ...data } = updatedCarryOver;
+                return database.ref(`savingsCarryOvers/${id}`).set(data);
+            },
+            deleteSavingsCarryOver: (carryOverId) => database.ref(`savingsCarryOvers/${carryOverId}`).remove().catch(error => {
+                console.error("Error deleting savings carry-over:", error);
+                alert("เกิดข้อผิดพลาดในการลบข้อมูลยอดยกมา: " + error.message);
+            }),
+
             getRoutes: () => [...appState.routes],
             getFuelRecords: () => [...appState.fuelRecords],
             getVehicles: () => [...appState.vehicles],
@@ -259,15 +298,18 @@
                 return [...new Set(appState.vehicles.map(v => v.registrationNumber))].sort();
             },
             
-            findMatchingRoute: (vehicleType, origin, destination) => {
+            findMatchingRoute: (vehicleType, origin, destination, transportCompany) => {
                  if (!vehicleType || !origin || !destination) return null;
                 const vt = vehicleType.trim();
                 const o = origin.trim();
                 const d = destination.trim();
+                const tc = (transportCompany || '').trim();
+
                 return appState.routes.find(route => 
                     (route.vehicleType || '').trim() === vt && 
                     (route.origin || '').trim() === o && 
-                    (route.destination || '').trim() === d
+                    (route.destination || '').trim() === d &&
+                    (route.transportCompany || '').trim() === tc
                 ) || null;
             },
 
@@ -312,6 +354,7 @@
             if (appState.view === 'dashboard') viewHtml = renderDashboard();
             if (appState.view === 'data') viewHtml = renderDataManagement();
             if (appState.view === 'vehicles') viewHtml = renderVehicleManagement();
+            if (appState.view === 'savings') viewHtml = renderDriverSavings();
 
             appContainer.innerHTML = `
                 ${renderHeader()}
@@ -354,6 +397,7 @@
                         <div class="flex items-center gap-2 sm:gap-4">
                             ${navButton('form', ICONS.Truck, 'บันทึกน้ำมัน')}
                             ${navButton('dashboard', ICONS.ChartBar, 'แดชบอร์ด')}
+                            ${navButton('savings', ICONS.Wallet, 'เงินสะสม')}
                             ${navButton('vehicles', ICONS.IdCard, 'จัดการทะเบียนรถ')}
                             ${navButton('data', ICONS.Database, 'จัดการเส้นทาง')}
                         </div>
@@ -382,6 +426,9 @@
 
         // --- View: Fuel Record Form ---
         const renderFuelRecordForm = () => {
+            const transportCompanyOptions = logisticsService.getUniqueValues('transportCompany')
+                .map(company => `<option value="${company}">${company}</option>`)
+                .join('');
             return `
                 <div class="max-w-4xl mx-auto grid grid-cols-1 md:grid-cols-3 gap-8">
                     <div class="md:col-span-2">
@@ -390,13 +437,42 @@
                                 ${ICONS.DocumentAdd} บันทึกรายการน้ำมันใหม่
                             </h2>
                             <form id="fuel-record-form" class="space-y-6">
-                                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
                                     <div>
                                         <label class="block text-sm font-medium text-gray-400 mb-1">วันที่</label>
                                         <input type="date" id="form-date" value="${new Date().toISOString().split('T')[0]}" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent" />
                                     </div>
                                     ${renderAutocomplete('form-vehicle-registration', 'ทะเบียนรถ', 'ค้นหาทะเบียนรถ', logisticsService.getVehicleRegistrations())}
+                                    <div>
+                                        <label class="block text-sm font-medium text-gray-400 mb-1">ชื่อพนักงานขับรถ</label>
+                                        <input type="text" id="form-driver-name" placeholder="ชื่อจะแสดงอัตโนมัติ (แก้ไขได้)" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent" />
+                                    </div>
                                 </div>
+                                 
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-400 mb-1">ประเภทรถ (สังกัด)</label>
+                                    <div id="vehicle-ownership-radios" class="flex items-center gap-6">
+                                        <label class="flex items-center gap-2 cursor-pointer">
+                                            <input type="radio" name="vehicleOwnership" value="company" checked class="radio radio-primary text-accent focus:ring-accent" />
+                                            <span>รถบริษัท</span>
+                                        </label>
+                                        <label class="flex items-center gap-2 cursor-pointer">
+                                            <input type="radio" name="vehicleOwnership" value="subcontractor" class="radio radio-primary text-accent focus:ring-accent" />
+                                            <span>รถร่วมขนส่ง</span>
+                                        </label>
+                                    </div>
+                                </div>
+
+                                <div id="subcontractor-details" class="hidden space-y-4 p-4 border border-slate-600 rounded-lg">
+                                    <div>
+                                        <label class="block text-sm font-medium text-gray-400 mb-1">บริษัทขนส่ง <span class="text-red-400">*</span></label>
+                                        <select id="form-transport-company" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent">
+                                            <option value="">-- กรุณาเลือกบริษัทขนส่ง --</option>
+                                            ${transportCompanyOptions}
+                                        </select>
+                                    </div>
+                                </div>
+                                
                                 ${renderAutocomplete('form-vehicle-type', 'ประเภทรถ', 'ค้นหาประเภทรถ', logisticsService.getUniqueValues('vehicleType'))}
                                 <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
                                     ${renderAutocomplete('form-origin', 'ต้นทาง', 'ค้นหาต้นทาง', logisticsService.getUniqueValues('origin'))}
@@ -404,7 +480,7 @@
                                 </div>
 
                                 <!-- Liters Distribution -->
-                                <div class="space-y-4 rounded-lg border border-slate-600 p-4">
+                                <div id="liters-distribution-block" class="space-y-4 rounded-lg border border-slate-600 p-4">
                                     <div class="flex justify-between items-center">
                                         <h3 class="font-semibold text-lg text-white">การกระจายน้ำมัน (ลิตร)</h3>
                                         <div class="flex items-center gap-2">
@@ -417,7 +493,7 @@
                                 </div>
                                 
                                 <!-- Baht Distribution -->
-                                <div class="space-y-4 rounded-lg border border-slate-600 p-4">
+                                <div id="baht-distribution-block" class="space-y-4 rounded-lg border border-slate-600 p-4">
                                      <div class="flex justify-between items-center">
                                         <h3 class="font-semibold text-lg text-white">การกระจายน้ำมัน (บาท)</h3>
                                         <div class="flex items-center gap-2">
@@ -429,12 +505,18 @@
                                     <button type="button" id="add-distribution-btn-baht" class="w-full border-2 border-dashed border-slate-500 hover:bg-slate-700/50 text-gray-300 font-semibold py-2 px-4 rounded-lg transition">+ เพิ่มจุดเติมน้ำมัน (บาท)</button>
                                 </div>
                                 
-                                <div>
-                                   <label class="block text-sm font-medium text-gray-400 mb-1">เบี้ยขับ (บาท)</label>
-                                   <input type="number" id="form-driver-allowance" placeholder="ข้อมูลจะแสดงอัตโนมัติ (แก้ไขได้)" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent" />
+                                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                     <div>
+                                        <label class="block text-sm font-medium text-gray-400 mb-1">ค่าขนส่ง (บาท)</label>
+                                        <input type="number" id="form-shipping-cost" placeholder="ข้อมูลจะแสดงอัตโนมัติ (แก้ไขได้)" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent" />
+                                    </div>
+                                    <div id="driver-allowance-wrapper">
+                                       <label class="block text-sm font-medium text-gray-400 mb-1">เบี้ยขับ (บาท)</label>
+                                       <input type="number" id="form-driver-allowance" placeholder="ข้อมูลจะแสดงอัตโนมัติ (แก้ไขได้)" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent" />
+                                    </div>
                                 </div>
                                 
-                                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                <div id="km-time-grid" class="grid grid-cols-1 sm:grid-cols-2 gap-4">
                                     <div>
                                        <label class="block text-sm font-medium text-gray-400 mb-1">ระยะทาง (กม.)</label>
                                        <input type="number" id="form-kilometers" placeholder="ข้อมูลจะแสดงอัตโนมัติ (แก้ไขได้)" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent" />
@@ -495,15 +577,32 @@
                 ? allFilteredRecords.slice(0, parseInt(limit, 10)) 
                 : allFilteredRecords;
 
-            const latestRecordsTableRows = limitedRecords.map(record => `
+            const latestRecordsTableRows = limitedRecords.map(record => {
+                const ownershipText = record.vehicleOwnership === 'subcontractor' ? 'รถร่วม' : 'รถบริษัท';
+                let allowanceCellHtml;
+                if ((record.vehicleOwnership === 'company' || !record.vehicleOwnership) && record.driverAllowance > 0) {
+                    const netAllowance = (record.driverAllowance || 0) - 200;
+                    allowanceCellHtml = `
+                        <div class="flex flex-col items-end">
+                            <span>${netAllowance > 0 ? netAllowance.toLocaleString() : '0'}</span>
+                            <span class="text-xs text-yellow-400">(สะสม 200)</span>
+                        </div>`;
+                } else {
+                    allowanceCellHtml = formatZeroAsEmpty(record.driverAllowance);
+                }
+
+                return `
                 <tr class="border-b border-slate-600 hover:bg-slate-700/20">
                     <td class="p-3">${record.date}</td>
                     <td class="p-3 font-mono">${record.vehicleRegistration}</td>
-                    <td class="p-3">${record.vehicleType}</td>
+                    <td class="p-3">${record.driverName || ''}</td>
+                    <td class="p-3">${record.vehicleType} (${ownershipText})</td>
+                    <td class="p-3">${record.transportCompany || '-'}</td>
                     <td class="p-3">${record.origin} → ${record.destination}</td>
                     <td class="p-3 text-right font-semibold text-accent">${formatZeroAsEmpty(record.totalLiters)}</td>
                     <td class="p-3 text-right font-semibold text-accent">${formatZeroAsEmpty(record.totalBaht)}</td>
-                    <td class="p-3 text-right font-semibold text-success">${formatZeroAsEmpty(record.driverAllowance)}</td>
+                    <td class="p-3 text-right font-semibold text-info">${formatZeroAsEmpty(record.shippingCost)}</td>
+                    <td class="p-3 text-right font-semibold text-success">${allowanceCellHtml}</td>
                     <td class="p-3 text-right">${formatZeroAsEmpty(record.kilometers)}</td>
                     <td class="p-3 text-right">${minutesToHoursAndMinutes(record.travelTime)}</td>
                     <td class="p-3 text-sm text-gray-400">${record.details || ''}</td>
@@ -515,7 +614,7 @@
                         </div>
                     </td>
                 </tr>
-            `).join('');
+            `}).join('');
 
             const stationKeys = logisticsService.getAllGasStationKeys();
             const friendlyNames = logisticsService.getAllGasStationFriendlyNames();
@@ -585,17 +684,36 @@
             }
 
             const allowanceRecords = allFilteredRecords.filter(r => r.driverAllowance && r.driverAllowance > 0);
-            const totalAllowance = allowanceRecords.reduce((sum, record) => sum + (record.driverAllowance || 0), 0);
+            const totalAllowance = allowanceRecords.reduce((sum, record) => {
+                const allowance = record.driverAllowance || 0;
+                if ((record.vehicleOwnership === 'company' || !record.vehicleOwnership) && allowance > 0) {
+                    return sum + (allowance > 200 ? allowance - 200 : 0);
+                }
+                return sum + allowance;
+            }, 0);
 
-            const allowanceTableRows = allowanceRecords.map(record => `
+            const allowanceTableRows = allowanceRecords.map(record => {
+                 let allowanceCellHtml;
+                if ((record.vehicleOwnership === 'company' || !record.vehicleOwnership) && record.driverAllowance > 0) {
+                    const netAllowance = (record.driverAllowance || 0) - 200;
+                    allowanceCellHtml = `
+                        <div class="flex flex-col items-end">
+                            <span>${netAllowance > 0 ? netAllowance.toLocaleString() : '0'}</span>
+                            <span class="text-xs text-yellow-400">(สะสม 200)</span>
+                        </div>`;
+                } else {
+                    allowanceCellHtml = formatZeroAsEmpty(record.driverAllowance);
+                }
+                return `
                 <tr class="border-b border-slate-600 hover:bg-slate-700/20">
                     <td class="p-3">${record.date}</td>
                     <td class="p-3 font-mono">${record.vehicleRegistration}</td>
+                    <td class="p-3">${record.driverName || ''}</td>
                     <td class="p-3">${record.vehicleType}</td>
                     <td class="p-3">${record.origin} → ${record.destination}</td>
-                    <td class="p-3 text-right font-semibold text-success">${formatZeroAsEmpty(record.driverAllowance)}</td>
+                    <td class="p-3 text-right font-semibold text-success">${allowanceCellHtml}</td>
                 </tr>
-            `).join('');
+            `}).join('');
 
             const allowanceSummaryTableHtml = renderCard(`
                 <h3 class="text-xl font-bold mb-4 flex items-center gap-2">
@@ -608,19 +726,68 @@
                             <tr>
                                 <th class="p-3 whitespace-nowrap">วันที่</th>
                                 <th class="p-3 whitespace-nowrap">ทะเบียน</th>
+                                <th class="p-3 whitespace-nowrap">ชื่อพนักงานขับรถ</th>
                                 <th class="p-3 whitespace-nowrap">ประเภทรถ</th>
                                 <th class="p-3 whitespace-nowrap">เส้นทาง</th>
                                 <th class="p-3 text-right whitespace-nowrap">เบี้ยขับ (บาท)</th>
                             </tr>
                         </thead>
                         <tbody class="text-sm">
-                            ${allowanceRecords.length > 0 ? allowanceTableRows : `<tr><td colspan="5" class="text-center py-8 text-gray-500">ไม่มีข้อมูลเบี้ยขับ</td></tr>`}
+                            ${allowanceRecords.length > 0 ? allowanceTableRows : `<tr><td colspan="6" class="text-center py-8 text-gray-500">ไม่มีข้อมูลเบี้ยขับ</td></tr>`}
                         </tbody>
                         ${allowanceRecords.length > 0 ? `
                         <tfoot class="bg-slate-800 font-bold">
                             <tr>
-                                <td colspan="4" class="p-3 text-right">ยอดรวมสุทธิ</td>
+                                <td colspan="5" class="p-3 text-right">ยอดรวมสุทธิ</td>
                                 <td class="p-3 text-right text-success">${totalAllowance.toLocaleString()}</td>
+                            </tr>
+                        </tfoot>
+                        ` : ''}
+                    </table>
+                </div>
+            `);
+
+            const subcontractorRecords = allFilteredRecords.filter(r => r.vehicleOwnership === 'subcontractor');
+            const totalShippingCost = subcontractorRecords.reduce((sum, record) => sum + (record.shippingCost || 0), 0);
+            
+            const subcontractorTableRows = subcontractorRecords.map(record => `
+                <tr class="border-b border-slate-600 hover:bg-slate-700/20">
+                    <td class="p-3">${record.date}</td>
+                    <td class="p-3 font-mono">${record.vehicleRegistration}</td>
+                    <td class="p-3">${record.vehicleType}</td>
+                    <td class="p-3">${record.transportCompany || ''}</td>
+                    <td class="p-3">${record.driverName || ''}</td>
+                    <td class="p-3">${record.origin} → ${record.destination}</td>
+                    <td class="p-3 text-right font-semibold text-info">${formatZeroAsEmpty(record.shippingCost)}</td>
+                </tr>
+            `).join('');
+
+            const subcontractorSummaryTableHtml = renderCard(`
+                <h3 class="text-xl font-bold mb-4 flex items-center gap-2">
+                     <svg xmlns="http://www.w3.org/2000/svg" class="w-6 h-6 text-info" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"></path><rect x="8" y="2" width="8" height="4" rx="1" ry="1"></rect></svg>
+                    <span>รายงานรถร่วมขนส่ง</span>
+                </h3>
+                <div class="overflow-x-auto max-h-[400px]">
+                    <table class="w-full text-left table-auto">
+                        <thead class="bg-slate-800 text-sm text-gray-400 uppercase sticky top-0 z-10">
+                            <tr>
+                                <th class="p-3 whitespace-nowrap">วันที่</th>
+                                <th class="p-3 whitespace-nowrap">ทะเบียน</th>
+                                <th class="p-3 whitespace-nowrap">ประเภทรถ</th>
+                                <th class="p-3 whitespace-nowrap">ชื่อบริษัท</th>
+                                <th class="p-3 whitespace-nowrap">ชื่อพนักงานขับรถ</th>
+                                <th class="p-3 whitespace-nowrap">เส้นทาง</th>
+                                <th class="p-3 text-right whitespace-nowrap">ค่าขนส่ง (บาท)</th>
+                            </tr>
+                        </thead>
+                        <tbody class="text-sm">
+                            ${subcontractorRecords.length > 0 ? subcontractorTableRows : `<tr><td colspan="7" class="text-center py-8 text-gray-500">ไม่มีข้อมูลรถร่วมขนส่ง</td></tr>`}
+                        </tbody>
+                        ${subcontractorRecords.length > 0 ? `
+                        <tfoot class="bg-slate-800 font-bold">
+                            <tr>
+                                <td colspan="6" class="p-3 text-right">ยอดรวมค่าขนส่ง</td>
+                                <td class="p-3 text-right text-info">${totalShippingCost.toLocaleString()}</td>
                             </tr>
                         </tfoot>
                         ` : ''}
@@ -651,6 +818,10 @@
                 </div>
 
                 <div class="mt-8">
+                    ${subcontractorSummaryTableHtml}
+                </div>
+
+                <div class="mt-8">
                 ${renderCard(`
                     <div class="flex flex-wrap justify-between items-center gap-4 mb-4">
                         <h3 class="text-xl font-bold">รายการน้ำมันล่าสุดทั้งหมด</h3>
@@ -667,10 +838,13 @@
                                 <tr>
                                     <th class="p-3">วันที่</th>
                                     <th class="p-3">ทะเบียน</th>
-                                    <th class="p-3">ประเภท</th>
+                                    <th class="p-3">คนขับ</th>
+                                    <th class="p-3">ประเภทรถ (สังกัด)</th>
+                                    <th class="p-3">บริษัทขนส่ง</th>
                                     <th class="p-3">เส้นทาง</th>
                                     <th class="p-3 text-right">รวม (ลิตร)</th>
                                     <th class="p-3 text-right">รวม (บาท)</th>
+                                    <th class="p-3 text-right">ค่าขนส่ง (บาท)</th>
                                     <th class="p-3 text-right">เบี้ยขับ (บาท)</th>
                                     <th class="p-3 text-right">ระยะทาง (กม.)</th>
                                     <th class="p-3 text-right">เวลา (ชม.)</th>
@@ -732,6 +906,8 @@
             const activeFilters = Object.entries(appState.routeFilters).filter(([, value]) => value);
             if (activeFilters.length > 0) {
                 routes = routes.filter(route => {
+                    // ใช้ .every() เพื่อให้แน่ใจว่า route ที่จะแสดงนั้น
+                    // ต้องตรงกับ "ทุก" เงื่อนไข (filter) ที่ผู้ใช้กรอกเข้ามา
                     return activeFilters.every(([key, filterValue]) => {
                         const routeValue = route[key];
                         if (filterValue === null || filterValue === '') return true;
@@ -746,7 +922,7 @@
             // 2. Sorting
             const { key: sortKey, direction: sortDirection } = appState.routeSort;
             if (sortKey) {
-                const isNumeric = ['driverAllowance', 'kilometers', 'travelTime', 'totalLiters', 'totalBaht'].includes(sortKey);
+                const isNumeric = ['driverAllowance', 'kilometers', 'travelTime', 'totalLiters', 'totalBaht', 'shippingCost'].includes(sortKey);
                 routes.sort((a, b) => {
                     const valA = a[sortKey] || (isNumeric ? 0 : '');
                     const valB = b[sortKey] || (isNumeric ? 0 : '');
@@ -765,7 +941,7 @@
 
             if (routes.length === 0) {
                 const stationCount = logisticsService.getAllGasStationKeys().length;
-                const colspan = 7 + (stationCount * 2) + 1; // 7 base + 2 per station + 1 actions
+                const colspan = 9 + (stationCount * 2) + 1; // 9 base + 2 per station + 1 actions
                 tableBody.innerHTML = `<tr><td colspan="${colspan}" class="text-center py-8 text-gray-500">ไม่พบข้อมูลเส้นทางที่ตรงตามเงื่อนไข</td></tr>`;
                 return;
             }
@@ -793,6 +969,8 @@
                     <td class="p-3 border-r border-slate-700">${route.vehicleType}</td>
                     <td class="p-3 border-r border-slate-700">${route.origin}</td>
                     <td class="p-3 border-r border-slate-700">${route.destination}</td>
+                    <td class="p-3 border-r border-slate-700">${route.transportCompany || ''}</td>
+                    <td class="p-3 text-right font-mono border-r border-slate-700">${formatZeroAsEmpty(route.shippingCost)}</td>
                     <td class="p-3 text-right font-semibold text-accent border-r border-slate-700">
                         ${totalLitersText ? `<div>${totalLitersText} L</div>` : ''}
                         ${totalBahtText ? `<div>${totalBahtText} B</div>` : ''}
@@ -847,7 +1025,7 @@
             `).join('');
 
             // Initial table body is empty, it will be populated by updateRoutesTableBody
-            const initialTableBody = `<tr><td colspan="24" class="text-center py-8 text-gray-500">กำลังโหลดข้อมูล...</td></tr>`;
+            const initialTableBody = `<tr><td colspan="26" class="text-center py-8 text-gray-500">กำลังโหลดข้อมูล...</td></tr>`;
 
             return renderCard(`
                 <div class="overflow-x-auto max-h-[75vh]">
@@ -857,6 +1035,8 @@
                                 ${renderSortableHeader('vehicleType', 'ประเภทรถ', 'w-32')}
                                 ${renderSortableHeader('origin', 'ต้นทาง', 'w-40')}
                                 ${renderSortableHeader('destination', 'ปลายทาง', 'w-40')}
+                                ${renderSortableHeader('transportCompany', 'บริษัทขนส่ง', 'w-40')}
+                                ${renderSortableHeader('shippingCost', 'ค่าขนส่ง<br>(บาท)', 'w-28')}
                                 <th rowspan="2" class="p-3 text-center border-r border-slate-600 align-middle w-28">จำนวน<br>น้ำมัน</th>
                                 ${renderSortableHeader('driverAllowance', 'เบี้ยขับ<br>(บาท)', 'w-24')}
                                 ${renderSortableHeader('kilometers', 'ระยะทาง<br>(กม.)', 'w-24')}
@@ -871,6 +1051,8 @@
                                 ${renderFilterInput('vehicleType')}
                                 ${renderFilterInput('origin')}
                                 ${renderFilterInput('destination')}
+                                ${renderFilterInput('transportCompany')}
+                                ${renderFilterInput('shippingCost')}
                                 <td class="p-1 border-r border-slate-700 bg-slate-900"></td>
                                 ${renderFilterInput('driverAllowance')}
                                 ${renderFilterInput('kilometers')}
@@ -970,15 +1152,135 @@
             `;
         };
 
+        // --- View: Driver Savings ---
+        const getDriverSavingsData = () => {
+            const companyRecords = appState.fuelRecords.filter(
+                r => (r.vehicleOwnership === 'company' || !r.vehicleOwnership) && r.driverName && r.driverAllowance > 0
+            );
+            const payouts = appState.savingsPayouts;
+            const carryOvers = appState.savingsCarryOvers;
+            const savingsByDriver = {};
+
+            // 1. Accumulate savings from trips
+            companyRecords.forEach(record => {
+                if (!savingsByDriver[record.driverName]) {
+                    savingsByDriver[record.driverName] = {
+                        driverName: record.driverName,
+                        trips: 0,
+                        totalFullAllowance: 0,
+                        totalSaved: 0,
+                        totalPaid: 0,
+                    };
+                }
+                savingsByDriver[record.driverName].trips += 1;
+                savingsByDriver[record.driverName].totalFullAllowance += (record.driverAllowance || 0);
+                savingsByDriver[record.driverName].totalSaved += 200;
+            });
+
+            // 2. Add carry-over amounts to totalSaved
+            carryOvers.forEach(co => {
+                const driverName = co.driverName;
+                if (!savingsByDriver[driverName]) {
+                     savingsByDriver[driverName] = { driverName, trips: 0, totalFullAllowance: 0, totalSaved: 0, totalPaid: 0 };
+                }
+                savingsByDriver[driverName].totalSaved += Number(co.carryOverAmount) || 0;
+            });
+
+            // 3. Accumulate paid amounts
+            payouts.forEach(payout => {
+                const driverName = payout.driverName;
+                if (!savingsByDriver[driverName]) {
+                     savingsByDriver[driverName] = { driverName, trips: 0, totalFullAllowance: 0, totalSaved: 0, totalPaid: 0 };
+                }
+                savingsByDriver[driverName].totalPaid += Number(payout.payoutAmount) || 0;
+            });
+            
+            const savingsData = Object.values(savingsByDriver).map(driver => ({
+                ...driver,
+                netBalance: driver.totalSaved - driver.totalPaid,
+            })).sort((a, b) => a.driverName.localeCompare(b.driverName, 'th'));
+            return savingsData;
+        };
+
+        const renderDriverSavingsContent = () => {
+            const savingsData = getDriverSavingsData();
+
+            const tableRows = savingsData.map((driver, index) => `
+                <tr class="border-b border-slate-600 hover:bg-slate-700/20">
+                    <td class="p-3 text-center">${index + 1}</td>
+                    <td class="p-3 font-semibold">${driver.driverName}</td>
+                    <td class="p-3 text-center">${driver.trips.toLocaleString()}</td>
+                    <td class="p-3 text-right text-green-400">${driver.totalFullAllowance.toLocaleString()}</td>
+                    <td class="p-3 text-right text-info">${driver.totalSaved.toLocaleString()}</td>
+                    <td class="p-3 text-right text-yellow-400">${driver.totalPaid.toLocaleString()}</td>
+                    <td class="p-3 text-right font-bold text-success">${driver.netBalance.toLocaleString()}</td>
+                    <td class="p-3 text-center">
+                        <button data-action="show-driver-savings-details" data-driver-name="${driver.driverName}" class="bg-sky-600 hover:bg-sky-700 text-white text-xs font-bold py-1 px-3 rounded-md transition">
+                            รายละเอียด
+                        </button>
+                    </td>
+                </tr>
+            `).join('');
+
+            return renderCard(`
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left">
+                        <thead class="bg-slate-800 text-sm text-gray-400 uppercase">
+                            <tr>
+                                <th class="p-3 text-center w-16">#</th>
+                                <th class="p-3">ชื่อพนักงานขับรถ</th>
+                                <th class="p-3 text-center">จำนวนเที่ยว</th>
+                                <th class="p-3 text-right">เบี้ยขับเต็ม (บาท)</th>
+                                <th class="p-3 text-right">ยอดรวมเงินสะสม (บาท)</th>
+                                <th class="p-3 text-right">ยอดจ่ายแล้ว (บาท)</th>
+                                <th class="p-3 text-right">ยอดคงเหลือ (บาท)</th>
+                                <th class="p-3 text-center">จัดการ</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${savingsData.length > 0 ? tableRows : `<tr><td colspan="8" class="text-center py-8 text-gray-500">ไม่พบข้อมูลเงินสะสม</td></tr>`}
+                        </tbody>
+                    </table>
+                </div>
+            `);
+        };
+
+        const renderDriverSavings = () => {
+             return `
+                <div class="space-y-8">
+                    ${renderCard(`
+                        <div class="flex flex-wrap justify-between items-center gap-4">
+                            <h2 class="text-2xl font-bold text-white flex items-center gap-3">${ICONS.Wallet}รายงานเงินสะสมพนักงานขับรถ (หักเที่ยวละ 200 บาท)</h2>
+                            <div class="flex items-center gap-4">
+                                <button id="add-new-carryover-btn" data-action="add-new-carryover" class="flex items-center gap-2 bg-success hover:bg-green-600 text-white font-bold py-2 px-4 rounded-lg shadow-md transition-transform transform hover:scale-105">
+                                    ${ICONS.Plus} เพิ่มยอดยกมา
+                                </button>
+                                <button id="add-new-payout-btn" data-action="add-new-payout" class="flex items-center gap-2 bg-primary hover:bg-secondary text-white font-bold py-2 px-4 rounded-lg shadow-md transition-transform transform hover:scale-105">
+                                    ${ICONS.Plus} บันทึกการจ่ายเงินสะสม
+                                </button>
+                                <button id="export-savings-excel-btn" class="flex items-center gap-2 bg-success hover:bg-green-600 text-white font-bold py-2 px-4 rounded-lg shadow-md transition-transform transform hover:scale-105">
+                                    ${ICONS.Download} Export to Excel
+                                </button>
+                            </div>
+                        </div>
+                    `)}
+                    <div id="driver-savings-content">
+                        ${renderDriverSavingsContent()}
+                    </div>
+                </div>
+            `;
+        }
+
+
         // --- Modals ---
         const renderModal = () => `<div id="modal-container" class="hidden"></div>`;
         const renderAuthModal = () => `<div id="auth-modal-container" class="hidden"></div>`;
 
-        const openModal = (title, content) => {
+        const openModal = (title, content, maxWidth = 'max-w-2xl') => {
             const modalContainer = document.getElementById('modal-container');
             modalContainer.innerHTML = `
                 <div class="fixed inset-0 bg-black bg-opacity-70 z-40 flex justify-center items-center">
-                    <div class="bg-neutral rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col">
+                    <div class="bg-neutral rounded-xl shadow-2xl w-full ${maxWidth} max-h-[90vh] flex flex-col">
                         <header class="flex justify-between items-center p-4 border-b border-slate-600">
                             <h2 class="text-xl font-bold text-white">${title}</h2>
                             <button data-action="close-modal" class="text-gray-400 hover:text-white transition-colors">
@@ -1052,6 +1354,16 @@
                             <label class="block text-sm font-medium text-gray-400 mb-1">ปลายทาง</label>
                             <input type="text" name="destination" value="${route?.destination || ''}" placeholder="เช่น, เชียงใหม่" required class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent" />
                         </div>
+                         <div>
+                            <label class="block text-sm font-medium text-gray-400 mb-1">บริษัทขนส่ง</label>
+                            <input type="text" name="transportCompany" value="${route?.transportCompany || ''}" placeholder="ชื่อบริษัท" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent" />
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-400 mb-1">ราคาค่าขนส่ง (บาท)</label>
+                            <input type="number" name="shippingCost" value="${route?.shippingCost || ''}" placeholder="0" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent" />
+                        </div>
                         <div>
                             <label class="block text-sm font-medium text-gray-400 mb-1">เบี้ยขับ (บาท)</label>
                             <input type="number" name="driverAllowance" value="${route?.driverAllowance || ''}" placeholder="0" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent" />
@@ -1116,7 +1428,9 @@
         const renderFuelRecordEditFormContent = (record) => {
             const distributionLiters = record.fuelDistributionLiters ? Object.entries(record.fuelDistributionLiters).map(([stationKey, amount]) => ({ stationKey, amount })) : [];
             const distributionBaht = record.fuelDistributionBaht ? Object.entries(record.fuelDistributionBaht).map(([stationKey, amount]) => ({ stationKey, amount })) : [];
-
+            const transportCompanyOptions = logisticsService.getUniqueValues('transportCompany')
+                .map(company => `<option value="${company}" ${record.transportCompany === company ? 'selected' : ''}>${company}</option>`)
+                .join('');
              return `
                 <form id="fuel-record-edit-form" class="space-y-4">
                     <input type="hidden" name="id" value="${record.id}" />
@@ -1131,9 +1445,34 @@
                         </div>
                     </div>
                      <div>
+                        <label class="block text-sm font-medium text-gray-400 mb-1">ชื่อพนักงานขับรถ</label>
+                        <input type="text" name="driverName" value="${record.driverName || ''}" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white" />
+                    </div>
+                     <div>
                         <label class="block text-sm font-medium text-gray-400 mb-1">ประเภทรถ</label>
                         <input type="text" name="vehicleType" value="${record.vehicleType}" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white" />
                     </div>
+                     <div>
+                        <label class="block text-sm font-medium text-gray-400 mb-1">ประเภทรถ (สังกัด)</label>
+                        <div class="flex items-center gap-6">
+                            <label class="flex items-center gap-2 cursor-pointer">
+                                <input type="radio" name="vehicleOwnership" value="company" ${record.vehicleOwnership === 'company' || !record.vehicleOwnership ? 'checked' : ''} />
+                                <span>รถบริษัท</span>
+                            </label>
+                            <label class="flex items-center gap-2 cursor-pointer">
+                                <input type="radio" name="vehicleOwnership" value="subcontractor" ${record.vehicleOwnership === 'subcontractor' ? 'checked' : ''} />
+                                <span>รถร่วมขนส่ง</span>
+                            </label>
+                        </div>
+                    </div>
+                    <div id="edit-subcontractor-details" class="${record.vehicleOwnership === 'subcontractor' ? '' : 'hidden'}">
+                        <label class="block text-sm font-medium text-gray-400 mb-1">บริษัทขนส่ง <span class="text-red-400">*</span></label>
+                        <select name="transportCompany" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white">
+                            <option value="">-- กรุณาเลือกบริษัทขนส่ง --</option>
+                            ${transportCompanyOptions}
+                        </select>
+                    </div>
+
                     <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
                          <div>
                             <label class="block text-sm font-medium text-gray-400 mb-1">ต้นทาง</label>
@@ -1145,9 +1484,15 @@
                         </div>
                     </div>
                     
-                    <div>
-                        <label class="block text-sm font-medium text-gray-400 mb-1">เบี้ยขับ (บาท)</label>
-                        <input type="number" name="driverAllowance" value="${record.driverAllowance || ''}" placeholder="0" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white" />
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-400 mb-1">ค่าขนส่ง (บาท)</label>
+                            <input type="number" name="shippingCost" value="${record.shippingCost || ''}" placeholder="0" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white" />
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-400 mb-1">เบี้ยขับ (บาท)</label>
+                            <input type="number" name="driverAllowance" value="${record.driverAllowance || ''}" placeholder="0" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white" />
+                        </div>
                     </div>
 
                     <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -1221,11 +1566,16 @@
                 attachDataManagementListeners();
             } else if (appState.view === 'vehicles') {
                 attachVehicleManagementListeners();
+            } else if (appState.view === 'savings') {
+                const exportBtn = document.getElementById('export-savings-excel-btn');
+                if (exportBtn) {
+                    exportBtn.addEventListener('click', handleExportSavingsToExcel);
+                }
             }
         };
 
         const handleAppClick = (e) => {
-            const target = e.target.closest('[data-action], .nav-button, #add-new-route-btn, #add-new-vehicle-btn');
+            const target = e.target.closest('[data-action], .nav-button, #add-new-route-btn, #add-new-vehicle-btn, #add-new-payout-btn, #add-new-carryover-btn');
             if (!target) return;
 
             const action = target.dataset.action;
@@ -1234,7 +1584,7 @@
             // --- Global Actions ---
             if (target.classList.contains('nav-button')) {
                 const view = target.dataset.view;
-                if (['data', 'vehicles'].includes(view) && !appState.isAuthenticated) {
+                if (['data', 'vehicles', 'savings'].includes(view) && !appState.isAuthenticated) {
                     openAuthModal();
                     // Store the intended view to navigate to after successful authentication
                     appState.pendingView = view; 
@@ -1266,6 +1616,15 @@
             if (action === 'add-new-vehicle') handleAddNewVehicle();
             if (action === 'edit-vehicle') handleEditVehicle(id);
             if (action === 'delete-vehicle') handleDeleteVehicle(id);
+            
+            // --- Savings Actions ---
+            if (action === 'add-new-payout') handleAddNewPayout();
+            if (action === 'add-new-carryover') handleAddNewCarryOver();
+            if (action === 'show-driver-savings-details') handleShowDriverSavingsDetails(target.dataset.driverName);
+            if (action === 'edit-payout') handleEditPayout(id);
+            if (action === 'delete-payout') handleDeletePayout(id);
+            if (action === 'edit-carryover') handleEditCarryOver(id);
+            if (action === 'delete-carryover') handleDeleteCarryOver(id);
 
             // --- Common Form Actions ---
             if (action === 'remove-distribution') {
@@ -1294,6 +1653,13 @@
                         vehicleTypeInput.dispatchEvent(new Event('change'));
                     }
                 }
+                
+                // New: Auto-populate driver name
+                const latestRecord = appState.fuelRecords.find(r => r.vehicleRegistration === registrationNumber);
+                const driverNameInput = document.getElementById('form-driver-name');
+                if (driverNameInput) {
+                    driverNameInput.value = latestRecord?.driverName || '';
+                }
             };
 
             // Autocomplete listeners
@@ -1307,7 +1673,16 @@
                 const input = document.getElementById(id);
                 if(input) input.addEventListener('change', updateVlookupCard);
             });
+
+            const transportCompanySelect = document.getElementById('form-transport-company');
+            if (transportCompanySelect) {
+                transportCompanySelect.addEventListener('change', updateVlookupCard);
+            }
             
+            // Also trigger driver name lookup on change (for manual typing)
+            const regInput = document.getElementById('form-vehicle-registration');
+            if (regInput) regInput.addEventListener('change', (e) => handleVehicleRegistrationSelect(e.target.value));
+
             // Distribution buttons
             const addLitersBtn = document.getElementById('add-distribution-btn-liters');
             const addBahtBtn = document.getElementById('add-distribution-btn-baht');
@@ -1321,6 +1696,54 @@
             // Recalculate totals on change
             document.getElementById('distribution-list-liters')?.addEventListener('input', () => updateTotalAmount('liters'));
             document.getElementById('distribution-list-baht')?.addEventListener('input', () => updateTotalAmount('baht'));
+            
+            // Vehicle Ownership Radio Listener
+            const ownershipRadios = document.getElementById('vehicle-ownership-radios');
+            if (ownershipRadios) {
+                ownershipRadios.addEventListener('change', (e) => {
+                    const isSubcontractor = e.target.value === 'subcontractor';
+
+                    const subcontractorDetails = document.getElementById('subcontractor-details');
+                    const litersBlock = document.getElementById('liters-distribution-block');
+                    const bahtBlock = document.getElementById('baht-distribution-block');
+                    const driverAllowanceWrapper = document.getElementById('driver-allowance-wrapper');
+                    const kmTimeGrid = document.getElementById('km-time-grid');
+                    const shippingCostInput = document.getElementById('form-shipping-cost');
+                    
+                    const isCompany = !isSubcontractor;
+
+                    // Toggle visibility
+                    subcontractorDetails.classList.toggle('hidden', isCompany);
+                    litersBlock.classList.toggle('hidden', isSubcontractor);
+                    bahtBlock.classList.toggle('hidden', isSubcontractor);
+                    driverAllowanceWrapper.classList.toggle('hidden', isSubcontractor);
+                    kmTimeGrid.classList.toggle('hidden', isSubcontractor);
+
+                    // For subcontractors, hide fuel blocks and show only shipping cost
+                    if (shippingCostInput.parentElement) {
+                        shippingCostInput.parentElement.classList.toggle('hidden', isCompany);
+                    }
+
+
+                    // Clear values when switching
+                    if (isSubcontractor) {
+                        // Clear company-specific fields
+                        document.getElementById('distribution-list-liters').innerHTML = '';
+                        document.getElementById('distribution-list-baht').innerHTML = '';
+                        updateTotalAmount('liters');
+                        updateTotalAmount('baht');
+                        document.getElementById('form-driver-allowance').value = '';
+                        document.getElementById('form-kilometers').value = '';
+                        document.getElementById('form-travel-time').value = '';
+                    } else {
+                        // Clear subcontractor-specific fields
+                        document.getElementById('form-transport-company').value = '';
+                        shippingCostInput.value = '';
+                    }
+
+                    updateVlookupCard();
+                });
+            }
 
             // Initial V-lookup call
             updateVlookupCard();
@@ -1478,8 +1901,13 @@
             const vehicleType = document.getElementById('form-vehicle-type')?.value;
             const origin = document.getElementById('form-origin')?.value;
             const destination = document.getElementById('form-destination')?.value;
+            const vehicleOwnership = document.querySelector('input[name="vehicleOwnership"]:checked')?.value;
+            const selectedTransportCompany = document.getElementById('form-transport-company')?.value;
 
-            const route = logisticsService.findMatchingRoute(vehicleType, origin, destination);
+            // Determine which company to use for the lookup
+            const companyForLookup = (vehicleOwnership === 'subcontractor') ? selectedTransportCompany : '';
+
+            const route = logisticsService.findMatchingRoute(vehicleType, origin, destination, companyForLookup);
 
             // Auto-populate form logic
             const distributionListLiters = document.getElementById('distribution-list-liters');
@@ -1487,12 +1915,14 @@
             const driverAllowanceInput = document.getElementById('form-driver-allowance');
             const kilometersInput = document.getElementById('form-kilometers');
             const travelTimeInput = document.getElementById('form-travel-time');
+            const shippingCostInput = document.getElementById('form-shipping-cost');
             
             if(distributionListLiters) distributionListLiters.innerHTML = '';
             if(distributionListBaht) distributionListBaht.innerHTML = '';
             if(driverAllowanceInput) driverAllowanceInput.value = '';
             if(kilometersInput) kilometersInput.value = '';
             if(travelTimeInput) travelTimeInput.value = '';
+            if(shippingCostInput) shippingCostInput.value = '';
 
             if (route) {
                 if (distributionListLiters && route.gasStationsLiters) {
@@ -1507,15 +1937,11 @@
                         distributionListBaht.insertAdjacentHTML('beforeend', newItemHtml);
                     });
                 }
-                if (driverAllowanceInput) {
-                    driverAllowanceInput.value = route.driverAllowance || '';
-                }
-                if (kilometersInput) {
-                    kilometersInput.value = route.kilometers || '';
-                }
-                if (travelTimeInput) {
-                    travelTimeInput.value = route.travelTime ? minutesToHoursAndMinutes(route.travelTime) : '';
-                }
+                if (driverAllowanceInput) driverAllowanceInput.value = route.driverAllowance || '';
+                if (kilometersInput) kilometersInput.value = route.kilometers || '';
+                if (travelTimeInput) travelTimeInput.value = route.travelTime ? minutesToHoursAndMinutes(route.travelTime) : '';
+                if (shippingCostInput) shippingCostInput.value = route.shippingCost || '';
+
             }
             
             updateTotalAmount('liters');
@@ -1553,6 +1979,14 @@
                         <span class="text-right">${route.origin} → ${route.destination}</span>
                     </div>
                      <hr class="border-slate-600 my-2">
+                    <div class="flex justify-between items-center text-sm">
+                        <span class="text-gray-400">บริษัทขนส่ง:</span>
+                        <span class="font-semibold">${route.transportCompany || '-'}</span>
+                    </div>
+                    <div class="flex justify-between items-center text-sm">
+                        <span class="text-gray-400">ราคาค่าขนส่ง:</span>
+                        <span class="font-semibold">${(route.shippingCost || 0).toLocaleString()} บาท</span>
+                    </div>
                     <div class="flex justify-between items-center text-sm">
                         <span class="text-gray-400">ระยะทาง:</span>
                         <span class="font-semibold">${(route.kilometers || 0).toLocaleString()} กม.</span>
@@ -1619,8 +2053,19 @@
                 document.getElementById('form-total-liters').value = '';
                 document.getElementById('form-total-baht').value = '';
                 document.getElementById('form-driver-allowance').value = '';
+                document.getElementById('form-shipping-cost').value = '';
                 document.getElementById('form-kilometers').value = '';
                 document.getElementById('form-travel-time').value = '';
+                document.getElementById('form-driver-name').value = '';
+                
+                // Reset conditional UI
+                document.getElementById('subcontractor-details').classList.add('hidden');
+                document.getElementById('liters-distribution-block').classList.remove('hidden');
+                document.getElementById('baht-distribution-block').classList.remove('hidden');
+                document.getElementById('driver-allowance-wrapper').classList.remove('hidden');
+                document.getElementById('km-time-grid').classList.remove('hidden');
+
+
                 updateVlookupCard();
                 const status = document.getElementById('form-status');
                 if (status) status.innerHTML = '';
@@ -1650,11 +2095,21 @@
             const origin = form.querySelector('#form-origin').value;
             const destination = form.querySelector('#form-destination').value;
             const travelTimeString = form.querySelector('#form-travel-time').value;
+            const vehicleOwnership = form.querySelector('input[name="vehicleOwnership"]:checked').value;
+            const transportCompany = form.querySelector('#form-transport-company').value;
+
+            if (vehicleOwnership === 'subcontractor' && !transportCompany) {
+                 statusDiv.innerHTML = `<p class="text-red-400">สำหรับรถร่วมขนส่ง กรุณาเลือกบริษัทขนส่ง</p>`;
+                return;
+            }
 
             const record = {
                 date: form.querySelector('#form-date').value,
                 vehicleRegistration: form.querySelector('#form-vehicle-registration').value,
+                driverName: form.querySelector('#form-driver-name').value,
                 vehicleType: vehicleType,
+                vehicleOwnership: vehicleOwnership,
+                transportCompany: vehicleOwnership === 'subcontractor' ? transportCompany : '',
                 origin: origin,
                 destination: destination,
                 details: form.querySelector('#form-details').value,
@@ -1663,6 +2118,7 @@
                 totalLiters: Number(form.querySelector('#form-total-liters').value) || 0,
                 fuelDistributionBaht: getDistributionData('baht'),
                 totalBaht: Number(form.querySelector('#form-total-baht').value) || 0,
+                shippingCost: Number(form.querySelector('#form-shipping-cost').value) || 0,
                 driverAllowance: Number(form.querySelector('#form-driver-allowance').value) || 0,
                 kilometers: Number(form.querySelector('#form-kilometers').value) || 0,
                 travelTime: hoursAndMinutesToMinutes(travelTimeString),
@@ -1705,14 +2161,14 @@
         };
 
         const handleAddNewRoute = () => {
-            openModal('เพิ่มเส้นทางใหม่', renderRouteFormContent());
+            openModal('เพิ่มเส้นทางใหม่', renderRouteFormContent(), 'max-w-4xl');
             document.getElementById('route-form').addEventListener('submit', handleRouteFormSubmit);
         };
 
         const handleEditRoute = (id) => {
             const route = logisticsService.getRoutes().find(r => r.id === id);
             if (!route) return;
-            openModal('แก้ไขข้อมูลเส้นทาง', renderRouteFormContent(route));
+            openModal('แก้ไขข้อมูลเส้นทาง', renderRouteFormContent(route), 'max-w-4xl');
             document.getElementById('route-form').addEventListener('submit', handleRouteFormSubmit);
         };
         
@@ -1762,6 +2218,8 @@
                 vehicleType: formData.get('vehicleType'),
                 origin: formData.get('origin'),
                 destination: formData.get('destination'),
+                transportCompany: formData.get('transportCompany'),
+                shippingCost: Number(formData.get('shippingCost')) || 0,
                 driverAllowance: Number(formData.get('driverAllowance')) || 0,
                 kilometers: Number(formData.get('kilometers')) || 0,
                 travelTime: hoursAndMinutesToMinutes(formData.get('travelTime')),
@@ -1796,10 +2254,18 @@
         const handleEditFuelRecord = (id) => {
             const record = logisticsService.getFuelRecords().find(r => r.id === id);
             if (!record) return;
-            openModal('แก้ไขรายการน้ำมัน', renderFuelRecordEditFormContent(record));
+            openModal('แก้ไขรายการน้ำมัน', renderFuelRecordEditFormContent(record), 'max-w-4xl');
             const form = document.getElementById('fuel-record-edit-form');
             if (form) {
                 form.addEventListener('submit', handleFuelRecordEditFormSubmit);
+
+                // Add listener for radio buttons inside the modal
+                 form.querySelectorAll('input[name="vehicleOwnership"]').forEach(radio => {
+                    radio.addEventListener('change', (e) => {
+                        const subcontractorDetails = form.querySelector('#edit-subcontractor-details');
+                        subcontractorDetails.classList.toggle('hidden', e.target.value !== 'subcontractor');
+                    });
+                });
             }
         };
         
@@ -1823,17 +2289,29 @@
                 return data;
             };
 
+            const vehicleOwnership = formData.get('vehicleOwnership');
+            const transportCompany = formData.get('transportCompany');
+
+            if (vehicleOwnership === 'subcontractor' && !transportCompany) {
+                alert("สำหรับรถร่วมขนส่ง กรุณาเลือกบริษัทขนส่ง");
+                return;
+            }
+
             const updatedRecord = {
                 id,
                 date: formData.get('date'),
                 vehicleRegistration: formData.get('vehicleRegistration'),
+                driverName: formData.get('driverName'),
                 vehicleType: formData.get('vehicleType'),
+                vehicleOwnership: vehicleOwnership,
+                transportCompany: vehicleOwnership === 'subcontractor' ? transportCompany : '',
                 origin: formData.get('origin'),
                 destination: formData.get('destination'),
                 details: formData.get('details'),
                 notes: formData.get('notes'),
                 fuelDistributionLiters: getDistributionData('Liters'),
                 fuelDistributionBaht: getDistributionData('Baht'),
+                shippingCost: Number(formData.get('shippingCost')) || 0,
                 driverAllowance: Number(formData.get('driverAllowance')) || 0,
                 kilometers: Number(formData.get('kilometers')) || 0,
                 travelTime: hoursAndMinutesToMinutes(formData.get('travelTime')),
@@ -1908,7 +2386,307 @@
                 alert("เกิดข้อผิดพลาดในการบันทึกข้อมูลทะเบียนรถ: " + error.message);
             }
         };
+
+        const handleAddNewPayout = () => {
+             const driversWithSavings = [...new Set(appState.fuelRecords
+                .filter(r => (r.vehicleOwnership === 'company' || !r.vehicleOwnership) && r.driverName)
+                .map(r => r.driverName))].sort((a,b) => a.localeCompare(b, 'th'));
+            
+            openModal('บันทึกการจ่ายเงินสะสม', renderSavingsPayoutFormContent(null, driversWithSavings));
+            document.getElementById('savings-payout-form').addEventListener('submit', handleSavingsPayoutFormSubmit);
+        }
+
+        const handleEditPayout = (id) => {
+            const payout = appState.savingsPayouts.find(p => p.id === id);
+            if (!payout) return;
+            const driversWithSavings = [...new Set(appState.fuelRecords
+                .filter(r => (r.vehicleOwnership === 'company' || !r.vehicleOwnership) && r.driverName)
+                .map(r => r.driverName))].sort((a,b) => a.localeCompare(b, 'th'));
+
+            openModal('แก้ไขการจ่ายเงินสะสม', renderSavingsPayoutFormContent(payout, driversWithSavings));
+            document.getElementById('savings-payout-form').addEventListener('submit', handleSavingsPayoutFormSubmit);
+        };
+
+        const handleDeletePayout = async (id) => {
+            const payout = appState.savingsPayouts.find(p => p.id === id);
+            if (!payout) return;
+            
+            if (confirm(`คุณต้องการลบรายการจ่ายเงินของ ${payout.driverName} จำนวน ${payout.payoutAmount} บาท ใช่หรือไม่?`)) {
+                await logisticsService.deleteSavingsPayout(id);
+                handleShowDriverSavingsDetails(payout.driverName);
+            }
+        };
+
+        const handleSavingsPayoutFormSubmit = async (e) => {
+            e.preventDefault();
+            const form = e.target;
+            const formData = new FormData(form);
+            const id = formData.get('id');
+            const payoutData = {
+                driverName: formData.get('driverName'),
+                payoutDate: formData.get('payoutDate'),
+                payoutAmount: Number(formData.get('payoutAmount')) || 0,
+                notes: formData.get('notes'),
+            };
+
+            if (!payoutData.driverName || !payoutData.payoutDate || payoutData.payoutAmount <= 0) {
+                alert('กรุณากรอกข้อมูลให้ครบถ้วนและถูกต้อง');
+                return;
+            }
+
+            try {
+                const promise = id 
+                    ? logisticsService.updateSavingsPayout({ id, ...payoutData }) 
+                    : logisticsService.addSavingsPayout(payoutData);
+                await promise;
+                closeModal();
+                if (id) {
+                    handleShowDriverSavingsDetails(payoutData.driverName);
+                }
+            } catch (error) {
+                console.error("Error saving payout:", error);
+                alert("เกิดข้อผิดพลาดในการบันทึก: " + error.message);
+            }
+        };
         
+        const handleAddNewCarryOver = () => {
+            const drivers = [...new Set(appState.fuelRecords
+                .filter(r => (r.vehicleOwnership === 'company' || !r.vehicleOwnership) && r.driverName)
+                .map(r => r.driverName))].sort((a,b) => a.localeCompare(b, 'th'));
+            
+            openModal('เพิ่มยอดยกมา / ปรับปรุงยอด', renderSavingsCarryOverFormContent(null, drivers));
+            document.getElementById('savings-carryover-form').addEventListener('submit', handleSavingsCarryOverFormSubmit);
+        };
+        
+        const handleEditCarryOver = (id) => {
+            const carryOver = appState.savingsCarryOvers.find(c => c.id === id);
+            if (!carryOver) return;
+            const drivers = [...new Set(appState.fuelRecords
+                .filter(r => (r.vehicleOwnership === 'company' || !r.vehicleOwnership) && r.driverName)
+                .map(r => r.driverName))].sort((a,b) => a.localeCompare(b, 'th'));
+
+            openModal('แก้ไขยอดยกมา / ปรับปรุงยอด', renderSavingsCarryOverFormContent(carryOver, drivers));
+            document.getElementById('savings-carryover-form').addEventListener('submit', handleSavingsCarryOverFormSubmit);
+        };
+
+        const handleDeleteCarryOver = async (id) => {
+            const carryOver = appState.savingsCarryOvers.find(c => c.id === id);
+            if (!carryOver) return;
+            
+            if (confirm(`คุณต้องการลบรายการปรับปรุงยอดของ ${carryOver.driverName} จำนวน ${carryOver.carryOverAmount} บาท ใช่หรือไม่?`)) {
+                await logisticsService.deleteSavingsCarryOver(id);
+                handleShowDriverSavingsDetails(carryOver.driverName);
+            }
+        };
+
+        const handleSavingsCarryOverFormSubmit = async (e) => {
+            e.preventDefault();
+            const form = e.target;
+            const formData = new FormData(form);
+            const id = formData.get('id');
+            const carryOverData = {
+                driverName: formData.get('driverName'),
+                carryOverDate: formData.get('carryOverDate'),
+                carryOverAmount: Number(formData.get('carryOverAmount')) || 0,
+                notes: formData.get('notes'),
+            };
+
+            if (!carryOverData.driverName || !carryOverData.carryOverDate || carryOverData.carryOverAmount <= 0) {
+                alert('กรุณากรอกข้อมูลให้ครบถ้วนและถูกต้อง');
+                return;
+            }
+
+            try {
+                const promise = id 
+                    ? logisticsService.updateSavingsCarryOver({ id, ...carryOverData }) 
+                    : logisticsService.addSavingsCarryOver(carryOverData);
+                await promise;
+                closeModal();
+                if (id) {
+                    handleShowDriverSavingsDetails(carryOverData.driverName);
+                }
+            } catch (error) {
+                console.error("Error saving carry-over:", error);
+                alert("เกิดข้อผิดพลาดในการบันทึก: " + error.message);
+            }
+        };
+
+        const handleShowDriverSavingsDetails = (driverName) => {
+            openModal(`รายละเอียดเงินสะสม: ${driverName}`, renderDriverSavingsDetailsModalContent(driverName), 'max-w-5xl');
+        };
+        
+        const renderSavingsPayoutFormContent = (payout, drivers) => {
+            const driverOptions = drivers.map(name => `<option value="${name}" ${payout?.driverName === name ? 'selected' : ''}>${name}</option>`).join('');
+            return `
+                <form id="savings-payout-form" class="space-y-4">
+                    <input type="hidden" name="id" value="${payout?.id || ''}" />
+                    <div>
+                        <label class="block text-sm font-medium text-gray-400 mb-1">พนักงานขับรถ</label>
+                        <select name="driverName" required class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent">
+                            <option value="">-- เลือกพนักงานขับรถ --</option>
+                            ${driverOptions}
+                        </select>
+                    </div>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                         <div>
+                            <label class="block text-sm font-medium text-gray-400 mb-1">วันที่จ่าย</label>
+                            <input type="date" name="payoutDate" value="${payout?.payoutDate || new Date().toISOString().split('T')[0]}" required class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white" />
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-400 mb-1">จำนวนเงิน (บาท)</label>
+                            <input type="number" name="payoutAmount" value="${payout?.payoutAmount || ''}" placeholder="0" required class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white" />
+                        </div>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-400 mb-1">หมายเหตุ</label>
+                        <textarea name="notes" placeholder="รายละเอียดเพิ่มเติม" rows="3" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white">${payout?.notes || ''}</textarea>
+                    </div>
+                    <footer class="flex justify-end gap-4 pt-4">
+                        <button type="button" data-action="close-modal" class="bg-slate-600 hover:bg-slate-500 text-white font-bold py-2 px-4 rounded-lg transition">ยกเลิก</button>
+                        <button type="submit" class="bg-primary hover:bg-secondary text-white font-bold py-2 px-6 rounded-lg transition">บันทึก</button>
+                    </footer>
+                </form>
+            `;
+        };
+        
+        const renderSavingsCarryOverFormContent = (carryOver, drivers) => {
+            const driverOptions = drivers.map(name => `<option value="${name}" ${carryOver?.driverName === name ? 'selected' : ''}>${name}</option>`).join('');
+            return `
+                <form id="savings-carryover-form" class="space-y-4">
+                    <input type="hidden" name="id" value="${carryOver?.id || ''}" />
+                    <div>
+                        <label class="block text-sm font-medium text-gray-400 mb-1">พนักงานขับรถ</label>
+                        <select name="driverName" required class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent">
+                            <option value="">-- เลือกพนักงานขับรถ --</option>
+                            ${driverOptions}
+                        </select>
+                    </div>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                         <div>
+                            <label class="block text-sm font-medium text-gray-400 mb-1">วันที่</label>
+                            <input type="date" name="carryOverDate" value="${carryOver?.carryOverDate || new Date().toISOString().split('T')[0]}" required class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white" />
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-400 mb-1">จำนวนเงิน (บาท)</label>
+                            <input type="number" name="carryOverAmount" value="${carryOver?.carryOverAmount || ''}" placeholder="0" required class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white" />
+                        </div>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-400 mb-1">หมายเหตุ</label>
+                        <textarea name="notes" placeholder="เช่น ยอดยกมาจากระบบเก่า" rows="3" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white">${carryOver?.notes || ''}</textarea>
+                    </div>
+                    <footer class="flex justify-end gap-4 pt-4">
+                        <button type="button" data-action="close-modal" class="bg-slate-600 hover:bg-slate-500 text-white font-bold py-2 px-4 rounded-lg transition">ยกเลิก</button>
+                        <button type="submit" class="bg-success hover:bg-green-600 text-white font-bold py-2 px-6 rounded-lg transition">บันทึก</button>
+                    </footer>
+                </form>
+            `;
+        };
+
+        const renderDriverSavingsDetailsModalContent = (driverName) => {
+            const trips = appState.fuelRecords
+                .filter(r => r.driverName === driverName && (r.vehicleOwnership === 'company' || !r.vehicleOwnership) && r.driverAllowance > 0)
+                .sort((a, b) => new Date(b.date) - new Date(a.date));
+
+            const payouts = appState.savingsPayouts
+                .filter(p => p.driverName === driverName)
+                .sort((a, b) => new Date(b.payoutDate) - new Date(a.payoutDate));
+                
+            const carryOvers = appState.savingsCarryOvers
+                .filter(c => c.driverName === driverName)
+                .sort((a, b) => new Date(b.carryOverDate) - new Date(a.carryOverDate));
+
+            const tripRows = trips.map(trip => `
+                <tr class="border-b border-slate-700">
+                    <td class="p-2">${trip.date}</td>
+                    <td class="p-2 font-mono">${trip.vehicleRegistration}</td>
+                    <td class="p-2">${trip.origin} → ${trip.destination}</td>
+                    <td class="p-2 text-right">${(trip.driverAllowance || 0).toLocaleString()}</td>
+                    <td class="p-2 text-right font-semibold text-info">200</td>
+                </tr>`).join('');
+                
+            const carryOverRows = carryOvers.map(co => `
+                <tr class="border-b border-slate-700">
+                    <td class="p-2">${co.carryOverDate}</td>
+                    <td class="p-2 text-right text-green-400">${(co.carryOverAmount || 0).toLocaleString()}</td>
+                    <td class="p-2">${co.notes || ''}</td>
+                    <td class="p-2 text-center">
+                        <div class="flex justify-center gap-2">
+                            <button data-action="edit-carryover" data-id="${co.id}" class="text-blue-400 hover:text-blue-300 p-1 rounded-full">${ICONS.Pencil}</button>
+                            <button data-action="delete-carryover" data-id="${co.id}" class="text-red-500 hover:text-red-400 p-1 rounded-full">${ICONS.Trash}</button>
+                        </div>
+                    </td>
+                </tr>
+            `).join('');
+
+            const payoutRows = payouts.map(payout => `
+                 <tr class="border-b border-slate-700">
+                    <td class="p-2">${payout.payoutDate}</td>
+                    <td class="p-2 text-right text-yellow-400">${(payout.payoutAmount || 0).toLocaleString()}</td>
+                    <td class="p-2">${payout.notes || ''}</td>
+                    <td class="p-2 text-center">
+                        <div class="flex justify-center gap-2">
+                            <button data-action="edit-payout" data-id="${payout.id}" class="text-blue-400 hover:text-blue-300 p-1 rounded-full">${ICONS.Pencil}</button>
+                            <button data-action="delete-payout" data-id="${payout.id}" class="text-red-500 hover:text-red-400 p-1 rounded-full">${ICONS.Trash}</button>
+                        </div>
+                    </td>
+                </tr>
+            `).join('');
+
+            return `
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    <div>
+                        <h3 class="text-lg font-bold text-white mb-2">รายการสะสม (จากเบี้ยขับ)</h3>
+                        <div class="max-h-96 overflow-y-auto bg-slate-800/50 rounded-lg p-2">
+                            <table class="w-full text-sm">
+                                <thead class="sticky top-0 bg-slate-800"><tr>
+                                    <th class="p-2 text-left">วันที่</th><th class="p-2 text-left">ทะเบียน</th>
+                                    <th class="p-2 text-left">เส้นทาง</th><th class="p-2 text-right">เบี้ยขับเต็ม</th>
+                                    <th class="p-2 text-right">เงินสะสม</th>
+                                </tr></thead>
+                                <tbody>${tripRows || `<tr><td colspan="5" class="text-center p-4 text-gray-500">ไม่มีรายการ</td></tr>`}</tbody>
+                            </table>
+                        </div>
+                    </div>
+                    <div class="space-y-4">
+                        <div>
+                            <h3 class="text-lg font-bold text-white mb-2">รายการยอดยกมา / ปรับปรุง</h3>
+                             <div class="max-h-40 overflow-y-auto bg-slate-800/50 rounded-lg p-2">
+                                <table class="w-full text-sm">
+                                    <thead class="sticky top-0 bg-slate-800"><tr>
+                                        <th class="p-2 text-left">วันที่</th><th class="p-2 text-right">จำนวนเงิน</th>
+                                        <th class="p-2 text-left">หมายเหตุ</th><th class="p-2 text-center">จัดการ</th>
+                                    </tr></thead>
+                                    <tbody>${carryOverRows || `<tr><td colspan="4" class="text-center p-4 text-gray-500">ไม่มีรายการ</td></tr>`}</tbody>
+                                </table>
+                            </div>
+                        </div>
+                        <div>
+                            <h3 class="text-lg font-bold text-white mb-2">ประวัติการจ่ายเงิน</h3>
+                             <div class="max-h-40 overflow-y-auto bg-slate-800/50 rounded-lg p-2">
+                                <table class="w-full text-sm">
+                                    <thead class="sticky top-0 bg-slate-800"><tr>
+                                        <th class="p-2 text-left">วันที่จ่าย</th><th class="p-2 text-right">จำนวนเงิน</th>
+                                        <th class="p-2 text-left">หมายเหตุ</th><th class="p-2 text-center">จัดการ</th>
+                                    </tr></thead>
+                                    <tbody>${payoutRows || `<tr><td colspan="4" class="text-center p-4 text-gray-500">ไม่มีรายการ</td></tr>`}</tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        const autoSizeColumns = (worksheet, data) => {
+            if (!data || data.length === 0) return;
+            const cols = Object.keys(data[0]);
+            const colWidths = cols.map(col => ({
+                wch: Math.max(...data.map(row => (row[col]?.toString() || '').length), col.length) + 2
+            }));
+            worksheet["!cols"] = colWidths;
+        };
+
         const handleExportToExcel = () => {
             const filteredRecords = getFilteredFuelRecords();
 
@@ -1920,15 +2698,6 @@
             const workbook = XLSX.utils.book_new();
             const today = new Date().toISOString().split('T')[0];
 
-            const autoSizeColumns = (worksheet, data) => {
-                if (!data || data.length === 0) return;
-                const cols = Object.keys(data[0]);
-                const colWidths = cols.map(col => ({
-                    wch: Math.max(...data.map(row => (row[col]?.toString() || '').length), col.length) + 2
-                }));
-                worksheet["!cols"] = colWidths;
-            };
-
             const stationKeys = logisticsService.getAllGasStationKeys();
             const friendlyNames = logisticsService.getAllGasStationFriendlyNames();
 
@@ -1937,13 +2706,17 @@
                 const row = {
                     'วันที่': record.date,
                     'ทะเบียนรถ': record.vehicleRegistration,
+                    'ชื่อพนักงานขับรถ': record.driverName || '',
                     'ประเภทรถ': record.vehicleType,
+                    'สังกัด': record.vehicleOwnership === 'subcontractor' ? 'รถร่วม' : 'รถบริษัท',
+                    'บริษัทขนส่ง': record.transportCompany || '',
                     'ต้นทาง': record.origin,
                     'ปลายทาง': record.destination,
                     'ระยะทาง (กม.)': record.kilometers || '',
                     'เวลาเดินทาง (ชม.)': record.travelTime ? minutesToHoursAndMinutes(record.travelTime) : '',
                     'รวม (ลิตร)': record.totalLiters || '',
                     'รวม (บาท)': record.totalBaht || '',
+                    'ค่าขนส่ง (บาท)': record.shippingCost || '',
                     'เบี้ยขับ (บาท)': record.driverAllowance || '',
                     'รายละเอียด': record.details || '',
                     'หมายเหตุ': record.notes || ''
@@ -1992,6 +2765,7 @@
                 const allowanceSheetData = allowanceRecords.map(record => ({
                     'วันที่': record.date,
                     'ทะเบียนรถ': record.vehicleRegistration,
+                    'ชื่อพนักงานขับรถ': record.driverName || '',
                     'ประเภทรถ': record.vehicleType,
                     'เส้นทาง': `${record.origin} → ${record.destination}`,
                     'เบี้ยขับ (บาท)': record.driverAllowance
@@ -2001,8 +2775,132 @@
                 autoSizeColumns(allowanceWorksheet, allowanceSheetData);
                 XLSX.utils.book_append_sheet(workbook, allowanceWorksheet, "สรุปเบี้ยขับ");
             }
+
+            // 4. Subcontractor Sheet
+            const subcontractorRecords = filteredRecords.filter(r => r.vehicleOwnership === 'subcontractor');
+            if (subcontractorRecords.length > 0) {
+                const subcontractorSheetData = subcontractorRecords.map(record => ({
+                    'วันที่': record.date,
+                    'ทะเบียนรถ': record.vehicleRegistration,
+                    'ประเภทรถ': record.vehicleType,
+                    'ชื่อบริษัท': record.transportCompany || '',
+                    'ชื่อพนักงานขับรถ': record.driverName || '',
+                    'เส้นทาง': `${record.origin} → ${record.destination}`,
+                    'ค่าขนส่ง (บาท)': record.shippingCost || ''
+                }));
+
+                const subcontractorWorksheet = XLSX.utils.json_to_sheet(subcontractorSheetData);
+                autoSizeColumns(subcontractorWorksheet, subcontractorSheetData);
+                XLSX.utils.book_append_sheet(workbook, subcontractorWorksheet, "รายงานรถร่วมขนส่ง");
+            }
             
             XLSX.writeFile(workbook, `Fuel_Report_${today}.xlsx`);
+        };
+
+        const handleExportSavingsToExcel = () => {
+            const savingsData = getDriverSavingsData();
+
+            if (savingsData.length === 0) {
+                alert("ไม่มีข้อมูลเงินสะสมสำหรับส่งออก");
+                return;
+            }
+
+            const today = new Date().toISOString().split('T')[0];
+            const workbook = XLSX.utils.book_new();
+            
+            // Main Summary Sheet
+            const summarySheetData = savingsData.map(driver => ({
+                'ชื่อพนักงานขับรถ': driver.driverName,
+                'จำนวนเที่ยว': driver.trips,
+                'เบี้ยขับเต็ม (บาท)': driver.totalFullAllowance,
+                'ยอดรวมเงินสะสม (บาท)': driver.totalSaved,
+                'ยอดจ่ายแล้ว (บาท)': driver.totalPaid,
+                'ยอดคงเหลือ (บาท)': driver.netBalance,
+            }));
+
+            const summaryWorksheet = XLSX.utils.json_to_sheet(summarySheetData);
+            autoSizeColumns(summaryWorksheet, summarySheetData);
+            XLSX.utils.book_append_sheet(workbook, summaryWorksheet, "สรุปเงินสะสม");
+
+            // Detail sheets for each driver
+            savingsData.forEach(driver => {
+                const driverName = driver.driverName;
+                const trips = appState.fuelRecords
+                    .filter(r => r.driverName === driverName && (r.vehicleOwnership === 'company' || !r.vehicleOwnership) && r.driverAllowance > 0)
+                    .sort((a, b) => new Date(a.date) - new Date(b.date));
+
+                const payouts = appState.savingsPayouts
+                    .filter(p => p.driverName === driverName)
+                    .sort((a, b) => new Date(a.payoutDate) - new Date(b.payoutDate));
+                    
+                const carryOvers = appState.savingsCarryOvers
+                    .filter(c => c.driverName === driverName)
+                    .sort((a, b) => new Date(a.carryOverDate) - new Date(b.carryOverDate));
+
+                const combinedData = [];
+
+                trips.forEach(t => {
+                    combinedData.push({
+                        'วันที่': t.date,
+                        'รายการ': `เที่ยววิ่ง: ${t.origin} → ${t.destination}`,
+                        'สะสม (บาท)': 200,
+                        'จ่าย (บาท)': '',
+                        'หมายเหตุ': `ทะเบียน ${t.vehicleRegistration}`
+                    });
+                });
+
+                carryOvers.forEach(co => {
+                    combinedData.push({
+                        'วันที่': co.carryOverDate,
+                        'รายการ': 'ยอดยกมา / ปรับปรุง',
+                        'สะสม (บาท)': co.carryOverAmount,
+                        'จ่าย (บาท)': '',
+                        'หมายเหตุ': co.notes || ''
+                    });
+                });
+
+                payouts.forEach(p => {
+                    combinedData.push({
+                        'วันที่': p.payoutDate,
+                        'รายการ': 'จ่ายเงินสะสม',
+                        'สะสม (บาท)': '',
+                        'จ่าย (บาท)': p.payoutAmount,
+                        'หมายเหตุ': p.notes || ''
+                    });
+                });
+
+                if (combinedData.length > 0) {
+                    const sortedCombinedData = combinedData.sort((a, b) => new Date(a['วันที่']) - new Date(b['วันที่']));
+                    
+                    let balance = 0;
+                    const detailSheetData = sortedCombinedData.map(row => {
+                         const saved = Number(row['สะสม (บาท)']) || 0;
+                         const paid = Number(row['จ่าย (บาท)']) || 0;
+                         balance += saved - paid;
+                         return { ...row, 'คงเหลือ (บาท)': balance };
+                    });
+
+                    // Add a totals row at the end
+                    const totalSaved = detailSheetData.reduce((sum, row) => sum + (Number(row['สะสม (บาท)']) || 0), 0);
+                    const totalPaid = detailSheetData.reduce((sum, row) => sum + (Number(row['จ่าย (บาท)']) || 0), 0);
+                    detailSheetData.push({}); // spacer
+                    detailSheetData.push({
+                        'วันที่': '',
+                        'รายการ': 'ยอดรวม',
+                        'สะสม (บาท)': totalSaved,
+                        'จ่าย (บาท)': totalPaid,
+                        'หมายเหตุ': 'ยอดคงเหลือสุทธิ',
+                        'คงเหลือ (บาท)': balance
+                    });
+
+                    const detailWorksheet = XLSX.utils.json_to_sheet(detailSheetData);
+                    autoSizeColumns(detailWorksheet, detailSheetData);
+                    const safeSheetName = driverName.replace(/[\\/*?:"<>|]/g, '').substring(0, 31);
+                    XLSX.utils.book_append_sheet(workbook, detailWorksheet, safeSheetName);
+                }
+            });
+
+            XLSX.writeFile(workbook, `Driver_Savings_Report_${today}.xlsx`);
         };
 
         // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
