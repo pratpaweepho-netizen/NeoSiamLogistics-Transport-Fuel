@@ -325,23 +325,27 @@
         // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
         // --- Render Helpers ---
-        const renderRouteDistributionRow = (item, index, unit) => {
+        const renderRouteDistributionRow = (item, index, unit, isReadOnly = false) => {
             const unitText = unit === 'Liters' ? 'ลิตร' : 'บาท';
             const gasStationOptions = Object.entries(GAS_STATION_FRIENDLY_NAMES)
                 .map(([key, name]) => `<option value="${key}" ${item.stationKey === key ? 'selected' : ''}>${name}</option>`)
                 .join('');
+
+            const readOnlyInputClasses = "w-full bg-slate-900 cursor-not-allowed border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white";
+            const editableInputClasses = "w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent";
+
             return `
                 <div class="distribution-row grid grid-cols-12 gap-2 items-center mb-2" data-index="${index}" data-unit="${unit}">
                     <div class="col-span-6">
-                        <select data-field="stationKey" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent">
+                        <select data-field="stationKey" ${isReadOnly ? 'disabled' : ''} class="${isReadOnly ? readOnlyInputClasses : editableInputClasses}">
                             <option value="">เลือกปั๊มน้ำมัน</option>
                             ${gasStationOptions}
                         </select>
                     </div>
                     <div class="col-span-5">
-                        <input type="number" data-field="amount" value="${item.amount || ''}" placeholder="${unitText}" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent" />
+                        <input type="number" data-field="amount" value="${item.amount || ''}" placeholder="${unitText}" ${isReadOnly ? 'readonly' : ''} class="${isReadOnly ? readOnlyInputClasses : editableInputClasses}" />
                     </div>
-                    <div class="col-span-1 flex justify-center">
+                    <div class="col-span-1 flex justify-center ${isReadOnly ? 'hidden' : ''}">
                         <button type="button" data-action="remove-distribution" class="text-red-500 hover:text-red-400 p-2 rounded-full transition-colors">${ICONS.Trash}</button>
                     </div>
                 </div>
@@ -490,7 +494,7 @@
                                         </div>
                                     </div>
                                     <div id="distribution-list-liters"></div>
-                                    <button type="button" id="add-distribution-btn-liters" class="w-full border-2 border-dashed border-slate-500 hover:bg-slate-700/50 text-gray-300 font-semibold py-2 px-4 rounded-lg transition">+ เพิ่มจุดเติมน้ำมัน (ลิตร)</button>
+                                    <button type="button" id="add-distribution-btn-liters" class="hidden w-full border-2 border-dashed border-slate-500 hover:bg-slate-700/50 text-gray-300 font-semibold py-2 px-4 rounded-lg transition">+ เพิ่มจุดเติมน้ำมัน (ลิตร)</button>
                                 </div>
                                 
                                 <!-- Baht Distribution -->
@@ -503,28 +507,28 @@
                                         </div>
                                     </div>
                                     <div id="distribution-list-baht"></div>
-                                    <button type="button" id="add-distribution-btn-baht" class="w-full border-2 border-dashed border-slate-500 hover:bg-slate-700/50 text-gray-300 font-semibold py-2 px-4 rounded-lg transition">+ เพิ่มจุดเติมน้ำมัน (บาท)</button>
+                                    <button type="button" id="add-distribution-btn-baht" class="hidden w-full border-2 border-dashed border-slate-500 hover:bg-slate-700/50 text-gray-300 font-semibold py-2 px-4 rounded-lg transition">+ เพิ่มจุดเติมน้ำมัน (บาท)</button>
                                 </div>
                                 
                                 <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
                                      <div>
                                         <label class="block text-base font-medium text-gray-400 mb-1">ค่าขนส่ง (บาท)</label>
-                                        <input type="number" id="form-shipping-cost" placeholder="ข้อมูลจะแสดงอัตโนมัติ (แก้ไขได้)" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent" />
+                                        <input type="number" id="form-shipping-cost" placeholder="ข้อมูลจะแสดงอัตโนมัติ" readonly class="w-full bg-slate-900 cursor-not-allowed border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white" />
                                     </div>
                                     <div id="driver-allowance-wrapper">
                                        <label class="block text-base font-medium text-gray-400 mb-1">เบี้ยขับ (บาท)</label>
-                                       <input type="number" id="form-driver-allowance" placeholder="ข้อมูลจะแสดงอัตโนมัติ (แก้ไขได้)" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent" />
+                                       <input type="number" id="form-driver-allowance" placeholder="ข้อมูลจะแสดงอัตโนมัติ" readonly class="w-full bg-slate-900 cursor-not-allowed border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white" />
                                     </div>
                                 </div>
                                 
                                 <div id="km-time-grid" class="grid grid-cols-1 sm:grid-cols-2 gap-4">
                                     <div>
                                        <label class="block text-base font-medium text-gray-400 mb-1">ระยะทาง (กม.)</label>
-                                       <input type="number" id="form-kilometers" placeholder="ข้อมูลจะแสดงอัตโนมัติ (แก้ไขได้)" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent" />
+                                       <input type="number" id="form-kilometers" placeholder="ข้อมูลจะแสดงอัตโนมัติ" readonly class="w-full bg-slate-900 cursor-not-allowed border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white" />
                                     </div>
                                     <div>
                                        <label class="block text-base font-medium text-gray-400 mb-1">เวลาเดินทาง (ชม.)</label>
-                                       <input type="text" id="form-travel-time" placeholder="เช่น 4.30 (4 ชม. 30 นาที)" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent" />
+                                       <input type="text" id="form-travel-time" placeholder="ข้อมูลจะแสดงอัตโนมัติ" readonly class="w-full bg-slate-900 cursor-not-allowed border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white" />
                                     </div>
                                 </div>
 
@@ -1962,13 +1966,13 @@
             if (route) {
                 if (distributionListLiters && route.gasStationsLiters) {
                     Object.entries(route.gasStationsLiters).forEach(([stationKey, amount], index) => {
-                        const newItemHtml = renderRouteDistributionRow({ stationKey, amount }, index, 'Liters');
+                        const newItemHtml = renderRouteDistributionRow({ stationKey, amount }, index, 'Liters', true);
                         distributionListLiters.insertAdjacentHTML('beforeend', newItemHtml);
                     });
                 }
                 if (distributionListBaht && route.gasStationsBaht) {
                     Object.entries(route.gasStationsBaht).forEach(([stationKey, amount], index) => {
-                        const newItemHtml = renderRouteDistributionRow({ stationKey, amount }, index, 'Baht');
+                        const newItemHtml = renderRouteDistributionRow({ stationKey, amount }, index, 'Baht', true);
                         distributionListBaht.insertAdjacentHTML('beforeend', newItemHtml);
                     });
                 }
