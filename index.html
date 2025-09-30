@@ -141,6 +141,7 @@
             const shippingCostWrapper = document.getElementById('form-shipping-cost').parentElement;
             const driverAllowanceWrapper = document.getElementById('driver-allowance-wrapper');
             const kmTimeGrid = document.getElementById('km-time-grid');
+            const queueSectionGrid = document.getElementById('queue-section-grid');
 
             if (!subcontractorDetails) return; // Exit if not on the form view
 
@@ -148,6 +149,9 @@
             subcontractorDetails.classList.toggle('hidden', !isSubcontractor);
             driverAllowanceWrapper.classList.toggle('hidden', isSubcontractor);
             kmTimeGrid.classList.toggle('hidden', isSubcontractor);
+            if (queueSectionGrid) {
+                queueSectionGrid.classList.toggle('hidden', isSubcontractor);
+            }
 
             ngvCostWrapper.classList.toggle('hidden', !isNGV);
             litersBlock.classList.toggle('hidden', isNGV || isSubcontractor);
@@ -536,7 +540,7 @@
                                     ${renderAutocomplete('form-destination', 'ปลายทาง', 'ค้นหาปลายทาง', logisticsService.getUniqueValues('destination'))}
                                 </div>
                                 
-                                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                <div id="queue-section-grid" class="grid grid-cols-1 sm:grid-cols-2 gap-4">
                                     <div>
                                         <label class="block text-base font-medium text-gray-400 mb-1">ประเภทคิว</label>
                                         <div id="queue-type-radios" class="flex items-center gap-6">
@@ -2097,6 +2101,12 @@
                             document.getElementById('form-driver-allowance').value = '';
                             document.getElementById('form-kilometers').value = '';
                             document.getElementById('form-travel-time').value = '';
+                            // Clear queue fields as they don't apply
+                            const queueRadios = document.querySelectorAll('input[name="queueType"]');
+                            if (queueRadios) queueRadios.forEach(radio => radio.checked = false);
+                            const queueDetailsSelect = document.getElementById('form-queue-details');
+                            if (queueDetailsSelect) queueDetailsSelect.innerHTML = '';
+
                         } else {
                             document.getElementById('form-transport-company').value = '';
                             document.getElementById('form-shipping-cost').value = '';
@@ -2399,34 +2409,36 @@
             const vehicleOwnership = document.querySelector('input[name="vehicleOwnership"]:checked')?.value;
             const selectedTransportCompany = document.getElementById('form-transport-company')?.value;
             const isNGV = document.querySelector('input[name="fuelType"]:checked')?.value === 'ngv';
-            const companyForLookup = (vehicleOwnership === 'subcontractor') ? selectedTransportCompany : '';
+            
+            const isSubcontractor = vehicleOwnership === 'subcontractor';
+            const companyForLookup = isSubcontractor ? selectedTransportCompany : '';
 
-            // --- START: REFINED LOGIC ---
             const baseRoute = logisticsService.findMatchingRoute(vehicleType, origin, destination, companyForLookup);
-
-            const queueType = document.querySelector('input[name="queueType"]:checked')?.value;
-            const queueDetails = document.getElementById('form-queue-details')?.value;
-
-            let route = null; // This will be the final route object to use
+            let route = null;
 
             if (baseRoute) {
-                if (queueType && queueDetails && queueDetails.trim() !== '') {
-                    // Only set the route if queue type AND details are selected and match
-                    const queueDataKey = queueType === 'loading' ? 'loadingQueue' : 'unloadingQueue';
-                    const qd = queueDetails.trim();
-                    const queueDataString = baseRoute[queueDataKey];
-                    
-                    if (queueDataString) {
-                        const options = queueDataString.split(',').map(item => item.trim());
-                        if (options.includes(qd)) {
-                            // The detail matches, so we can use this route
-                            route = baseRoute;
+                if (isSubcontractor) {
+                    // For subcontractors, the base route is enough. Queue is not required.
+                    route = baseRoute;
+                } else {
+                    // For company vehicles, queue type and details are required.
+                    const queueType = document.querySelector('input[name="queueType"]:checked')?.value;
+                    const queueDetails = document.getElementById('form-queue-details')?.value;
+
+                    if (queueType && queueDetails && queueDetails.trim() !== '') {
+                        const queueDataKey = queueType === 'loading' ? 'loadingQueue' : 'unloadingQueue';
+                        const qd = queueDetails.trim();
+                        const queueDataString = baseRoute[queueDataKey];
+                        
+                        if (queueDataString) {
+                            const options = queueDataString.split(',').map(item => item.trim());
+                            if (options.includes(qd)) {
+                                route = baseRoute;
+                            }
                         }
                     }
-                } 
-                // Otherwise, route remains null, and the vlookup card will show "Not found"
+                }
             }
-             // --- END: REFINED LOGIC ---
 
             // Auto-populate form logic
             const distributionListLiters = document.getElementById('distribution-list-liters');
@@ -2470,7 +2482,7 @@
                 cardContent.innerHTML = `
                     <h3 class="text-2xl font-bold text-white mb-4">ข้อมูลเส้นทาง</h3>
                     <p class="text-gray-400">ไม่พบข้อมูลเส้นทางที่ตรงกัน</p>
-                    <p class="text-base text-gray-500 mt-2">กรุณากรอกข้อมูลและเลือกเงื่อนไขให้ครบถ้วน (รวมถึงประเภทและรายละเอียดคิว)</p>
+                    <p class="text-base text-gray-500 mt-2">กรุณากรอกข้อมูลและเลือกเงื่อนไขให้ครบถ้วน ${isSubcontractor ? '' : '(รวมถึงประเภทและรายละเอียดคิว)'}</p>
                 `;
                 return;
             }
@@ -2645,8 +2657,8 @@
                 return;
             }
             
-            if (!queueTypeInput) {
-                statusDiv.innerHTML = `<p class="text-red-400">กรุณาเลือกประเภทคิว</p>`;
+            if (vehicleOwnership === 'company' && !queueTypeInput) {
+                statusDiv.innerHTML = `<p class="text-red-400">สำหรับรถบริษัท กรุณาเลือกประเภทคิว</p>`;
                 return;
             }
 
@@ -2674,7 +2686,7 @@
                 driverAllowance: Number(form.querySelector('#form-driver-allowance').value) || 0,
                 kilometers: Number(form.querySelector('#form-kilometers').value) || 0,
                 travelTime: hoursAndMinutesToMinutes(travelTimeString),
-                queueType: queueTypeInput.value,
+                queueType: queueTypeInput ? queueTypeInput.value : 'none',
                 queueDetails: form.querySelector('#form-queue-details').value,
             };
 
