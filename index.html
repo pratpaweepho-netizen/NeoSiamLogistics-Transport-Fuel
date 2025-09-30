@@ -81,6 +81,7 @@
             Database: `<svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"></ellipse><path d="M3 5V19A9 3 0 0 0 21 19V5"></path><path d="M3 12A9 3 0 0 0 21 12"></path></svg>`,
             IdCard: `<svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 10.5V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v12c0 1.1.9 2 2 2h12.5"></path><path d="M16 19h6"></path><path d="M19 16v6"></path><path d="M6 11h4"></path><path d="M6 15h2"></path><path d="M10 15h2"></path></svg>`,
             DocumentAdd: `<svg xmlns="http://www.w3.org/2000/svg" class="w-7 h-7 text-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 13h6m-3-3v6m5 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>`,
+            DocumentText: `<svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>`,
             Trash: `<svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>`,
             Pencil: `<svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.5L15.232 5.232z" /></svg>`,
             Plus: `<svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" /></svg>`,
@@ -160,7 +161,7 @@
         // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         
         let appState = {
-            view: 'form', // 'form', 'dashboard', 'data', 'vehicles', 'savings'
+            view: 'form', // 'form', 'dashboard', 'reports', 'data', 'vehicles', 'savings'
             isAuthenticated: false,
             routes: [],
             fuelRecords: [],
@@ -180,6 +181,12 @@
                 recordLimit: 50,
                 currentPage: 1,
             },
+            // Reports-specific state
+            reportFilters: {
+                vehicleRegistration: '',
+                dateFrom: '',
+                dateTo: '',
+            },
             // Data Management-specific state
             routeSort: { key: 'vehicleType', direction: 'asc' },
             routeFilters: {
@@ -190,7 +197,9 @@
                 kilometers: '',
                 travelTime: '',
                 transportCompany: '',
-                shippingCost: ''
+                shippingCost: '',
+                loadingQueue: '',
+                unloadingQueue: ''
             },
             vehicleManagementFilter: '',
             editingRoute: null,
@@ -240,7 +249,7 @@
                     const data = snapshot.val();
                     appState.fuelRecords = data ? Object.entries(data).map(([id, value]) => ({ id, ...value }))
                         .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()) : [];
-                    if(['dashboard', 'form', 'savings'].includes(appState.view)) renderApp();
+                    if(['dashboard', 'reports', 'form', 'savings'].includes(appState.view)) renderApp();
                 });
 
                 vehiclesRef.on('value', (snapshot) => {
@@ -384,6 +393,7 @@
             let viewHtml = '';
             if (appState.view === 'form') viewHtml = renderFuelRecordForm();
             if (appState.view === 'dashboard') viewHtml = renderDashboard();
+            if (appState.view === 'reports') viewHtml = renderReports();
             if (appState.view === 'data') viewHtml = renderDataManagement();
             if (appState.view === 'vehicles') viewHtml = renderVehicleManagement();
             if (appState.view === 'savings') viewHtml = renderDriverSavings();
@@ -429,6 +439,7 @@
                         <div class="flex items-center gap-2 sm:gap-4">
                             ${navButton('form', ICONS.Truck, 'บันทึกน้ำมัน')}
                             ${navButton('dashboard', ICONS.ChartBar, 'แดชบอร์ด')}
+                            ${navButton('reports', ICONS.DocumentText, 'รายงาน')}
                             ${navButton('savings', ICONS.Wallet, 'เงินสะสม')}
                             ${navButton('vehicles', ICONS.IdCard, 'จัดการทะเบียนรถ')}
                             ${navButton('data', ICONS.Database, 'จัดการเส้นทาง')}
@@ -525,6 +536,28 @@
                                     ${renderAutocomplete('form-destination', 'ปลายทาง', 'ค้นหาปลายทาง', logisticsService.getUniqueValues('destination'))}
                                 </div>
                                 
+                                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                    <div>
+                                        <label class="block text-base font-medium text-gray-400 mb-1">ประเภทคิว</label>
+                                        <div id="queue-type-radios" class="flex items-center gap-6">
+                                            <label class="flex items-center gap-2 cursor-pointer">
+                                                <input type="radio" name="queueType" value="loading" class="radio radio-primary text-accent focus:ring-accent" />
+                                                <span>คิวขาขึ้น</span>
+                                            </label>
+                                            <label class="flex items-center gap-2 cursor-pointer">
+                                                <input type="radio" name="queueType" value="unloading" class="radio radio-primary text-accent focus:ring-accent" />
+                                                <span>คิวถ่าย</span>
+                                            </label>
+                                        </div>
+                                    </div>
+                                    <div id="queue-details-wrapper" class="hidden">
+                                        <label class="block text-base font-medium text-gray-400 mb-1">รายละเอียดคิว</label>
+                                        <select id="form-queue-details" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent">
+                                            <!-- Options will be populated dynamically -->
+                                        </select>
+                                    </div>
+                                </div>
+
                                 <div id="ngv-cost-wrapper" class="hidden">
                                     <label class="block text-base font-medium text-gray-400 mb-1">ค่าก๊าซ NGV (บาท)</label>
                                     <input type="number" id="form-ngv-cost" placeholder="ระบุจำนวนเงิน" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent" />
@@ -654,6 +687,9 @@
                 const fuelCostCell = formatZeroAsEmpty(record.totalBaht);
                 const shippingCostCell = isNGV ? '-' : formatZeroAsEmpty(record.shippingCost);
                 const fuelTypeDisplay = isNGV ? 'NGV' : 'Diesel';
+                const queueDisplay = record.queueType && record.queueType !== 'none'
+                    ? `${record.queueType === 'loading' ? 'ขึ้น' : 'ถ่าย'}: ${record.queueDetails || ''}`
+                    : '-';
 
                 return `
                 <tr class="border-b border-slate-600 hover:bg-slate-700/20">
@@ -663,6 +699,7 @@
                     <td class="p-3">${record.vehicleType} (${ownershipText})</td>
                     <td class="p-3">${record.transportCompany || '-'}</td>
                     <td class="p-3">${record.origin} → ${record.destination}</td>
+                    <td class="p-3">${queueDisplay}</td>
                     <td class="p-3 text-right font-semibold text-accent">${fuelAmountCell}</td>
                     <td class="p-3 text-right font-semibold text-accent">${fuelCostCell}</td>
                     <td class="p-3 text-right font-semibold text-info">${shippingCostCell}</td>
@@ -977,6 +1014,7 @@
                                     <th class="p-3">ประเภทรถ (สังกัด)</th>
                                     <th class="p-3">บริษัทขนส่ง</th>
                                     <th class="p-3">เส้นทาง</th>
+                                    <th class="p-3">คิว</th>
                                     <th class="p-3 text-right">ปริมาณเชื้อเพลิง</th>
                                     <th class="p-3 text-right">ค่าเชื้อเพลิง (บาท)</th>
                                     <th class="p-3 text-right">ค่าขนส่ง (บาท)</th>
@@ -1031,6 +1069,145 @@
 
                     <div id="dashboard-content" class="space-y-8">
                        ${renderDashboardContent()}
+                    </div>
+                </div>
+            `;
+        };
+
+        // --- View: Reports ---
+        const getFilteredQueueRecords = (queueType) => {
+            const filters = appState.reportFilters;
+            const records = logisticsService.getFuelRecords();
+            return records.filter(record => {
+                if (record.queueType !== queueType) return false;
+
+                const recordDate = new Date(record.date);
+                const dateFrom = filters.dateFrom ? new Date(filters.dateFrom) : null;
+                const dateTo = filters.dateTo ? new Date(filters.dateTo) : null;
+
+                if (filters.vehicleRegistration && !(record.vehicleRegistration || '').toUpperCase().includes(filters.vehicleRegistration.toUpperCase())) return false;
+                if (dateFrom && recordDate < dateFrom) return false;
+                if (dateTo && recordDate > dateTo) return false;
+                return true;
+            });
+        };
+
+        const renderQueueReportTable = (title, records) => {
+            const tableRows = records.map(record => {
+                const ownershipText = record.vehicleOwnership === 'subcontractor' ? 'รถร่วม' : 'รถบริษัท';
+                let allowanceCellHtml;
+                if ((record.vehicleOwnership === 'company' || !record.vehicleOwnership) && record.driverAllowance > 0) {
+                    const netAllowance = (record.driverAllowance || 0) - 200;
+                    allowanceCellHtml = `
+                        <div class="flex flex-col items-end">
+                            <span>${netAllowance > 0 ? netAllowance.toLocaleString() : '0'}</span>
+                            <span class="text-sm text-yellow-400">(สะสม 200)</span>
+                        </div>`;
+                } else {
+                    allowanceCellHtml = formatZeroAsEmpty(record.driverAllowance);
+                }
+
+                const isNGV = record.fuelType === 'ngv';
+                const fuelAmountCell = isNGV ? '<span class="text-green-400">NGV</span>' : formatZeroAsEmpty(record.totalLiters);
+                const fuelCostCell = formatZeroAsEmpty(record.totalBaht);
+                const shippingCostCell = isNGV ? '-' : formatZeroAsEmpty(record.shippingCost);
+                const fuelTypeDisplay = isNGV ? 'NGV' : 'Diesel';
+                
+                return `
+                <tr class="border-b border-slate-600 hover:bg-slate-700/20">
+                    <td class="p-3">${record.date}</td>
+                    <td class="p-3 font-mono">${record.vehicleRegistration}</td>
+                    <td class="p-3">${record.driverName || ''}</td>
+                    <td class="p-3">${record.vehicleType} (${ownershipText})</td>
+                    <td class="p-3">${record.transportCompany || '-'}</td>
+                    <td class="p-3">${record.origin} → ${record.destination}</td>
+                    <td class="p-3 text-right font-semibold text-accent">${fuelAmountCell}</td>
+                    <td class="p-3 text-right font-semibold text-accent">${fuelCostCell}</td>
+                    <td class="p-3 text-right font-semibold text-info">${shippingCostCell}</td>
+                    <td class="p-3 text-right font-semibold text-success">${allowanceCellHtml}</td>
+                    <td class="p-3 text-right">${formatZeroAsEmpty(record.kilometers)}</td>
+                    <td class="p-3 text-right">${minutesToHoursAndMinutes(record.travelTime)}</td>
+                    <td class="p-3 text-base text-gray-400">${record.details || ''}</td>
+                    <td class="p-3 text-base text-gray-400">${record.notes || ''}</td>
+                    <td class="p-3">${fuelTypeDisplay}</td>
+                </tr>
+            `}).join('');
+
+            return renderCard(`
+                <h3 class="text-2xl font-bold mb-4">${title}</h3>
+                <div class="overflow-x-auto max-h-[600px]">
+                    <table class="w-full text-left">
+                        <thead class="bg-slate-800 text-base text-gray-400 uppercase sticky top-0 z-10">
+                            <tr>
+                                <th class="p-3">วันที่</th>
+                                <th class="p-3">ทะเบียน</th>
+                                <th class="p-3">คนขับ</th>
+                                <th class="p-3">ประเภทรถ (สังกัด)</th>
+                                <th class="p-3">บริษัทขนส่ง</th>
+                                <th class="p-3">เส้นทาง</th>
+                                <th class="p-3 text-right">ปริมาณเชื้อเพลิง</th>
+                                <th class="p-3 text-right">ค่าเชื้อเพลิง (บาท)</th>
+                                <th class="p-3 text-right">ค่าขนส่ง (บาท)</th>
+                                <th class="p-3 text-right">เบี้ยขับ (บาท)</th>
+                                <th class="p-3 text-right">ระยะทาง (กม.)</th>
+                                <th class="p-3 text-right">เวลา (ชม.)</th>
+                                <th class="p-3">รายละเอียด</th>
+                                <th class="p-3">หมายเหตุ</th>
+                                <th class="p-3">ประเภทเชื้อเพลิง</th>
+                            </tr>
+                        </thead>
+                        <tbody>${tableRows}</tbody>
+                    </table>
+                    ${records.length === 0 ? '<p class="text-center py-8 text-gray-500">ไม่พบรายการที่ตรงกัน</p>' : ''}
+                </div>
+            `);
+        };
+
+        const renderReportsContent = () => {
+            const loadingQueueRecords = getFilteredQueueRecords('loading');
+            const unloadingQueueRecords = getFilteredQueueRecords('unloading');
+
+            const exportBtn = document.getElementById('export-reports-excel-btn');
+            if (exportBtn) {
+                 exportBtn.disabled = loadingQueueRecords.length === 0 && unloadingQueueRecords.length === 0;
+            }
+
+            return `
+                <div class="space-y-8">
+                    ${renderQueueReportTable('รายงานคิวขาขึ้น', loadingQueueRecords)}
+                    ${renderQueueReportTable('รายงานคิวถ่าย', unloadingQueueRecords)}
+                </div>
+            `;
+        };
+
+        const renderReports = () => {
+            const filters = appState.reportFilters;
+            const loadingQueueRecords = getFilteredQueueRecords('loading');
+            const unloadingQueueRecords = getFilteredQueueRecords('unloading');
+
+            return `
+                 <div class="space-y-8">
+                    ${renderCard(`
+                        <div class="flex flex-wrap justify-between items-center gap-4 mb-4">
+                             <h2 class="text-3xl font-bold">ตัวกรองรายงาน</h2>
+                            <div class="flex items-center gap-2">
+                                <button id="clear-reports-filters-btn" class="flex items-center gap-2 bg-yellow-600 hover:bg-yellow-700 text-white font-bold py-2 px-4 rounded-lg shadow-md transition-transform transform hover:scale-105">
+                                    ${ICONS.Clear} ล้างตัวกรอง
+                                </button>
+                                <button id="export-reports-excel-btn" ${loadingQueueRecords.length === 0 && unloadingQueueRecords.length === 0 ? 'disabled' : ''} class="flex items-center gap-2 bg-success hover:bg-green-600 text-white font-bold py-2 px-4 rounded-lg shadow-md transition-transform transform hover:scale-105 disabled:bg-slate-600 disabled:cursor-not-allowed disabled:transform-none">
+                                    ${ICONS.Download} Export to Excel
+                                </button>
+                            </div>
+                        </div>
+                        <div class="grid grid-cols-1 md:grid-cols-3 gap-4" id="reports-filters">
+                            <input name="vehicleRegistration" value="${filters.vehicleRegistration}" placeholder="กรองตามทะเบียนรถ" class="bg-slate-800 border border-slate-600 rounded-md px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent" />
+                            <input name="dateFrom" type="date" value="${filters.dateFrom}" class="bg-slate-800 border border-slate-600 rounded-md px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent" />
+                            <input name="dateTo" type="date" value="${filters.dateTo}" class="bg-slate-800 border border-slate-600 rounded-md px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent" />
+                        </div>
+                    `)}
+
+                    <div id="reports-content" class="space-y-8">
+                       ${renderReportsContent()}
                     </div>
                 </div>
             `;
@@ -1115,7 +1292,7 @@
             if (!tableBody) return;
 
             if (routes.length === 0) {
-                tableBody.innerHTML = `<tr><td colspan="8" class="text-center py-8 text-gray-500">ไม่พบข้อมูลเส้นทางที่ตรงตามเงื่อนไข</td></tr>`;
+                tableBody.innerHTML = `<tr><td colspan="10" class="text-center py-8 text-gray-500">ไม่พบข้อมูลเส้นทางที่ตรงตามเงื่อนไข</td></tr>`;
                 return;
             }
 
@@ -1131,6 +1308,8 @@
                         </button>
                     </td>
                     <td class="p-3 align-top">${route.vehicleType}</td>
+                    <td class="p-3 align-top">${route.loadingQueue || '-'}</td>
+                    <td class="p-3 align-top">${route.unloadingQueue || '-'}</td>
                     <td class="p-3 align-top">${route.origin} → ${route.destination}</td>
                     <td class="p-3 align-top">${route.transportCompany || '-'}</td>
                     <td class="p-3 text-right align-top">
@@ -1149,7 +1328,7 @@
 
                 const detailsRow = `
                 <tr id="details-${route.id}" class="hidden">
-                    <td colspan="8" class="p-0 border-b border-slate-700">
+                    <td colspan="10" class="p-0 border-b border-slate-700">
                         <div class="bg-slate-900/50 p-6 grid grid-cols-1 md:grid-cols-3 gap-6">
                             <div>
                                 <h4 class="font-bold text-gray-300 mb-2">ข้อมูลการเดินทาง</h4>
@@ -1161,6 +1340,14 @@
                                     <div class="flex justify-between">
                                         <dt class="text-gray-400">เวลา:</dt>
                                         <dd class="font-mono">${minutesToHoursAndMinutes(route.travelTime) || '-'} ชม.</dd>
+                                    </div>
+                                    <div class="flex justify-between">
+                                        <dt class="text-gray-400">คิวขาขึ้น:</dt>
+                                        <dd class="font-mono text-right">${route.loadingQueue || '-'}</dd>
+                                    </div>
+                                    <div class="flex justify-between">
+                                        <dt class="text-gray-400">คิวถ่าย:</dt>
+                                        <dd class="font-mono text-right">${route.unloadingQueue || '-'}</dd>
                                     </div>
                                 </dl>
                             </div>
@@ -1191,7 +1378,7 @@
                  return `<input type="text" data-filter-key="${key}" value="${appState.routeFilters[key] || ''}" placeholder="${placeholder}" class="w-full bg-slate-800 border-none rounded-sm px-2 py-1 text-white text-sm focus:outline-none focus:ring-1 focus:ring-accent" />`;
             }
 
-            const initialTableBody = `<tr><td colspan="8" class="text-center py-8 text-gray-500">กำลังโหลดข้อมูล...</td></tr>`;
+            const initialTableBody = `<tr><td colspan="10" class="text-center py-8 text-gray-500">กำลังโหลดข้อมูล...</td></tr>`;
 
             return renderCard(`
                 <div class="overflow-x-auto">
@@ -1200,6 +1387,8 @@
                             <tr>
                                 <th class="p-3 w-12"></th>
                                 ${renderSortableHeader('vehicleType', 'ประเภทรถ', 'w-32')}
+                                ${renderSortableHeader('loadingQueue', 'คิวขาขึ้น', 'w-40')}
+                                ${renderSortableHeader('unloadingQueue', 'คิวถ่าย', 'w-40')}
                                 ${renderSortableHeader('origin', 'เส้นทาง', 'w-64')}
                                 ${renderSortableHeader('transportCompany', 'บริษัทขนส่ง', 'w-40')}
                                 <th class="p-3 w-32">รวมน้ำมัน</th>
@@ -1210,6 +1399,8 @@
                              <tr id="routes-table-filter-row" class="bg-slate-900">
                                 <td class="p-1"></td>
                                 <td class="p-1">${renderFilterInput('vehicleType')}</td>
+                                <td class="p-1">${renderFilterInput('loadingQueue')}</td>
+                                <td class="p-1">${renderFilterInput('unloadingQueue')}</td>
                                 <td class="p-1">
                                     <div class="flex gap-1">
                                         ${renderFilterInput('origin', 'ต้นทาง...')}
@@ -1507,18 +1698,28 @@
                             <input type="text" name="vehicleType" value="${route?.vehicleType || ''}" placeholder="เช่น, 18 ล้อ" required class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent" />
                         </div>
                         <div>
-                            <label class="block text-base font-medium text-gray-400 mb-1">ต้นทาง</label>
-                            <input type="text" name="origin" value="${route?.origin || ''}" placeholder="เช่น, กทม" required class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent" />
+                            <label class="block text-base font-medium text-gray-400 mb-1">บริษัทขนส่ง</label>
+                            <input type="text" name="transportCompany" value="${route?.transportCompany || ''}" placeholder="ชื่อบริษัท" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent" />
                         </div>
                     </div>
                     <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         <div>
+                            <label class="block text-base font-medium text-gray-400 mb-1">ต้นทาง</label>
+                            <input type="text" name="origin" value="${route?.origin || ''}" placeholder="เช่น, กทม" required class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent" />
+                        </div>
+                        <div>
                             <label class="block text-base font-medium text-gray-400 mb-1">ปลายทาง</label>
                             <input type="text" name="destination" value="${route?.destination || ''}" placeholder="เช่น, เชียงใหม่" required class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent" />
                         </div>
-                         <div>
-                            <label class="block text-base font-medium text-gray-400 mb-1">บริษัทขนส่ง</label>
-                            <input type="text" name="transportCompany" value="${route?.transportCompany || ''}" placeholder="ชื่อบริษัท" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent" />
+                    </div>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-base font-medium text-gray-400 mb-1">คิวขาขึ้น</label>
+                            <input type="text" name="loadingQueue" value="${route?.loadingQueue || ''}" placeholder="รายละเอียดคิวขึ้น" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent" />
+                        </div>
+                        <div>
+                            <label class="block text-base font-medium text-gray-400 mb-1">คิวถ่าย</label>
+                            <input type="text" name="unloadingQueue" value="${route?.unloadingQueue || ''}" placeholder="รายละเอียดคิวถ่าย" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent" />
                         </div>
                     </div>
                     <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -1593,6 +1794,18 @@
             const transportCompanyOptions = logisticsService.getUniqueValues('transportCompany')
                 .map(company => `<option value="${company}" ${record.transportCompany === company ? 'selected' : ''}>${company}</option>`)
                 .join('');
+            
+            const recordRoute = logisticsService.findMatchingRoute(record.vehicleType, record.origin, record.destination, record.transportCompany || '');
+            let queueOptionsHtml = '';
+            if (recordRoute && record.queueType && record.queueType !== 'none') {
+                const queueDataKey = record.queueType === 'loading' ? 'loadingQueue' : 'unloadingQueue';
+                const queueDataString = recordRoute[queueDataKey];
+                if (queueDataString) {
+                    const options = queueDataString.split(',').map(item => item.trim()).filter(item => item);
+                    queueOptionsHtml = options.map(opt => `<option value="${opt}" ${record.queueDetails === opt ? 'selected' : ''}>${opt}</option>`).join('');
+                }
+            }
+
              return `
                 <form id="fuel-record-edit-form" class="space-y-4">
                     <input type="hidden" name="id" value="${record.id}" />
@@ -1646,6 +1859,29 @@
                         </div>
                     </div>
                     
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-base font-medium text-gray-400 mb-1">ประเภทคิว</label>
+                            <div id="edit-queue-type-radios" class="flex items-center gap-6">
+                                <label class="flex items-center gap-2 cursor-pointer">
+                                    <input type="radio" name="queueType" value="loading" ${record.queueType === 'loading' ? 'checked' : ''} />
+                                    <span>คิวขาขึ้น</span>
+                                </label>
+                                <label class="flex items-center gap-2 cursor-pointer">
+                                    <input type="radio" name="queueType" value="unloading" ${record.queueType === 'unloading' ? 'checked' : ''} />
+                                    <span>คิวถ่าย</span>
+                                </label>
+                            </div>
+                        </div>
+                        <div id="edit-queue-details-wrapper" class="${!record.queueType || record.queueType === 'none' ? 'hidden' : ''}">
+                            <label class="block text-base font-medium text-gray-400 mb-1">รายละเอียดคิว</label>
+                            <select name="queueDetails" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white">
+                                <option value="">-- กรุณาเลือก --</option>
+                                ${queueOptionsHtml}
+                            </select>
+                        </div>
+                    </div>
+
                     <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         <div>
                             <label class="block text-base font-medium text-gray-400 mb-1">ค่าขนส่ง (บาท)</label>
@@ -1724,6 +1960,8 @@
                 attachFormListeners();
             } else if (appState.view === 'dashboard') {
                 attachDashboardListeners();
+            } else if (appState.view === 'reports') {
+                attachReportsListeners();
             } else if (appState.view === 'data') {
                 attachDataManagementListeners();
             } else if (appState.view === 'vehicles') {
@@ -1746,7 +1984,7 @@
             // --- Global Actions ---
             if (target.classList.contains('nav-button')) {
                 const view = target.dataset.view;
-                if (['data', 'vehicles', 'savings'].includes(view) && !appState.isAuthenticated) {
+                if (['data', 'vehicles', 'savings', 'reports'].includes(view) && !appState.isAuthenticated) {
                     openAuthModal();
                     // Store the intended view to navigate to after successful authentication
                     appState.pendingView = view; 
@@ -1923,6 +2161,28 @@
             document.getElementById('distribution-list-liters')?.addEventListener('input', () => updateTotalAmount('liters'));
             document.getElementById('distribution-list-baht')?.addEventListener('input', () => updateTotalAmount('baht'));
             
+            // Queue Type listener
+            const queueRadios = document.getElementById('queue-type-radios');
+            if (queueRadios) {
+                queueRadios.addEventListener('change', () => {
+                    const vehicleType = document.getElementById('form-vehicle-type')?.value;
+                    const origin = document.getElementById('form-origin')?.value;
+                    const destination = document.getElementById('form-destination')?.value;
+                    const vehicleOwnership = document.querySelector('input[name="vehicleOwnership"]:checked')?.value;
+                    const selectedTransportCompany = document.getElementById('form-transport-company')?.value;
+                    const companyForLookup = (vehicleOwnership === 'subcontractor') ? selectedTransportCompany : '';
+                    const route = logisticsService.findMatchingRoute(vehicleType, origin, destination, companyForLookup);
+                    updateQueueDetailsDropdown(route);
+                    updateVlookupCard();
+                });
+            }
+
+            // Queue Details listener
+            const queueDetailsSelect = document.getElementById('form-queue-details');
+            if (queueDetailsSelect) {
+                queueDetailsSelect.addEventListener('change', updateVlookupCard);
+            }
+
             // Initial UI state setup
             updateFuelFormVisibility();
             updateVlookupCard();
@@ -1964,6 +2224,31 @@
             const exportBtn = document.getElementById('export-excel-btn');
             if (exportBtn) {
                 exportBtn.addEventListener('click', handleExportToExcel);
+            }
+        };
+
+        const attachReportsListeners = () => {
+            const filters = document.getElementById('reports-filters');
+            if (filters) {
+                filters.addEventListener('input', (e) => {
+                    const { name, value } = e.target;
+                    appState.reportFilters[name] = value;
+                    const content = document.getElementById('reports-content');
+                    if (content) content.innerHTML = renderReportsContent();
+                });
+            }
+
+            const clearBtn = document.getElementById('clear-reports-filters-btn');
+            if (clearBtn) {
+                 clearBtn.addEventListener('click', () => {
+                    appState.reportFilters = { vehicleRegistration: '', dateFrom: '', dateTo: '' };
+                    renderApp();
+                });
+            }
+
+            const exportBtn = document.getElementById('export-reports-excel-btn');
+            if (exportBtn) {
+                exportBtn.addEventListener('click', handleExportQueueReportsToExcel);
             }
         };
         
@@ -2075,6 +2360,35 @@
             });
         };
         
+        const updateQueueDetailsDropdown = (route) => {
+            const queueType = document.querySelector('input[name="queueType"]:checked')?.value;
+            const wrapper = document.getElementById('queue-details-wrapper');
+            const select = document.getElementById('form-queue-details');
+
+            if (!queueType || queueType === 'none' || !route || !wrapper || !select) {
+                wrapper.classList.add('hidden');
+                select.innerHTML = '';
+                return;
+            }
+
+            const queueDataKey = queueType === 'loading' ? 'loadingQueue' : 'unloadingQueue';
+            const queueDataString = route[queueDataKey];
+
+            if (queueDataString) {
+                const options = queueDataString.split(',').map(item => item.trim()).filter(item => item);
+                if (options.length > 0) {
+                     select.innerHTML = `<option value="">-- กรุณาเลือก --</option>` + options.map(opt => `<option value="${opt}">${opt}</option>`).join('');
+                     wrapper.classList.remove('hidden');
+                } else {
+                     wrapper.classList.add('hidden');
+                     select.innerHTML = '';
+                }
+            } else {
+                wrapper.classList.add('hidden');
+                select.innerHTML = '';
+            }
+        };
+
         const updateVlookupCard = () => {
             const cardContent = document.getElementById('vlookup-card-content');
             if (!cardContent) return;
@@ -2085,11 +2399,34 @@
             const vehicleOwnership = document.querySelector('input[name="vehicleOwnership"]:checked')?.value;
             const selectedTransportCompany = document.getElementById('form-transport-company')?.value;
             const isNGV = document.querySelector('input[name="fuelType"]:checked')?.value === 'ngv';
-
-            // Determine which company to use for the lookup
             const companyForLookup = (vehicleOwnership === 'subcontractor') ? selectedTransportCompany : '';
 
-            const route = logisticsService.findMatchingRoute(vehicleType, origin, destination, companyForLookup);
+            // --- START: REFINED LOGIC ---
+            const baseRoute = logisticsService.findMatchingRoute(vehicleType, origin, destination, companyForLookup);
+
+            const queueType = document.querySelector('input[name="queueType"]:checked')?.value;
+            const queueDetails = document.getElementById('form-queue-details')?.value;
+
+            let route = null; // This will be the final route object to use
+
+            if (baseRoute) {
+                if (queueType && queueDetails && queueDetails.trim() !== '') {
+                    // Only set the route if queue type AND details are selected and match
+                    const queueDataKey = queueType === 'loading' ? 'loadingQueue' : 'unloadingQueue';
+                    const qd = queueDetails.trim();
+                    const queueDataString = baseRoute[queueDataKey];
+                    
+                    if (queueDataString) {
+                        const options = queueDataString.split(',').map(item => item.trim());
+                        if (options.includes(qd)) {
+                            // The detail matches, so we can use this route
+                            route = baseRoute;
+                        }
+                    }
+                } 
+                // Otherwise, route remains null, and the vlookup card will show "Not found"
+            }
+             // --- END: REFINED LOGIC ---
 
             // Auto-populate form logic
             const distributionListLiters = document.getElementById('distribution-list-liters');
@@ -2123,9 +2460,9 @@
                 if (kilometersInput) kilometersInput.value = route.kilometers || '';
                 if (travelTimeInput) travelTimeInput.value = route.travelTime ? minutesToHoursAndMinutes(route.travelTime) : '';
                 if (shippingCostInput) shippingCostInput.value = route.shippingCost || '';
-
             }
             
+            updateQueueDetailsDropdown(baseRoute); // Always populate dropdown based on the base route match
             updateTotalAmount('liters');
             updateTotalAmount('baht');
 
@@ -2133,7 +2470,7 @@
                 cardContent.innerHTML = `
                     <h3 class="text-2xl font-bold text-white mb-4">ข้อมูลเส้นทาง</h3>
                     <p class="text-gray-400">ไม่พบข้อมูลเส้นทางที่ตรงกัน</p>
-                    <p class="text-base text-gray-500 mt-2">กรุณากรอกข้อมูลประเภทรถ, ต้นทาง, และปลายทางให้ครบถ้วน</p>
+                    <p class="text-base text-gray-500 mt-2">กรุณากรอกข้อมูลและเลือกเงื่อนไขให้ครบถ้วน (รวมถึงประเภทและรายละเอียดคิว)</p>
                 `;
                 return;
             }
@@ -2194,6 +2531,14 @@
                         <span class="text-gray-400">เวลาเดินทาง:</span>
                         <span class="font-semibold">${minutesToHoursAndMinutes(route.travelTime) || '0.00'} ชม.</span>
                     </div>
+                    <div class="flex justify-between items-center text-base">
+                        <span class="text-gray-400">คิวขาขึ้น:</span>
+                        <span class="font-semibold">${route.loadingQueue || '-'}</span>
+                    </div>
+                    <div class="flex justify-between items-center text-base">
+                        <span class="text-gray-400">คิวถ่าย:</span>
+                        <span class="font-semibold">${route.unloadingQueue || '-'}</span>
+                    </div>
                     <hr class="border-slate-600 my-2">
                     
                     ${isNGV ? '' : vlookupLitersBlock}
@@ -2251,6 +2596,12 @@
                 document.querySelector('input[name="fuelType"][value="diesel"]').checked = true;
                 document.getElementById('form-ngv-cost').value = '';
                 
+                // Reset queue fields
+                const queueRadios = document.querySelectorAll('input[name="queueType"]');
+                if(queueRadios) queueRadios.forEach(radio => radio.checked = false);
+                document.getElementById('queue-details-wrapper').classList.add('hidden');
+                document.getElementById('form-queue-details').innerHTML = '';
+
                 // Reset conditional UI
                 updateFuelFormVisibility();
                 updateVlookupCard();
@@ -2287,9 +2638,15 @@
             const transportCompany = form.querySelector('#form-transport-company').value;
             const fuelType = form.querySelector('input[name="fuelType"]:checked').value;
             const isNGV = fuelType === 'ngv';
+            const queueTypeInput = form.querySelector('input[name="queueType"]:checked');
             
             if (vehicleOwnership === 'subcontractor' && !transportCompany) {
                  statusDiv.innerHTML = `<p class="text-red-400">สำหรับรถร่วมขนส่ง กรุณาเลือกบริษัทขนส่ง</p>`;
+                return;
+            }
+            
+            if (!queueTypeInput) {
+                statusDiv.innerHTML = `<p class="text-red-400">กรุณาเลือกประเภทคิว</p>`;
                 return;
             }
 
@@ -2317,6 +2674,8 @@
                 driverAllowance: Number(form.querySelector('#form-driver-allowance').value) || 0,
                 kilometers: Number(form.querySelector('#form-kilometers').value) || 0,
                 travelTime: hoursAndMinutesToMinutes(travelTimeString),
+                queueType: queueTypeInput.value,
+                queueDetails: form.querySelector('#form-queue-details').value,
             };
 
             if (!record.date || !record.vehicleRegistration || !record.vehicleType || !record.origin || !record.destination) {
@@ -2418,6 +2777,8 @@
                 driverAllowance: Number(formData.get('driverAllowance')) || 0,
                 kilometers: Number(formData.get('kilometers')) || 0,
                 travelTime: hoursAndMinutesToMinutes(formData.get('travelTime')),
+                loadingQueue: formData.get('loadingQueue'),
+                unloadingQueue: formData.get('unloadingQueue'),
                 gasStationsLiters: getDistributionData('Liters'),
                 gasStationsBaht: getDistributionData('Baht'),
             };
@@ -2454,11 +2815,43 @@
             if (form) {
                 form.addEventListener('submit', handleFuelRecordEditFormSubmit);
 
-                // Add listener for radio buttons inside the modal
-                 form.querySelectorAll('input[name="vehicleOwnership"]').forEach(radio => {
+                form.querySelectorAll('input[name="vehicleOwnership"]').forEach(radio => {
                     radio.addEventListener('change', (e) => {
                         const subcontractorDetails = form.querySelector('#edit-subcontractor-details');
                         subcontractorDetails.classList.toggle('hidden', e.target.value !== 'subcontractor');
+                    });
+                });
+
+                form.querySelectorAll('input[name="queueType"]').forEach(radio => {
+                    radio.addEventListener('change', (e) => {
+                        const wrapper = form.querySelector('#edit-queue-details-wrapper');
+                        const select = form.querySelector('select[name="queueDetails"]');
+                        const queueType = e.target.value;
+                        const record = logisticsService.getFuelRecords().find(r => r.id === id);
+                        const route = logisticsService.findMatchingRoute(record.vehicleType, record.origin, record.destination, record.transportCompany || '');
+
+                        if (queueType === 'none' || !route) {
+                            wrapper.classList.add('hidden');
+                            select.innerHTML = '';
+                            return;
+                        }
+                        
+                        const queueDataKey = queueType === 'loading' ? 'loadingQueue' : 'unloadingQueue';
+                        const queueDataString = route[queueDataKey];
+                        
+                        if (queueDataString) {
+                            const options = queueDataString.split(',').map(item => item.trim()).filter(item => item);
+                            if (options.length > 0) {
+                                select.innerHTML = `<option value="">-- กรุณาเลือก --</option>` + options.map(opt => `<option value="${opt}">${opt}</option>`).join('');
+                                wrapper.classList.remove('hidden');
+                            } else {
+                                 wrapper.classList.add('hidden');
+                                 select.innerHTML = '';
+                            }
+                        } else {
+                             wrapper.classList.add('hidden');
+                             select.innerHTML = '';
+                        }
                     });
                 });
             }
@@ -2510,6 +2903,8 @@
                 driverAllowance: Number(formData.get('driverAllowance')) || 0,
                 kilometers: Number(formData.get('kilometers')) || 0,
                 travelTime: hoursAndMinutesToMinutes(formData.get('travelTime')),
+                queueType: formData.get('queueType'),
+                queueDetails: formData.get('queueDetails'),
             };
 
             updatedRecord.totalLiters = Object.values(updatedRecord.fuelDistributionLiters).reduce((sum, val) => sum + Number(val), 0);
@@ -2898,6 +3293,10 @@
 
             // 1. Main Summary Sheet
             const mainSheetData = filteredRecords.map(record => {
+                const queueDisplay = record.queueType && record.queueType !== 'none'
+                    ? `${record.queueType === 'loading' ? 'คิวขาขึ้น' : 'คิวถ่าย'}: ${record.queueDetails || ''}`
+                    : '';
+
                 const row = {
                     'วันที่': record.date,
                     'ทะเบียนรถ': record.vehicleRegistration,
@@ -2907,6 +3306,7 @@
                     'บริษัทขนส่ง': record.transportCompany || '',
                     'ต้นทาง': record.origin,
                     'ปลายทาง': record.destination,
+                    'คิว': queueDisplay,
                     'ระยะทาง (กม.)': record.kilometers || '',
                     'เวลาเดินทาง (ชม.)': record.travelTime ? minutesToHoursAndMinutes(record.travelTime) : '',
                     'ปริมาณเชื้อเพลิง': record.fuelType === 'ngv' ? 'NGV' : (record.totalLiters || ''),
@@ -3006,6 +3406,53 @@
             }
             
             XLSX.writeFile(workbook, `Fuel_Report_${today}.xlsx`);
+        };
+        
+        const handleExportQueueReportsToExcel = () => {
+            const loadingRecords = getFilteredQueueRecords('loading');
+            const unloadingRecords = getFilteredQueueRecords('unloading');
+            
+            if (loadingRecords.length === 0 && unloadingRecords.length === 0) {
+                alert("ไม่มีข้อมูลสำหรับส่งออก");
+                return;
+            }
+
+            const workbook = XLSX.utils.book_new();
+            const today = new Date().toISOString().split('T')[0];
+
+            const mapRecordToSheetRow = (record) => ({
+                'วันที่': record.date,
+                'ทะเบียน': record.vehicleRegistration,
+                'คนขับ': record.driverName || '',
+                'ประเภทรถ (สังกัด)': `${record.vehicleType} (${record.vehicleOwnership === 'subcontractor' ? 'รถร่วม' : 'รถบริษัท'})`,
+                'บริษัทขนส่ง': record.transportCompany || '',
+                'เส้นทาง': `${record.origin} → ${record.destination}`,
+                'ปริมาณเชื้อเพลิง': record.fuelType === 'ngv' ? 'NGV' : (record.totalLiters || ''),
+                'ค่าเชื้อเพลิง (บาท)': record.totalBaht || '',
+                'ค่าขนส่ง (บาท)': record.shippingCost || '',
+                'เบี้ยขับ (บาท)': record.driverAllowance || '',
+                'ระยะทาง (กม.)': record.kilometers || '',
+                'เวลา (ชม.)': record.travelTime ? minutesToHoursAndMinutes(record.travelTime) : '',
+                'รายละเอียด': record.details || '',
+                'หมายเหตุ': record.notes || '',
+                'ประเภทเชื้อเพลิง': record.fuelType === 'ngv' ? 'NGV' : 'Diesel'
+            });
+
+            if (loadingRecords.length > 0) {
+                const sheetData = loadingRecords.map(mapRecordToSheetRow);
+                const worksheet = XLSX.utils.json_to_sheet(sheetData);
+                autoSizeColumns(worksheet, sheetData);
+                XLSX.utils.book_append_sheet(workbook, worksheet, "รายงานคิวขาขึ้น");
+            }
+
+            if (unloadingRecords.length > 0) {
+                const sheetData = unloadingRecords.map(mapRecordToSheetRow);
+                const worksheet = XLSX.utils.json_to_sheet(sheetData);
+                autoSizeColumns(worksheet, sheetData);
+                XLSX.utils.book_append_sheet(workbook, worksheet, "รายงานคิวถ่าย");
+            }
+
+            XLSX.writeFile(workbook, `Queue_Report_${today}.xlsx`);
         };
 
         const handleExportSavingsToExcel = () => {
