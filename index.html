@@ -484,12 +484,16 @@
                                 ${ICONS.DocumentAdd} บันทึกรายการน้ำมันใหม่
                             </h2>
                             <form id="fuel-record-form" class="space-y-6">
-                                <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                                <div class="grid grid-cols-1 sm:grid-cols-4 gap-4">
                                     <div>
                                         <label class="block text-base font-medium text-gray-400 mb-1">วันที่</label>
                                         <input type="date" id="form-date" value="${new Date().toISOString().split('T')[0]}" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent" />
                                     </div>
                                     ${renderAutocomplete('form-vehicle-registration', 'ทะเบียนรถ', 'ค้นหาทะเบียนรถ', logisticsService.getVehicleRegistrations())}
+                                    <div>
+                                        <label class="block text-base font-medium text-gray-400 mb-1">ทะเบียนหาง</label>
+                                        <input type="text" id="form-trailer-registration" placeholder="ทะเบียนส่วนหาง" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent" />
+                                    </div>
                                     <div>
                                         <label class="block text-base font-medium text-gray-400 mb-1">ชื่อพนักงานขับรถ</label>
                                         <input type="text" id="form-driver-name" placeholder="ชื่อจะแสดงอัตโนมัติ (แก้ไขได้)" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent" />
@@ -654,6 +658,59 @@
             });
         };
 
+        const renderFuelRecordStationBreakdown = (record) => {
+            const liters = record.fuelDistributionLiters || {};
+            const baht = record.fuelDistributionBaht || {};
+            const allStations = new Set([...Object.keys(liters), ...Object.keys(baht)]);
+
+            const hasStationData = allStations.size > 0;
+            const hasDetails = record.details && record.details.trim() !== '';
+            const hasNotes = record.notes && record.notes.trim() !== '';
+
+            if (!hasStationData && !hasDetails && !hasNotes) {
+                return `<div class="p-4 text-center text-gray-500">ไม่มีข้อมูลเพิ่มเติมสำหรับรายการนี้</div>`;
+            }
+
+            const stationList = Array.from(allStations).map(key => `
+                <div class="flex justify-between py-1">
+                    <dt class="text-gray-400">${logisticsService.getFriendlyGasStationName(key)}:</dt>
+                    <dd class="font-mono text-right">
+                        ${liters[key] ? `<span class="text-accent">${liters[key].toLocaleString()} L</span>` : ''}
+                        ${liters[key] && baht[key] ? `<span class="text-gray-500 mx-2">/</span>` : ''}
+                        ${baht[key] ? `<span class="text-yellow-400">${baht[key].toLocaleString()} B</span>` : ''}
+                    </dd>
+                </div>
+            `).join('');
+
+            return `
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+                    <div>
+                        <h4 class="font-bold text-gray-300 mb-2">รายละเอียดการเติมน้ำมัน</h4>
+                        ${hasStationData ? `
+                            <dl class="space-y-1 text-base max-w-md">
+                                ${stationList}
+                            </dl>
+                        ` : `<p class="text-gray-500 italic">ไม่มีข้อมูลการกระจายน้ำมัน</p>`}
+                    </div>
+                    <div>
+                        ${hasDetails ? `
+                            <div class="mb-4">
+                                <h4 class="font-bold text-gray-300 mb-2">รายละเอียด</h4>
+                                <p class="text-base text-gray-400 whitespace-pre-wrap">${record.details}</p>
+                            </div>
+                        ` : ''}
+                        ${hasNotes ? `
+                            <div>
+                                <h4 class="font-bold text-gray-300 mb-2">หมายเหตุ</h4>
+                                <p class="text-base text-gray-400 whitespace-pre-wrap">${record.notes}</p>
+                            </div>
+                        ` : ''}
+                    </div>
+                </div>
+            `;
+        }
+
+
         const renderDashboardContent = () => {
             const allFilteredRecords = getFilteredFuelRecords();
             
@@ -695,32 +752,48 @@
                     ? `${record.queueType === 'loading' ? 'ขึ้น' : 'ถ่าย'}: ${record.queueDetails || ''}`
                     : '-';
 
-                return `
-                <tr class="border-b border-slate-600 hover:bg-slate-700/20">
-                    <td class="p-3">${record.date}</td>
-                    <td class="p-3 font-mono">${record.vehicleRegistration}</td>
-                    <td class="p-3">${record.driverName || ''}</td>
-                    <td class="p-3">${record.vehicleType} (${ownershipText})</td>
-                    <td class="p-3">${record.transportCompany || '-'}</td>
-                    <td class="p-3">${record.origin} → ${record.destination}</td>
-                    <td class="p-3">${queueDisplay}</td>
-                    <td class="p-3 text-right font-semibold text-accent">${fuelAmountCell}</td>
-                    <td class="p-3 text-right font-semibold text-accent">${fuelCostCell}</td>
-                    <td class="p-3 text-right font-semibold text-info">${shippingCostCell}</td>
-                    <td class="p-3 text-right font-semibold text-success">${allowanceCellHtml}</td>
-                    <td class="p-3 text-right">${formatZeroAsEmpty(record.kilometers)}</td>
-                    <td class="p-3 text-right">${minutesToHoursAndMinutes(record.travelTime)}</td>
-                    <td class="p-3 text-base text-gray-400">${record.details || ''}</td>
-                    <td class="p-3 text-base text-gray-400">${record.notes || ''}</td>
-                    <td class="p-3">${fuelTypeDisplay}</td>
-                    <td class="p-3 text-center">
+                const mainRow = `
+                <tr class="border-b border-slate-700 hover:bg-slate-700/20">
+                    <td class="p-2 text-center align-middle">
+                         <button data-action="toggle-fuel-record-details" data-target-id="${record.id}" class="p-2 rounded-full hover:bg-slate-600">
+                           ${ICONS.ChevronDown}
+                        </button>
+                    </td>
+                    <td class="p-3 align-middle">${record.date}</td>
+                    <td class="p-3 font-mono align-middle">${record.vehicleRegistration}</td>
+                    <td class="p-3 font-mono align-middle">${record.trailerRegistration || '-'}</td>
+                    <td class="p-3 align-middle">${record.driverName || ''}</td>
+                    <td class="p-3 align-middle">${record.vehicleType} (${ownershipText})</td>
+                    <td class="p-3 align-middle">${record.transportCompany || '-'}</td>
+                    <td class="p-3 align-middle">${record.origin} → ${record.destination}</td>
+                    <td class="p-3 align-middle">${queueDisplay}</td>
+                    <td class="p-3 text-right font-semibold text-accent align-middle">${fuelAmountCell}</td>
+                    <td class="p-3 text-right font-semibold text-accent align-middle">${fuelCostCell}</td>
+                    <td class="p-3 text-right font-semibold text-info align-middle">${shippingCostCell}</td>
+                    <td class="p-3 text-right font-semibold text-success align-middle">${allowanceCellHtml}</td>
+                    <td class="p-3 text-right align-middle">${formatZeroAsEmpty(record.kilometers)}</td>
+                    <td class="p-3 text-right align-middle">${minutesToHoursAndMinutes(record.travelTime)}</td>
+                    <td class="p-3 align-middle">${fuelTypeDisplay}</td>
+                    <td class="p-3 text-center align-middle">
                         <div class="flex justify-center gap-2">
                             <button data-action="edit-fuel-record" data-id="${record.id}" class="text-blue-400 hover:text-blue-300 p-2 rounded-full transition-colors">${ICONS.Pencil}</button>
                             <button data-action="delete-fuel-record" data-id="${record.id}" class="text-red-500 hover:text-red-400 p-2 rounded-full transition-colors">${ICONS.Trash}</button>
                         </div>
                     </td>
                 </tr>
-            `}).join('');
+                `;
+
+                const detailsRow = `
+                <tr id="details-fuel-${record.id}" class="hidden">
+                    <td colspan="17" class="p-0 border-b-2 border-slate-600">
+                        <div class="bg-slate-900/50 p-6">
+                            ${renderFuelRecordStationBreakdown(record)}
+                        </div>
+                    </td>
+                </tr>`;
+
+                return mainRow + detailsRow;
+            }).join('');
 
             const stationKeys = logisticsService.getAllGasStationKeys();
             const friendlyNames = logisticsService.getAllGasStationFriendlyNames();
@@ -1008,12 +1081,14 @@
                             </select>
                         </div>
                     </div>
-                    <div class="overflow-x-auto max-h-[600px]">
+                    <div class="overflow-x-auto">
                         <table class="w-full text-left">
                             <thead class="bg-slate-800 text-base text-gray-400 uppercase sticky top-0 z-10">
                                 <tr>
+                                    <th class="p-2 w-12"></th>
                                     <th class="p-3">วันที่</th>
                                     <th class="p-3">ทะเบียน</th>
+                                    <th class="p-3">ทะเบียนหาง</th>
                                     <th class="p-3">คนขับ</th>
                                     <th class="p-3">ประเภทรถ (สังกัด)</th>
                                     <th class="p-3">บริษัทขนส่ง</th>
@@ -1025,8 +1100,6 @@
                                     <th class="p-3 text-right">เบี้ยขับ (บาท)</th>
                                     <th class="p-3 text-right">ระยะทาง (กม.)</th>
                                     <th class="p-3 text-right">เวลา (ชม.)</th>
-                                    <th class="p-3">รายละเอียด</th>
-                                    <th class="p-3">หมายเหตุ</th>
                                     <th class="p-3">ประเภทเชื้อเพลิง</th>
                                     <th class="p-3 text-center">จัดการ</th>
                                 </tr>
@@ -1121,6 +1194,7 @@
                 <tr class="border-b border-slate-600 hover:bg-slate-700/20">
                     <td class="p-3">${record.date}</td>
                     <td class="p-3 font-mono">${record.vehicleRegistration}</td>
+                    <td class="p-3 font-mono">${record.trailerRegistration || '-'}</td>
                     <td class="p-3">${record.driverName || ''}</td>
                     <td class="p-3">${record.vehicleType} (${ownershipText})</td>
                     <td class="p-3">${record.transportCompany || '-'}</td>
@@ -1145,6 +1219,7 @@
                             <tr>
                                 <th class="p-3">วันที่</th>
                                 <th class="p-3">ทะเบียน</th>
+                                <th class="p-3">ทะเบียนหาง</th>
                                 <th class="p-3">คนขับ</th>
                                 <th class="p-3">ประเภทรถ (สังกัด)</th>
                                 <th class="p-3">บริษัทขนส่ง</th>
@@ -1813,7 +1888,7 @@
              return `
                 <form id="fuel-record-edit-form" class="space-y-4">
                     <input type="hidden" name="id" value="${record.id}" />
-                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
                         <div>
                             <label class="block text-base font-medium text-gray-400 mb-1">วันที่</label>
                             <input type="date" name="date" value="${record.date}" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white" />
@@ -1821,6 +1896,10 @@
                         <div>
                             <label class="block text-base font-medium text-gray-400 mb-1">ทะเบียนรถ</label>
                             <input type="text" name="vehicleRegistration" value="${record.vehicleRegistration}" placeholder="เช่น, กข-1234" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white" />
+                        </div>
+                        <div>
+                            <label class="block text-base font-medium text-gray-400 mb-1">ทะเบียนหาง</label>
+                            <input type="text" name="trailerRegistration" value="${record.trailerRegistration || ''}" placeholder="ทะเบียนส่วนหาง" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white" />
                         </div>
                     </div>
                      <div>
@@ -2042,6 +2121,15 @@
             if (action === 'edit-fuel-record') handleEditFuelRecord(id);
             if (action === 'delete-fuel-record') handleDeleteFuelRecord(id);
             if (action === 'add-edit-distribution') handleAddEditDistribution(target);
+            if (action === 'toggle-fuel-record-details') {
+                const detailsId = `details-fuel-${target.dataset.targetId}`;
+                const detailsRow = document.getElementById(detailsId);
+                const icon = target.querySelector('svg');
+                if (detailsRow) {
+                    detailsRow.classList.toggle('hidden');
+                    icon.classList.toggle('rotate-180');
+                }
+            }
 
              // --- Vehicle Actions ---
             if (action === 'add-new-vehicle') handleAddNewVehicle();
@@ -2598,6 +2686,7 @@
                 document.getElementById('form-date').value = new Date().toISOString().split('T')[0];
                 document.getElementById('distribution-list-liters').innerHTML = '';
                 document.getElementById('distribution-list-baht').innerHTML = '';
+                document.getElementById('form-trailer-registration').value = '';
                 document.getElementById('form-total-liters').value = '';
                 document.getElementById('form-total-baht').value = '';
                 document.getElementById('form-driver-allowance').value = '';
@@ -2669,6 +2758,7 @@
             const record = {
                 date: form.querySelector('#form-date').value,
                 vehicleRegistration: form.querySelector('#form-vehicle-registration').value,
+                trailerRegistration: form.querySelector('#form-trailer-registration').value,
                 driverName: form.querySelector('#form-driver-name').value,
                 vehicleType: vehicleType,
                 vehicleOwnership: vehicleOwnership,
@@ -2901,6 +2991,7 @@
                 id,
                 date: formData.get('date'),
                 vehicleRegistration: formData.get('vehicleRegistration'),
+                trailerRegistration: formData.get('trailerRegistration'),
                 driverName: formData.get('driverName'),
                 vehicleType: formData.get('vehicleType'),
                 vehicleOwnership: vehicleOwnership,
@@ -2927,7 +3018,7 @@
                 closeModal();
             } catch (error) {
                 console.error("Error updating fuel record:", error);
-                alert("เกิดข้อผิดพลาดในการอัปเดตข้อมูล: " + error.message);
+                alert("เกิดข้อผิดพลาดในการอัปตเดตข้อมูล: " + error.message);
             }
         };
 
@@ -3312,6 +3403,7 @@
                 const row = {
                     'วันที่': record.date,
                     'ทะเบียนรถ': record.vehicleRegistration,
+                    'ทะเบียนหาง': record.trailerRegistration || '',
                     'ชื่อพนักงานขับรถ': record.driverName || '',
                     'ประเภทรถ': record.vehicleType,
                     'สังกัด': record.vehicleOwnership === 'subcontractor' ? 'รถร่วม' : 'รถบริษัท',
@@ -3435,6 +3527,7 @@
             const mapRecordToSheetRow = (record) => ({
                 'วันที่': record.date,
                 'ทะเบียน': record.vehicleRegistration,
+                'ทะเบียนหาง': record.trailerRegistration || '',
                 'คนขับ': record.driverName || '',
                 'ประเภทรถ (สังกัด)': `${record.vehicleType} (${record.vehicleOwnership === 'subcontractor' ? 'รถร่วม' : 'รถบริษัท'})`,
                 'บริษัทขนส่ง': record.transportCompany || '',
