@@ -2067,7 +2067,7 @@
             // --- Global Actions ---
             if (target.classList.contains('nav-button')) {
                 const view = target.dataset.view;
-                if (['data', 'vehicles', 'savings', 'reports'].includes(view) && !appState.isAuthenticated) {
+                if (['data', 'vehicles', 'savings'].includes(view) && !appState.isAuthenticated) {
                     openAuthModal();
                     // Store the intended view to navigate to after successful authentication
                     appState.pendingView = view; 
