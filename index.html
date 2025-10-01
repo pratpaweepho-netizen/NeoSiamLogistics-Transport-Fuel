@@ -759,20 +759,20 @@
                            ${ICONS.ChevronDown}
                         </button>
                     </td>
-                    <td class="p-3 align-middle">${record.date}</td>
+                    <td class="p-3 align-middle whitespace-nowrap">${record.date}</td>
                     <td class="p-3 font-mono align-middle">${record.vehicleRegistration}</td>
                     <td class="p-3 font-mono align-middle">${record.trailerRegistration || '-'}</td>
-                    <td class="p-3 align-middle">${record.driverName || ''}</td>
-                    <td class="p-3 align-middle">${record.vehicleType} (${ownershipText})</td>
-                    <td class="p-3 align-middle">${record.transportCompany || '-'}</td>
-                    <td class="p-3 align-middle">${record.origin} → ${record.destination}</td>
+                    <td class="p-3 align-middle max-w-[150px] break-words">${record.driverName || ''}</td>
+                    <td class="p-3 align-middle max-w-[200px] break-words">${record.vehicleType} (${ownershipText})</td>
+                    <td class="p-3 align-middle max-w-[250px] break-words">${record.transportCompany || '-'}</td>
+                    <td class="p-3 align-middle max-w-[300px] break-words">${record.origin} → ${record.destination}</td>
                     <td class="p-3 align-middle">${queueDisplay}</td>
-                    <td class="p-3 text-right font-semibold text-accent align-middle">${fuelAmountCell}</td>
-                    <td class="p-3 text-right font-semibold text-accent align-middle">${fuelCostCell}</td>
-                    <td class="p-3 text-right font-semibold text-info align-middle">${shippingCostCell}</td>
-                    <td class="p-3 text-right font-semibold text-success align-middle">${allowanceCellHtml}</td>
-                    <td class="p-3 text-right align-middle">${formatZeroAsEmpty(record.kilometers)}</td>
-                    <td class="p-3 text-right align-middle">${minutesToHoursAndMinutes(record.travelTime)}</td>
+                    <td class="p-3 text-right font-mono font-semibold text-accent align-middle">${fuelAmountCell}</td>
+                    <td class="p-3 text-right font-mono font-semibold text-accent align-middle">${fuelCostCell}</td>
+                    <td class="p-3 text-right font-mono font-semibold text-info align-middle">${shippingCostCell}</td>
+                    <td class="p-3 text-right font-mono font-semibold text-success align-middle">${allowanceCellHtml}</td>
+                    <td class="p-3 text-right font-mono align-middle">${formatZeroAsEmpty(record.kilometers)}</td>
+                    <td class="p-3 text-right font-mono align-middle">${minutesToHoursAndMinutes(record.travelTime)}</td>
                     <td class="p-3 align-middle">${fuelTypeDisplay}</td>
                     <td class="p-3 text-center align-middle">
                         <div class="flex justify-center gap-2">
@@ -2067,10 +2067,16 @@
             // --- Global Actions ---
             if (target.classList.contains('nav-button')) {
                 const view = target.dataset.view;
-                if (['data', 'vehicles', 'savings'].includes(view) && !appState.isAuthenticated) {
-                    openAuthModal();
-                    // Store the intended view to navigate to after successful authentication
-                    appState.pendingView = view; 
+                if (['data', 'vehicles', 'savings', 'reports'].includes(view) && !appState.isAuthenticated) {
+                    const pagesNeedingAuth = ['data', 'vehicles', 'savings'];
+                    if (pagesNeedingAuth.includes(view)) {
+                        openAuthModal();
+                        // Store the intended view to navigate to after successful authentication
+                        appState.pendingView = view;
+                    } else {
+                        appState.view = view;
+                        renderApp();
+                    }
                 } else {
                     appState.view = view;
                     renderApp();
