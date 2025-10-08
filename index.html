@@ -334,24 +334,55 @@
                 const validStrings = values.filter(v => typeof v === 'string' && v);
                 return [...new Set(validStrings)].sort((a,b) => a.localeCompare(b, 'th'));
             },
+            
+            getUniqueCommaSeparatedValues: (key) => {
+                const allValues = new Set();
+                appState.routes.forEach(route => {
+                    const valueString = route[key];
+                    if (typeof valueString === 'string' && valueString) {
+                        valueString.split(',')
+                            .map(item => item.trim())
+                            .filter(item => item)
+                            .forEach(item => allValues.add(item));
+                    }
+                });
+                return [...allValues].sort((a, b) => a.localeCompare(b, 'th'));
+            },
 
             getVehicleRegistrations: () => {
                 return [...new Set(appState.vehicles.map(v => v.registrationNumber))].sort();
             },
             
-            findMatchingRoute: (vehicleType, origin, destination, transportCompany) => {
+            findMatchingRoute: (vehicleType, origin, destination, transportCompany, queueType, queueDetails) => {
                  if (!vehicleType || !origin || !destination) return null;
                 const vt = vehicleType.trim();
                 const o = origin.trim();
                 const d = destination.trim();
                 const tc = (transportCompany || '').trim();
 
-                return appState.routes.find(route => 
-                    (route.vehicleType || '').trim() === vt && 
-                    (route.origin || '').trim() === o && 
-                    (route.destination || '').trim() === d &&
-                    (route.transportCompany || '').trim() === tc
-                ) || null;
+                return appState.routes.find(route => {
+                    const baseMatch = (route.vehicleType || '').trim() === vt && 
+                                      (route.origin || '').trim() === o && 
+                                      (route.destination || '').trim() === d &&
+                                      (route.transportCompany || '').trim() === tc;
+                    
+                    if (!baseMatch) return false;
+
+                    // For company cars, we require a queue match if a queue is selected.
+                    if (queueType && queueDetails && queueDetails.trim()) {
+                        const qd = queueDetails.trim();
+                        const queueDataKey = queueType === 'loading' ? 'loadingQueue' : 'unloadingQueue';
+                        const queueDataString = route[queueDataKey];
+                        
+                        if (queueDataString) {
+                            return queueDataString.split(',').map(item => item.trim()).includes(qd);
+                        }
+                        return false; // No queue data on this route, so no match.
+                    }
+
+                    // For subcontractors or if no queue is selected, the base match is sufficient.
+                    return true;
+                }) || null;
             },
 
             getFriendlyGasStationName: (key) => GAS_STATION_FRIENDLY_NAMES[key] || key,
@@ -1510,6 +1541,9 @@
                                 <button id="refresh-routes-btn" title="รีเฟรชข้อมูล" class="bg-sky-600 hover:bg-sky-700 text-white font-bold p-2 rounded-lg shadow-md transition-transform transform hover:scale-105">
                                     ${ICONS.Refresh}
                                 </button>
+                                <button id="export-routes-excel-btn" class="flex items-center gap-2 bg-success hover:bg-green-600 text-white font-bold py-2 px-4 rounded-lg shadow-md transition-transform transform hover:scale-105">
+                                    ${ICONS.Download} Export to Excel
+                                </button>
                                 <button id="add-new-route-btn" data-action="add-new-route" class="flex items-center gap-2 bg-primary hover:bg-secondary text-white font-bold py-2 px-4 rounded-lg shadow-md transition-transform transform hover:scale-105">
                                     ${ICONS.Plus} เพิ่มเส้นทางใหม่
                                 </button>
@@ -2198,6 +2232,7 @@
                             // Clear queue fields as they don't apply
                             const queueRadios = document.querySelectorAll('input[name="queueType"]');
                             if (queueRadios) queueRadios.forEach(radio => radio.checked = false);
+                            document.getElementById('queue-details-wrapper').classList.add('hidden');
                             const queueDetailsSelect = document.getElementById('form-queue-details');
                             if (queueDetailsSelect) queueDetailsSelect.innerHTML = '';
 
@@ -2269,14 +2304,9 @@
             const queueRadios = document.getElementById('queue-type-radios');
             if (queueRadios) {
                 queueRadios.addEventListener('change', () => {
-                    const vehicleType = document.getElementById('form-vehicle-type')?.value;
-                    const origin = document.getElementById('form-origin')?.value;
-                    const destination = document.getElementById('form-destination')?.value;
-                    const vehicleOwnership = document.querySelector('input[name="vehicleOwnership"]:checked')?.value;
-                    const selectedTransportCompany = document.getElementById('form-transport-company')?.value;
-                    const companyForLookup = (vehicleOwnership === 'subcontractor') ? selectedTransportCompany : '';
-                    const route = logisticsService.findMatchingRoute(vehicleType, origin, destination, companyForLookup);
-                    updateQueueDetailsDropdown(route);
+                    updateQueueDetailsDropdown();
+                    const queueDetailsSelect = document.getElementById('form-queue-details');
+                    if (queueDetailsSelect) queueDetailsSelect.value = '';
                     updateVlookupCard();
                 });
             }
@@ -2377,6 +2407,11 @@
             if (refreshBtn) {
                 refreshBtn.addEventListener('click', updateRoutesTableBody);
             }
+
+            const exportBtn = document.getElementById('export-routes-excel-btn');
+            if (exportBtn) {
+                exportBtn.addEventListener('click', handleExportRoutesToExcel);
+            }
         };
 
         const handleSortRoutes = (key) => {
@@ -2464,32 +2499,26 @@
             });
         };
         
-        const updateQueueDetailsDropdown = (route) => {
+        const updateQueueDetailsDropdown = () => {
             const queueType = document.querySelector('input[name="queueType"]:checked')?.value;
             const wrapper = document.getElementById('queue-details-wrapper');
             const select = document.getElementById('form-queue-details');
 
-            if (!queueType || queueType === 'none' || !route || !wrapper || !select) {
+            if (!queueType || queueType === 'none' || !wrapper || !select) {
                 wrapper.classList.add('hidden');
                 select.innerHTML = '';
                 return;
             }
 
             const queueDataKey = queueType === 'loading' ? 'loadingQueue' : 'unloadingQueue';
-            const queueDataString = route[queueDataKey];
+            const options = logisticsService.getUniqueCommaSeparatedValues(queueDataKey);
 
-            if (queueDataString) {
-                const options = queueDataString.split(',').map(item => item.trim()).filter(item => item);
-                if (options.length > 0) {
-                     select.innerHTML = `<option value="">-- กรุณาเลือก --</option>` + options.map(opt => `<option value="${opt}">${opt}</option>`).join('');
-                     wrapper.classList.remove('hidden');
-                } else {
-                     wrapper.classList.add('hidden');
-                     select.innerHTML = '';
-                }
+            if (options.length > 0) {
+                 select.innerHTML = `<option value="">-- กรุณาเลือก --</option>` + options.map(opt => `<option value="${opt}">${opt}</option>`).join('');
+                 wrapper.classList.remove('hidden');
             } else {
-                wrapper.classList.add('hidden');
-                select.innerHTML = '';
+                 wrapper.classList.add('hidden');
+                 select.innerHTML = '';
             }
         };
 
@@ -2507,33 +2536,10 @@
             const isSubcontractor = vehicleOwnership === 'subcontractor';
             const companyForLookup = isSubcontractor ? selectedTransportCompany : '';
 
-            const baseRoute = logisticsService.findMatchingRoute(vehicleType, origin, destination, companyForLookup);
-            let route = null;
-
-            if (baseRoute) {
-                if (isSubcontractor) {
-                    // For subcontractors, the base route is enough. Queue is not required.
-                    route = baseRoute;
-                } else {
-                    // For company vehicles, queue type and details are required.
-                    const queueType = document.querySelector('input[name="queueType"]:checked')?.value;
-                    const queueDetails = document.getElementById('form-queue-details')?.value;
-
-                    if (queueType && queueDetails && queueDetails.trim() !== '') {
-                        const queueDataKey = queueType === 'loading' ? 'loadingQueue' : 'unloadingQueue';
-                        const qd = queueDetails.trim();
-                        const queueDataString = baseRoute[queueDataKey];
-                        
-                        if (queueDataString) {
-                            const options = queueDataString.split(',').map(item => item.trim());
-                            if (options.includes(qd)) {
-                                route = baseRoute;
-                            }
-                        }
-                    }
-                }
-            }
-
+            // Pass queue details only for company vehicles
+            const queueType = !isSubcontractor ? document.querySelector('input[name="queueType"]:checked')?.value : null;
+            const queueDetails = !isSubcontractor ? document.getElementById('form-queue-details')?.value : null;
+            
             // Auto-populate form logic
             const distributionListLiters = document.getElementById('distribution-list-liters');
             const distributionListBaht = document.getElementById('distribution-list-baht');
@@ -2548,6 +2554,30 @@
             if(kilometersInput) kilometersInput.value = '';
             if(travelTimeInput) travelTimeInput.value = '';
             if(shippingCostInput) shippingCostInput.value = '';
+
+            // Conditional V-lookup display for company vehicles based on queue selection
+            if (vehicleOwnership === 'company') {
+                if (!queueType) {
+                    updateTotalAmount('liters');
+                    updateTotalAmount('baht');
+                    cardContent.innerHTML = `
+                        <h3 class="text-2xl font-bold text-white mb-4">ข้อมูลเส้นทาง (อัตโนมัติ)</h3>
+                        <p class="text-gray-400">กรุณาเลือก "ประเภทคิว" ก่อน เพื่อค้นหาข้อมูลเส้นทาง</p>
+                    `;
+                    return;
+                }
+                if (!queueDetails) {
+                    updateTotalAmount('liters');
+                    updateTotalAmount('baht');
+                    cardContent.innerHTML = `
+                        <h3 class="text-2xl font-bold text-white mb-4">ข้อมูลเส้นทาง (อัตโนมัติ)</h3>
+                        <p class="text-gray-400">กรุณาเลือก "รายละเอียดคิว" เพื่อค้นหาข้อมูลเส้นทาง</p>
+                    `;
+                    return;
+                }
+            }
+            
+            const route = logisticsService.findMatchingRoute(vehicleType, origin, destination, companyForLookup, queueType, queueDetails);
 
             if (route) {
                 if (distributionListLiters && route.gasStationsLiters) {
@@ -2568,13 +2598,12 @@
                 if (shippingCostInput) shippingCostInput.value = route.shippingCost || '';
             }
             
-            updateQueueDetailsDropdown(baseRoute); // Always populate dropdown based on the base route match
             updateTotalAmount('liters');
             updateTotalAmount('baht');
 
             if (!route) {
                 cardContent.innerHTML = `
-                    <h3 class="text-2xl font-bold text-white mb-4">ข้อมูลเส้นทาง</h3>
+                    <h3 class="text-2xl font-bold text-white mb-4">ข้อมูลเส้นทาง (อัตโนมัติ)</h3>
                     <p class="text-gray-400">ไม่พบข้อมูลเส้นทางที่ตรงกัน</p>
                     <p class="text-base text-gray-500 mt-2">กรุณากรอกข้อมูลและเลือกเงื่อนไขให้ครบถ้วน ${isSubcontractor ? '' : '(รวมถึงประเภทและรายละเอียดคิว)'}</p>
                 `;
@@ -3670,6 +3699,88 @@
             });
 
             XLSX.writeFile(workbook, `Driver_Savings_Report_${today}.xlsx`);
+        };
+        
+        const handleExportRoutesToExcel = () => {
+            // Get filtered and sorted data (same logic as updateRoutesTableBody)
+            let routes = logisticsService.getRoutes();
+
+            const activeFilters = Object.entries(appState.routeFilters).filter(([, value]) => value);
+            if (activeFilters.length > 0) {
+                routes = routes.filter(route => {
+                    return activeFilters.every(([key, filterValue]) => {
+                        const routeValue = route[key];
+                        if (filterValue === null || filterValue === '') return true;
+                        if (key === 'travelTime') {
+                             return (minutesToHoursAndMinutes(routeValue) || '').includes(filterValue);
+                        }
+                        return (routeValue?.toString().toLowerCase() || '').includes(filterValue.toLowerCase());
+                    });
+                });
+            }
+
+            const { key: sortKey, direction: sortDirection } = appState.routeSort;
+            if (sortKey) {
+                const isNumeric = ['driverAllowance', 'kilometers', 'travelTime', 'totalLiters', 'totalBaht', 'shippingCost'].includes(sortKey);
+                routes.sort((a, b) => {
+                    let valA = a[sortKey] || (isNumeric ? 0 : '');
+                    let valB = b[sortKey] || (isNumeric ? 0 : '');
+                    if (sortKey === 'origin') {
+                        valA = `${a.origin} ${a.destination}`;
+                        valB = `${b.origin} ${b.destination}`;
+                    }
+                    let comparison = 0;
+                    if (isNumeric) {
+                        comparison = valA - valB;
+                    } else {
+                        comparison = (valA.toString()).localeCompare(valB.toString(), 'th');
+                    }
+                    return sortDirection === 'asc' ? comparison : -comparison;
+                });
+            }
+
+            if (routes.length === 0) {
+                alert("ไม่มีข้อมูลเส้นทางสำหรับส่งออก");
+                return;
+            }
+
+            // Format data for Excel sheet
+            const stationKeys = logisticsService.getAllGasStationKeys();
+            const friendlyNames = logisticsService.getAllGasStationFriendlyNames();
+
+            const sheetData = routes.map(route => {
+                const row = {
+                    'ประเภทรถ': route.vehicleType || '',
+                    'ต้นทาง': route.origin || '',
+                    'ปลายทาง': route.destination || '',
+                    'บริษัทขนส่ง': route.transportCompany || '',
+                    'คิวขาขึ้น': route.loadingQueue || '',
+                    'คิวถ่าย': route.unloadingQueue || '',
+                    'ระยะทาง (กม.)': route.kilometers || '',
+                    'เวลาเดินทาง (ชม.)': route.travelTime ? minutesToHoursAndMinutes(route.travelTime) : '',
+                    'เบี้ยขับ (บาท)': route.driverAllowance || '',
+                    'ค่าขนส่ง (บาท)': route.shippingCost || '',
+                    'รวมน้ำมัน (ลิตร)': route.totalLiters || '',
+                    'รวมน้ำมัน (บาท)': route.totalBaht || '',
+                };
+
+                stationKeys.forEach(key => {
+                    const name = friendlyNames[key] || key;
+                    row[`${name} (ลิตร)`] = route.gasStationsLiters?.[key] || '';
+                    row[`${name} (บาท)`] = route.gasStationsBaht?.[key] || '';
+                });
+
+                return row;
+            });
+
+            // Generate and download the Excel file
+            const workbook = XLSX.utils.book_new();
+            const worksheet = XLSX.utils.json_to_sheet(sheetData);
+            autoSizeColumns(worksheet, sheetData);
+            XLSX.utils.book_append_sheet(workbook, worksheet, "ข้อมูลเส้นทาง");
+
+            const today = new Date().toISOString().split('T')[0];
+            XLSX.writeFile(workbook, `Routes_Data_${today}.xlsx`);
         };
 
         // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
