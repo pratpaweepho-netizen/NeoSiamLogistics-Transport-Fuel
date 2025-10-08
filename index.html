@@ -203,7 +203,8 @@
                 transportCompany: '',
                 shippingCost: '',
                 loadingQueue: '',
-                unloadingQueue: ''
+                unloadingQueue: '',
+                returnQueue: '',
             },
             vehicleManagementFilter: '',
             editingRoute: null,
@@ -369,7 +370,7 @@
                     if (!baseMatch) return false;
 
                     // For company cars, we require a queue match if a queue is selected.
-                    if (queueType && queueDetails && queueDetails.trim()) {
+                    if (queueType && queueType !== 'return' && queueDetails && queueDetails.trim()) {
                         const qd = queueDetails.trim();
                         const queueDataKey = queueType === 'loading' ? 'loadingQueue' : 'unloadingQueue';
                         const queueDataString = route[queueDataKey];
@@ -587,6 +588,10 @@
                                                 <input type="radio" name="queueType" value="unloading" class="radio radio-primary text-accent focus:ring-accent" />
                                                 <span>คิวถ่าย</span>
                                             </label>
+                                            <label class="flex items-center gap-2 cursor-pointer">
+                                                <input type="radio" name="queueType" value="return" class="radio radio-primary text-accent focus:ring-accent" />
+                                                <span>คิวขาล่อง</span>
+                                            </label>
                                         </div>
                                     </div>
                                     <div id="queue-details-wrapper" class="hidden">
@@ -779,8 +784,24 @@
                 const fuelCostCell = formatZeroAsEmpty(record.totalBaht);
                 const shippingCostCell = isNGV ? '-' : formatZeroAsEmpty(record.shippingCost);
                 const fuelTypeDisplay = isNGV ? 'NGV' : 'Diesel';
-                const queueDisplay = record.queueType && record.queueType !== 'none'
-                    ? `${record.queueType === 'loading' ? 'ขึ้น' : 'ถ่าย'}: ${record.queueDetails || ''}`
+                
+                let queueText = '';
+                switch (record.queueType) {
+                    case 'loading':
+                        queueText = 'ขึ้น';
+                        break;
+                    case 'unloading':
+                        queueText = 'ถ่าย';
+                        break;
+                    case 'return':
+                        queueText = 'ขาล่อง';
+                        break;
+                    default:
+                        queueText = '';
+                }
+
+                const queueDisplay = queueText
+                    ? `${queueText}${record.queueDetails ? `: ${record.queueDetails}` : ''}`
                     : '-';
 
                 const mainRow = `
@@ -1276,16 +1297,18 @@
         const renderReportsContent = () => {
             const loadingQueueRecords = getFilteredQueueRecords('loading');
             const unloadingQueueRecords = getFilteredQueueRecords('unloading');
+            const returnQueueRecords = getFilteredQueueRecords('return');
 
             const exportBtn = document.getElementById('export-reports-excel-btn');
             if (exportBtn) {
-                 exportBtn.disabled = loadingQueueRecords.length === 0 && unloadingQueueRecords.length === 0;
+                 exportBtn.disabled = loadingQueueRecords.length === 0 && unloadingQueueRecords.length === 0 && returnQueueRecords.length === 0;
             }
 
             return `
                 <div class="space-y-8">
                     ${renderQueueReportTable('รายงานคิวขาขึ้น', loadingQueueRecords)}
                     ${renderQueueReportTable('รายงานคิวถ่าย', unloadingQueueRecords)}
+                    ${renderQueueReportTable('รายงานคิวขาล่อง', returnQueueRecords)}
                 </div>
             `;
         };
@@ -1294,6 +1317,7 @@
             const filters = appState.reportFilters;
             const loadingQueueRecords = getFilteredQueueRecords('loading');
             const unloadingQueueRecords = getFilteredQueueRecords('unloading');
+            const returnQueueRecords = getFilteredQueueRecords('return');
 
             return `
                  <div class="space-y-8">
@@ -1304,7 +1328,7 @@
                                 <button id="clear-reports-filters-btn" class="flex items-center gap-2 bg-yellow-600 hover:bg-yellow-700 text-white font-bold py-2 px-4 rounded-lg shadow-md transition-transform transform hover:scale-105">
                                     ${ICONS.Clear} ล้างตัวกรอง
                                 </button>
-                                <button id="export-reports-excel-btn" ${loadingQueueRecords.length === 0 && unloadingQueueRecords.length === 0 ? 'disabled' : ''} class="flex items-center gap-2 bg-success hover:bg-green-600 text-white font-bold py-2 px-4 rounded-lg shadow-md transition-transform transform hover:scale-105 disabled:bg-slate-600 disabled:cursor-not-allowed disabled:transform-none">
+                                <button id="export-reports-excel-btn" ${loadingQueueRecords.length === 0 && unloadingQueueRecords.length === 0 && returnQueueRecords.length === 0 ? 'disabled' : ''} class="flex items-center gap-2 bg-success hover:bg-green-600 text-white font-bold py-2 px-4 rounded-lg shadow-md transition-transform transform hover:scale-105 disabled:bg-slate-600 disabled:cursor-not-allowed disabled:transform-none">
                                     ${ICONS.Download} Export to Excel
                                 </button>
                             </div>
@@ -1402,7 +1426,7 @@
             if (!tableBody) return;
 
             if (routes.length === 0) {
-                tableBody.innerHTML = `<tr><td colspan="10" class="text-center py-8 text-gray-500">ไม่พบข้อมูลเส้นทางที่ตรงตามเงื่อนไข</td></tr>`;
+                tableBody.innerHTML = `<tr><td colspan="11" class="text-center py-8 text-gray-500">ไม่พบข้อมูลเส้นทางที่ตรงตามเงื่อนไข</td></tr>`;
                 return;
             }
 
@@ -1420,6 +1444,7 @@
                     <td class="p-3 align-top">${route.vehicleType}</td>
                     <td class="p-3 align-top">${route.loadingQueue || '-'}</td>
                     <td class="p-3 align-top">${route.unloadingQueue || '-'}</td>
+                    <td class="p-3 align-top">${route.returnQueue || '-'}</td>
                     <td class="p-3 align-top">${route.origin} → ${route.destination}</td>
                     <td class="p-3 align-top">${route.transportCompany || '-'}</td>
                     <td class="p-3 text-right align-top">
@@ -1438,7 +1463,7 @@
 
                 const detailsRow = `
                 <tr id="details-${route.id}" class="hidden">
-                    <td colspan="10" class="p-0 border-b border-slate-700">
+                    <td colspan="11" class="p-0 border-b border-slate-700">
                         <div class="bg-slate-900/50 p-6 grid grid-cols-1 md:grid-cols-3 gap-6">
                             <div>
                                 <h4 class="font-bold text-gray-300 mb-2">ข้อมูลการเดินทาง</h4>
@@ -1458,6 +1483,10 @@
                                     <div class="flex justify-between">
                                         <dt class="text-gray-400">คิวถ่าย:</dt>
                                         <dd class="font-mono text-right">${route.unloadingQueue || '-'}</dd>
+                                    </div>
+                                    <div class="flex justify-between">
+                                        <dt class="text-gray-400">คิวขาล่อง:</dt>
+                                        <dd class="font-mono text-right">${route.returnQueue || '-'}</dd>
                                     </div>
                                 </dl>
                             </div>
@@ -1488,7 +1517,7 @@
                  return `<input type="text" data-filter-key="${key}" value="${appState.routeFilters[key] || ''}" placeholder="${placeholder}" class="w-full bg-slate-800 border-none rounded-sm px-2 py-1 text-white text-sm focus:outline-none focus:ring-1 focus:ring-accent" />`;
             }
 
-            const initialTableBody = `<tr><td colspan="10" class="text-center py-8 text-gray-500">กำลังโหลดข้อมูล...</td></tr>`;
+            const initialTableBody = `<tr><td colspan="11" class="text-center py-8 text-gray-500">กำลังโหลดข้อมูล...</td></tr>`;
 
             return renderCard(`
                 <div class="overflow-x-auto">
@@ -1499,6 +1528,7 @@
                                 ${renderSortableHeader('vehicleType', 'ประเภทรถ', 'w-32')}
                                 ${renderSortableHeader('loadingQueue', 'คิวขาขึ้น', 'w-40')}
                                 ${renderSortableHeader('unloadingQueue', 'คิวถ่าย', 'w-40')}
+                                ${renderSortableHeader('returnQueue', 'คิวขาล่อง', 'w-40')}
                                 ${renderSortableHeader('origin', 'เส้นทาง', 'w-64')}
                                 ${renderSortableHeader('transportCompany', 'บริษัทขนส่ง', 'w-40')}
                                 <th class="p-3 w-32">รวมน้ำมัน</th>
@@ -1511,6 +1541,7 @@
                                 <td class="p-1">${renderFilterInput('vehicleType')}</td>
                                 <td class="p-1">${renderFilterInput('loadingQueue')}</td>
                                 <td class="p-1">${renderFilterInput('unloadingQueue')}</td>
+                                <td class="p-1">${renderFilterInput('returnQueue')}</td>
                                 <td class="p-1">
                                     <div class="flex gap-1">
                                         ${renderFilterInput('origin', 'ต้นทาง...')}
@@ -1825,7 +1856,7 @@
                             <input type="text" name="destination" value="${route?.destination || ''}" placeholder="เช่น, เชียงใหม่" required class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent" />
                         </div>
                     </div>
-                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
                         <div>
                             <label class="block text-base font-medium text-gray-400 mb-1">คิวขาขึ้น</label>
                             <input type="text" name="loadingQueue" value="${route?.loadingQueue || ''}" placeholder="รายละเอียดคิวขึ้น" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent" />
@@ -1833,6 +1864,10 @@
                         <div>
                             <label class="block text-base font-medium text-gray-400 mb-1">คิวถ่าย</label>
                             <input type="text" name="unloadingQueue" value="${route?.unloadingQueue || ''}" placeholder="รายละเอียดคิวถ่าย" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent" />
+                        </div>
+                        <div>
+                            <label class="block text-base font-medium text-gray-400 mb-1">คิวขาล่อง</label>
+                            <input type="text" name="returnQueue" value="${route?.returnQueue || ''}" placeholder="รายละเอียดคิวขาล่อง" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent" />
                         </div>
                     </div>
                     <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -1910,7 +1945,7 @@
             
             const recordRoute = logisticsService.findMatchingRoute(record.vehicleType, record.origin, record.destination, record.transportCompany || '');
             let queueOptionsHtml = '';
-            if (recordRoute && record.queueType && record.queueType !== 'none') {
+            if (recordRoute && record.queueType && record.queueType !== 'none' && record.queueType !== 'return') {
                 const queueDataKey = record.queueType === 'loading' ? 'loadingQueue' : 'unloadingQueue';
                 const queueDataString = recordRoute[queueDataKey];
                 if (queueDataString) {
@@ -1988,9 +2023,13 @@
                                     <input type="radio" name="queueType" value="unloading" ${record.queueType === 'unloading' ? 'checked' : ''} />
                                     <span>คิวถ่าย</span>
                                 </label>
+                                <label class="flex items-center gap-2 cursor-pointer">
+                                    <input type="radio" name="queueType" value="return" ${record.queueType === 'return' ? 'checked' : ''} />
+                                    <span>คิวขาล่อง</span>
+                                </label>
                             </div>
                         </div>
-                        <div id="edit-queue-details-wrapper" class="${!record.queueType || record.queueType === 'none' ? 'hidden' : ''}">
+                        <div id="edit-queue-details-wrapper" class="${!record.queueType || record.queueType === 'none' || record.queueType === 'return' ? 'hidden' : ''}">
                             <label class="block text-base font-medium text-gray-400 mb-1">รายละเอียดคิว</label>
                             <select name="queueDetails" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white">
                                 <option value="">-- กรุณาเลือก --</option>
@@ -2504,7 +2543,7 @@
             const wrapper = document.getElementById('queue-details-wrapper');
             const select = document.getElementById('form-queue-details');
 
-            if (!queueType || queueType === 'none' || !wrapper || !select) {
+            if (!queueType || queueType === 'none' || queueType === 'return' || !wrapper || !select) {
                 wrapper.classList.add('hidden');
                 select.innerHTML = '';
                 return;
@@ -2566,7 +2605,7 @@
                     `;
                     return;
                 }
-                if (!queueDetails) {
+                if (queueType !== 'return' && !queueDetails) {
                     updateTotalAmount('liters');
                     updateTotalAmount('baht');
                     cardContent.innerHTML = `
@@ -2916,6 +2955,7 @@
                 travelTime: hoursAndMinutesToMinutes(formData.get('travelTime')),
                 loadingQueue: formData.get('loadingQueue'),
                 unloadingQueue: formData.get('unloadingQueue'),
+                returnQueue: formData.get('returnQueue'),
                 gasStationsLiters: getDistributionData('Liters'),
                 gasStationsBaht: getDistributionData('Baht'),
             };
@@ -2967,7 +3007,7 @@
                         const record = logisticsService.getFuelRecords().find(r => r.id === id);
                         const route = logisticsService.findMatchingRoute(record.vehicleType, record.origin, record.destination, record.transportCompany || '');
 
-                        if (queueType === 'none' || !route) {
+                        if (queueType === 'none' || queueType === 'return' || !route) {
                             wrapper.classList.add('hidden');
                             select.innerHTML = '';
                             return;
@@ -3431,9 +3471,13 @@
 
             // 1. Main Summary Sheet
             const mainSheetData = filteredRecords.map(record => {
-                const queueDisplay = record.queueType && record.queueType !== 'none'
-                    ? `${record.queueType === 'loading' ? 'คิวขาขึ้น' : 'คิวถ่าย'}: ${record.queueDetails || ''}`
-                    : '';
+                 let queueText = '';
+                switch (record.queueType) {
+                    case 'loading': queueText = 'คิวขาขึ้น'; break;
+                    case 'unloading': queueText = 'คิวถ่าย'; break;
+                    case 'return': queueText = 'ขาล่อง'; break;
+                }
+                const queueDisplay = queueText ? `${queueText}${record.queueDetails ? `: ${record.queueDetails}` : ''}` : '';
 
                 const row = {
                     'วันที่': record.date,
@@ -3550,8 +3594,9 @@
         const handleExportQueueReportsToExcel = () => {
             const loadingRecords = getFilteredQueueRecords('loading');
             const unloadingRecords = getFilteredQueueRecords('unloading');
+            const returnRecords = getFilteredQueueRecords('return');
             
-            if (loadingRecords.length === 0 && unloadingRecords.length === 0) {
+            if (loadingRecords.length === 0 && unloadingRecords.length === 0 && returnRecords.length === 0) {
                 alert("ไม่มีข้อมูลสำหรับส่งออก");
                 return;
             }
@@ -3590,6 +3635,13 @@
                 const worksheet = XLSX.utils.json_to_sheet(sheetData);
                 autoSizeColumns(worksheet, sheetData);
                 XLSX.utils.book_append_sheet(workbook, worksheet, "รายงานคิวถ่าย");
+            }
+
+            if (returnRecords.length > 0) {
+                const sheetData = returnRecords.map(mapRecordToSheetRow);
+                const worksheet = XLSX.utils.json_to_sheet(sheetData);
+                autoSizeColumns(worksheet, sheetData);
+                XLSX.utils.book_append_sheet(workbook, worksheet, "รายงานคิวขาล่อง");
             }
 
             XLSX.writeFile(workbook, `Queue_Report_${today}.xlsx`);
@@ -3756,6 +3808,7 @@
                     'บริษัทขนส่ง': route.transportCompany || '',
                     'คิวขาขึ้น': route.loadingQueue || '',
                     'คิวถ่าย': route.unloadingQueue || '',
+                    'คิวขาล่อง': route.returnQueue || '',
                     'ระยะทาง (กม.)': route.kilometers || '',
                     'เวลาเดินทาง (ชม.)': route.travelTime ? minutesToHoursAndMinutes(route.travelTime) : '',
                     'เบี้ยขับ (บาท)': route.driverAllowance || '',
