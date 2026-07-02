@@ -1248,12 +1248,47 @@ const formatZeroAsEmpty = (value) => {
                 </div>`;
         };
         const renderReportsContent = () => {
-            const trips = logisticsService.getTrips();
-            if (!trips.length) return `<p class="text-center py-8 text-gray-500">ไม่มีข้อมูล — เลือกเดือนที่นำเข้าคิวรถแล้ว</p>`;
+            const rs = appState.reportsState;
+            const allTrips = logisticsService.getTrips();
+            if (!allTrips.length) return `<p class="text-center py-8 text-gray-500">ไม่มีข้อมูล — เลือกเดือนที่นำเข้าคิวรถแล้ว</p>`;
+
+            // plate → own/partner classification
+            const driveOf = {}; logisticsService.getVehicles().forEach(v => { driveOf[(v.registrationNumber || '').trim()] = v.driveType || ''; });
+            const driveClass = (t) => { const d = driveOf[(t.plate || '').trim()]; return d && d.includes('ร่วม') ? 'รถร่วม' : d ? 'รถบริษัท' : 'ไม่ทราบ'; };
+
+            // E) Filters (options built from ALL trips so they never disappear)
+            const dirOptions = [...new Set(allTrips.map(t => t.direction).filter(Boolean))];
+            let trips = allTrips;
+            if (rs.fDirection) trips = trips.filter(t => (t.direction || '') === rs.fDirection);
+            if (rs.fDrive) trips = trips.filter(t => driveClass(t) === rs.fDrive);
+            if (rs.fDriver) { const q = rs.fDriver.toLowerCase(); trips = trips.filter(t => (t.driver || '').toLowerCase().includes(q)); }
+
+            const viewBtn = (val, label) => `<button data-report-view="${val}" class="px-3 py-1.5 rounded-md text-sm ${rs.view === val ? 'bg-accent text-white' : 'text-gray-300 hover:bg-slate-600'}">${label}</button>`;
+            const filterBar = `
+                <div class="flex flex-wrap items-end justify-between gap-3 mb-4">
+                    <div class="flex flex-wrap items-end gap-3">
+                        <div><label class="block text-xs text-gray-400 mb-1">ทิศทาง</label>
+                            <select id="rep-f-direction" class="bg-slate-800 border border-slate-600 rounded-md px-3 py-2 text-white text-sm">
+                                <option value="">ทั้งหมด</option>${dirOptions.map(d => `<option value="${d}" ${rs.fDirection === d ? 'selected' : ''}>${d}</option>`).join('')}
+                            </select></div>
+                        <div><label class="block text-xs text-gray-400 mb-1">ประเภทรถ</label>
+                            <select id="rep-f-drive" class="bg-slate-800 border border-slate-600 rounded-md px-3 py-2 text-white text-sm">
+                                <option value="">ทั้งหมด</option>
+                                <option value="รถบริษัท" ${rs.fDrive === 'รถบริษัท' ? 'selected' : ''}>รถบริษัท</option>
+                                <option value="รถร่วม" ${rs.fDrive === 'รถร่วม' ? 'selected' : ''}>รถร่วม</option>
+                            </select></div>
+                        <div><label class="block text-xs text-gray-400 mb-1">ค้นหาคนขับ</label>
+                            <input id="rep-f-driver" value="${rs.fDriver}" placeholder="ชื่อคนขับ" class="bg-slate-800 border border-slate-600 rounded-md px-3 py-2 text-white text-sm w-40" /></div>
+                    </div>
+                    <div class="flex items-center gap-1 bg-slate-800 rounded-lg p-1">${viewBtn('both', 'ทั้งคู่')}${viewBtn('charts', 'กราฟ')}${viewBtn('tables', 'ตาราง')}</div>
+                </div>`;
+
+            if (!trips.length) return `${filterBar}<p class="text-center py-8 text-gray-500">ไม่มีคิวตรงตามตัวกรอง — ลองล้างตัวกรอง</p>`;
 
             const sum = (arr, f) => arr.reduce((s, t) => s + (f(t) || 0), 0);
             const totLiters = sum(trips, t => t.totalLiters), totBaht = sum(trips, t => t.totalBaht);
             const totRevenue = sum(trips, t => t.revenue), totNet = sum(trips, t => t.netTransfer);
+            const fmt = (n) => (n || 0).toLocaleString();
 
             // group helper → [{key, count, net}] sorted by net desc
             const groupBy = (keyFn) => {
@@ -1264,11 +1299,8 @@ const formatZeroAsEmpty = (value) => {
             const byDir = groupBy(t => t.direction);
             const byType = groupBy(t => t.vehicleType);
             const topDrivers = groupBy(t => t.driver).slice(0, 10);
-
-            // Own vs partner (join plate → vehicle.driveType)
-            const driveOf = {}; logisticsService.getVehicles().forEach(v => { driveOf[(v.registrationNumber || '').trim()] = v.driveType || ''; });
             const ownPartner = { 'รถบริษัท': { count: 0, net: 0 }, 'รถร่วม': { count: 0, net: 0 }, 'ไม่ทราบ': { count: 0, net: 0 } };
-            trips.forEach(t => { const d = driveOf[(t.plate || '').trim()]; const k = d && d.includes('ร่วม') ? 'รถร่วม' : d ? 'รถบริษัท' : 'ไม่ทราบ'; ownPartner[k].count++; ownPartner[k].net += t.netTransfer || 0; });
+            trips.forEach(t => { const k = driveClass(t); ownPartner[k].count++; ownPartner[k].net += t.netTransfer || 0; });
 
             const bars = (rows, maxKeyWidth = 'w-28') => {
                 const max = Math.max(1, ...rows.map(r => r.net));
@@ -1281,14 +1313,69 @@ const formatZeroAsEmpty = (value) => {
                     </div>`).join('');
             };
 
-            // Fuel by station (liters)
-            const stationTotals = {};
-            trips.forEach(t => Object.entries(t.gasStationsLiters || {}).forEach(([k, v]) => { stationTotals[k] = (stationTotals[k] || 0) + v; }));
-            const stationRows = Object.entries(stationTotals).sort((a, b) => b[1] - a[1])
-                .map(([k, v]) => `<div class="flex justify-between text-sm py-1 border-b border-slate-700/50"><span class="text-gray-300">${logisticsService.getFriendlyGasStationName(k)}</span><span class="font-mono text-accent">${v.toLocaleString()} ล.</span></div>`).join('');
+            const stationTable = reportTable('station', [
+                { label: 'ปั๊ม', key: 'name', fmt: r => r.name },
+                { label: 'ครั้ง', key: 'count' },
+                { label: 'ลิตร', key: 'liters', cls: 'text-accent' },
+                { label: 'บาท', key: 'baht' },
+            ], computeReportStationRows(trips), { key: 'liters', dir: 'desc' });
+
+            const dailyRows = computeReportDailyRows(trips);
+            const dailyTable = reportTable('daily', [
+                { label: 'วันที่', key: 'date', fmt: r => r.date },
+                { label: 'คิว', key: 'count' },
+                { label: 'ลิตร', key: 'liters', cls: 'text-accent' },
+                { label: 'บาท', key: 'baht' },
+                { label: 'รายรับ', key: 'revenue' },
+                { label: 'สุทธิโอน', key: 'net', cls: 'text-green-400' },
+            ], dailyRows, { key: 'date', dir: 'asc' },
+                ['รวม (' + dailyRows.length + ' วัน)', fmt(trips.length), fmt(totLiters), fmt(totBaht), fmt(totRevenue), fmt(totNet)]);
+
+            const routeTable = reportTable('route', [
+                { label: 'เส้นทาง', key: 'route', fmt: r => r.route },
+                { label: 'เที่ยว', key: 'count' },
+                { label: 'ลิตรรวม', key: 'liters', cls: 'text-accent' },
+                { label: 'ลิตร/เที่ยว', key: 'perTrip', sortVal: r => r.count ? r.liters / r.count : 0, fmt: r => (r.count ? r.liters / r.count : 0).toFixed(1) },
+                { label: 'บาท', key: 'baht' },
+            ], computeReportRouteRows(trips), { key: 'count', dir: 'desc' });
+
+            const driverTable = reportTable('driver', [
+                { label: 'คนขับ', key: 'driver', fmt: r => r.driver },
+                { label: 'คิว', key: 'count' },
+                { label: 'ลิตร', key: 'liters', cls: 'text-accent' },
+                { label: 'รายรับ', key: 'revenue' },
+                { label: 'สุทธิโอน', key: 'net', cls: 'text-green-400' },
+            ], computeReportDriverRows(trips), { key: 'net', dir: 'desc' });
+
+            const showCharts = rs.view !== 'tables';
+            const showTables = rs.view !== 'charts';
+
+            const chartsSection = `
+                ${renderCard(`<h3 class="font-bold text-white mb-3 flex items-center gap-2">${ICONS.ChartBar} แนวโน้มน้ำมันรายวัน (ลิตร)</h3><div class="overflow-x-auto">${renderReportTrend(dailyRows)}</div>`)}
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
+                    ${renderCard(`<h3 class="font-bold text-white mb-3">ตามทิศทาง</h3><div class="space-y-2">${bars(byDir, 'w-20')}</div>`)}
+                    ${renderCard(`<h3 class="font-bold text-white mb-3">รถบริษัท vs รถร่วม</h3><div class="space-y-2">${bars(Object.entries(ownPartner).filter(([, v]) => v.count).map(([k, v]) => ({ key: k, count: v.count, net: v.net })), 'w-20')}</div>`)}
+                    ${renderCard(`<h3 class="font-bold text-white mb-3">ตามประเภทรถ</h3><div class="space-y-2">${bars(byType, 'w-28')}</div>`)}
+                    ${renderCard(`<h3 class="font-bold text-white mb-3">คนขับสุทธิโอนสูงสุด (Top 10)</h3><div class="space-y-2">${bars(topDrivers, 'w-32')}</div>`)}
+                </div>`;
+
+            const tablesSection = `
+                <div class="mt-6">
+                    ${renderCard(`
+                        <div class="flex flex-wrap justify-between items-center gap-3 mb-3">
+                            <h3 class="font-bold text-white flex items-center gap-2">${ICONS.ChartBar} ตารางสรุปรายวัน</h3>
+                            <button id="reports-export-btn" class="flex items-center gap-2 bg-success hover:bg-green-600 text-white font-bold py-2 px-4 rounded-lg shadow-md">${ICONS.Download} Export Excel (ทุกตาราง)</button>
+                        </div>${dailyTable}`)}
+                </div>
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
+                    ${renderCard(`<h3 class="font-bold text-white mb-3 flex items-center gap-2">${ICONS.ChartBar} รายเส้นทาง</h3>${routeTable}`)}
+                    ${renderCard(`<h3 class="font-bold text-white mb-3 flex items-center gap-2">${ICONS.IdCard} รายคนขับ</h3>${driverTable}`)}
+                    ${renderCard(`<h3 class="font-bold text-white mb-3 flex items-center gap-2">⛽ รายปั๊ม</h3>${stationTable}`)}
+                </div>`;
 
             return `
-                <p class="text-xs text-gray-500 mb-3">เดือน ${appState.tripsMonth || '(เลือกเดือน)'} · ${trips.length.toLocaleString()} คิว</p>
+                ${filterBar}
+                <p class="text-xs text-gray-500 mb-3">เดือน ${appState.tripsMonth || '(เลือกเดือน)'} · แสดง ${trips.length.toLocaleString()} จาก ${allTrips.length.toLocaleString()} คิว · 💡 คลิกหัวคอลัมน์เพื่อเรียงลำดับ</p>
                 <div class="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
                     ${importStatCard('จำนวนคิว', trips.length)}
                     ${importStatCard('น้ำมัน (ลิตร)', totLiters)}
@@ -1296,19 +1383,260 @@ const formatZeroAsEmpty = (value) => {
                     ${importStatCard('รายรับรวม', totRevenue)}
                     ${importStatCard('สุทธิโอนรวม', totNet)}
                 </div>
-                <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                    ${renderCard(`<h3 class="font-bold text-white mb-3">ตามทิศทาง</h3><div class="space-y-2">${bars(byDir, 'w-20')}</div>`)}
-                    ${renderCard(`<h3 class="font-bold text-white mb-3">รถบริษัท vs รถร่วม</h3><div class="space-y-2">${bars(Object.entries(ownPartner).filter(([, v]) => v.count).map(([k, v]) => ({ key: k, count: v.count, net: v.net })), 'w-20')}</div>`)}
-                    ${renderCard(`<h3 class="font-bold text-white mb-3">ตามประเภทรถ</h3><div class="space-y-2">${bars(byType, 'w-28')}</div>`)}
-                    ${renderCard(`<h3 class="font-bold text-white mb-3">คนขับสุทธิโอนสูงสุด (Top 10)</h3><div class="space-y-2">${bars(topDrivers, 'w-32')}</div>`)}
-                    ${renderCard(`<h3 class="font-bold text-white mb-3">น้ำมันรายปั๊ม (ลิตร)</h3>${stationRows || '<p class="text-gray-500 text-sm">ไม่มีข้อมูล</p>'}`)}
-                </div>`;
+                ${showCharts ? chartsSection : ''}
+                ${showTables ? tablesSection : ''}
+                <div class="mt-6">${renderReportCompare()}</div>`;
         };
+
+        // D) Simple SVG line chart of daily liters (no chart lib).
+        const renderReportTrend = (rows) => {
+            if (!rows || rows.length < 2) return '<p class="text-gray-500 text-sm">ข้อมูลไม่พอวาดกราฟ (ต้องมีอย่างน้อย 2 วัน)</p>';
+            const W = 760, H = 200, pad = 34;
+            const max = Math.max(1, ...rows.map(r => r.liters));
+            const stepX = (W - pad * 2) / (rows.length - 1);
+            const pts = rows.map((r, i) => [pad + i * stepX, H - pad - (r.liters / max) * (H - pad * 2)]);
+            const line = pts.map((p, i) => (i ? 'L' : 'M') + p[0].toFixed(1) + ' ' + p[1].toFixed(1)).join(' ');
+            const area = `M${pad} ${H - pad} ` + pts.map(p => 'L' + p[0].toFixed(1) + ' ' + p[1].toFixed(1)).join(' ') + ` L${(pad + (rows.length - 1) * stepX).toFixed(1)} ${H - pad} Z`;
+            const dots = pts.map((p, i) => `<circle cx="${p[0].toFixed(1)}" cy="${p[1].toFixed(1)}" r="2.5" fill="#f97316"><title>${rows[i].date}: ${rows[i].liters.toLocaleString()} ลิตร (${rows[i].count} คิว)</title></circle>`).join('');
+            const xlabels = [0, Math.floor((rows.length - 1) / 2), rows.length - 1].map(i => `<text x="${(pad + i * stepX).toFixed(1)}" y="${H - 8}" fill="#94a3b8" font-size="11" text-anchor="middle">${(rows[i].date || '').slice(5)}</text>`).join('');
+            return `<svg viewBox="0 0 ${W} ${H}" class="w-full" style="min-width:640px" preserveAspectRatio="xMidYMid meet">
+                <text x="${pad}" y="16" fill="#94a3b8" font-size="11">สูงสุด ${max.toLocaleString()} ล.</text>
+                <path d="${area}" fill="#f9731622" /><path d="${line}" fill="none" stroke="#f97316" stroke-width="2" />${dots}${xlabels}
+            </svg>`;
+        };
+
+        // C) Cross-month comparison section (loads on demand via getMonthlySummaries).
+        const renderReportCompare = () => {
+            const c = appState.reportsState.compare;
+            const controls = `
+                <div class="flex flex-wrap items-end gap-3 mb-3">
+                    <div><label class="block text-xs text-gray-400 mb-1">ตั้งแต่เดือน</label>
+                        <input type="month" id="cmp-from" value="${c.from}" class="bg-slate-800 border border-slate-600 rounded-md px-3 py-2 text-white text-sm" /></div>
+                    <div><label class="block text-xs text-gray-400 mb-1">ถึงเดือน</label>
+                        <input type="month" id="cmp-to" value="${c.to}" class="bg-slate-800 border border-slate-600 rounded-md px-3 py-2 text-white text-sm" /></div>
+                    <button id="cmp-load" class="bg-primary hover:bg-secondary text-white font-bold py-2 px-4 rounded-lg text-sm">เปรียบเทียบ</button>
+                </div>`;
+            let body;
+            if (c.loading) body = '<p class="text-gray-400 text-sm">กำลังโหลด...</p>';
+            else if (c.data && c.data.length) {
+                const maxL = Math.max(1, ...c.data.map(d => d.liters));
+                const barsHtml = c.data.map(d => `
+                    <div class="flex items-center gap-3">
+                        <span class="w-20 shrink-0 text-sm text-gray-300">${d.month}</span>
+                        <div class="flex-1 bg-slate-800 rounded-full h-5 overflow-hidden"><div class="bg-accent h-full rounded-full" style="width:${Math.max(2, Math.round(d.liters / maxL * 100))}%"></div></div>
+                        <span class="w-24 shrink-0 text-right text-sm text-accent font-mono">${d.liters.toLocaleString()} ล.</span>
+                    </div>`).join('');
+                const tbl = reportTable('cmp', [
+                    { label: 'เดือน', key: 'month', fmt: r => r.month },
+                    { label: 'คิว', key: 'count' },
+                    { label: 'ลิตร', key: 'liters', cls: 'text-accent' },
+                    { label: 'บาท', key: 'baht' },
+                    { label: 'รายรับ', key: 'revenue' },
+                    { label: 'สุทธิโอน', key: 'net', cls: 'text-green-400' },
+                ], c.data, { key: 'month', dir: 'asc' });
+                body = `<div class="space-y-2 mb-4">${barsHtml}</div>${tbl}`;
+            } else if (c.data) body = '<p class="text-gray-500 text-sm">ไม่มีข้อมูลในช่วงที่เลือก</p>';
+            else body = '<p class="text-gray-500 text-sm">เลือกช่วงเดือนแล้วกด "เปรียบเทียบ" เพื่อดูแนวโน้มข้ามเดือน</p>';
+            return renderCard(`<h3 class="font-bold text-white mb-3 flex items-center gap-2">${ICONS.ChartBar} เปรียบเทียบรายเดือน</h3>${controls}<div id="reports-compare-body">${body}</div>`);
+        };
+
+        // Group a month's trips into per-day report rows (date × count/liters/baht/revenue/net), sorted by date.
+        const computeReportDailyRows = (trips) => {
+            const m = {};
+            trips.forEach(t => {
+                const d = t.date || '(ไม่ระบุ)';
+                if (!m[d]) m[d] = { date: d, count: 0, liters: 0, baht: 0, revenue: 0, net: 0 };
+                const r = m[d];
+                r.count++; r.liters += t.totalLiters || 0; r.baht += t.totalBaht || 0;
+                r.revenue += t.revenue || 0; r.net += t.netTransfer || 0;
+            });
+            return Object.values(m).sort((a, b) => a.date.localeCompare(b.date));
+        };
+
+        // Per-route rows (origin → destination × trips/liters/baht), sorted by trip count desc.
+        const computeReportRouteRows = (trips) => {
+            const m = {};
+            trips.forEach(t => {
+                const k = `${t.origin || '?'} → ${t.destination || '?'}`;
+                if (!m[k]) m[k] = { route: k, count: 0, liters: 0, baht: 0 };
+                const r = m[k]; r.count++; r.liters += t.totalLiters || 0; r.baht += t.totalBaht || 0;
+            });
+            return Object.values(m).sort((a, b) => b.count - a.count);
+        };
+
+        // Per-station rows (times refueled / liters / baht), sorted by liters desc.
+        const computeReportStationRows = (trips) => {
+            const m = {};
+            const touch = (k) => { if (!m[k]) m[k] = { key: k, count: 0, liters: 0, baht: 0 }; return m[k]; };
+            trips.forEach(t => {
+                new Set([...Object.keys(t.gasStationsLiters || {}), ...Object.keys(t.gasStationsBaht || {})]).forEach(k => touch(k).count++);
+                Object.entries(t.gasStationsLiters || {}).forEach(([k, v]) => { touch(k).liters += v; });
+                Object.entries(t.gasStationsBaht || {}).forEach(([k, v]) => { touch(k).baht += v; });
+            });
+            return Object.values(m).map(r => ({ ...r, name: logisticsService.getFriendlyGasStationName(r.key) })).sort((a, b) => b.liters - a.liters);
+        };
+
+        // Per-driver rows (queues/liters/revenue/allowance/net), sorted by net desc.
+        const computeReportDriverRows = (trips) => {
+            const m = {};
+            trips.forEach(t => {
+                const k = t.driver || '(ไม่ระบุ)';
+                if (!m[k]) m[k] = { driver: k, count: 0, liters: 0, revenue: 0, allowance: 0, net: 0 };
+                const r = m[k]; r.count++; r.liters += t.totalLiters || 0;
+                r.revenue += t.revenue || 0; r.allowance += t.driverAllowance || 0; r.net += t.netTransfer || 0;
+            });
+            return Object.values(m).sort((a, b) => b.net - a.net);
+        };
+
+        // Sort rows by the active sort state for a table (falls back to the provided default).
+        const sortReportRows = (tableId, headers, rows, def) => {
+            const s = appState.reportsState.sorts[tableId] || def;
+            if (!s || !s.key) return rows;
+            const h = headers.find(x => x.key === s.key);
+            const val = (r) => (h && h.sortVal) ? h.sortVal(r) : r[s.key];
+            const dir = s.dir === 'asc' ? 1 : -1;
+            return [...rows].sort((a, b) => {
+                const va = val(a), vb = val(b);
+                if (typeof va === 'number' && typeof vb === 'number') return (va - vb) * dir;
+                return String(va).localeCompare(String(vb), 'th') * dir;
+            });
+        };
+
+        // Generic SORTABLE report-table renderer.
+        //   tableId: unique id used for sort state + click routing
+        //   headers: [{label, key, fmt?(row), cls?, sortVal?(row)}] — first column is left-aligned text
+        //   def: default sort {key, dir}; totalRow: optional array of pre-formatted footer cells
+        const reportTable = (tableId, headers, rows, def, totalRow) => {
+            const s = appState.reportsState.sorts[tableId] || def || {};
+            const sorted = sortReportRows(tableId, headers, rows, def);
+            const arrow = (h) => s.key === h.key ? (s.dir === 'asc' ? ' ▲' : ' ▼') : '';
+            return `
+            <div class="overflow-x-auto max-h-[440px] rounded-lg border border-slate-700">
+                <table class="w-full text-sm text-left">
+                    <thead class="bg-slate-800 text-gray-400 uppercase sticky top-0 z-10"><tr>
+                        ${headers.map((h, i) => `<th data-sort-table="${tableId}" data-sort-key="${h.key}" class="p-2 ${i === 0 ? '' : 'text-right'} whitespace-nowrap cursor-pointer select-none hover:text-white">${h.label}${arrow(h)}</th>`).join('')}
+                    </tr></thead>
+                    <tbody>
+                        ${sorted.length ? sorted.map(r => `<tr class="border-b border-slate-700/50 hover:bg-slate-700/20">
+                            ${headers.map((h, i) => `<td class="p-2 ${i === 0 ? 'whitespace-nowrap' : 'text-right font-mono'} ${h.cls || ''}">${h.fmt ? h.fmt(r) : (r[h.key] || 0).toLocaleString()}</td>`).join('')}
+                        </tr>`).join('') : `<tr><td colspan="${headers.length}" class="text-center py-6 text-gray-500">ไม่มีข้อมูล</td></tr>`}
+                    </tbody>
+                    ${totalRow ? `<tfoot class="bg-slate-800 font-bold text-white sticky bottom-0"><tr>${totalRow.map((c, i) => `<td class="p-2 ${i === 0 ? '' : 'text-right font-mono'}">${c}</td>`).join('')}</tr></tfoot>` : ''}
+                </table>
+            </div>`;
+        };
+
+        const handleReportsExport = () => {
+            const trips = logisticsService.getTrips();
+            if (!trips.length) { alert('ไม่มีข้อมูลให้ export'); return; }
+            const total = (rows, f) => rows.reduce((s, r) => s + (r[f] || 0), 0);
+            const wb = XLSX.utils.book_new();
+            const addSheet = (name, header, rows, cols, totalRow) => {
+                const aoa = [header, ...rows];
+                if (totalRow) aoa.push(totalRow);
+                const ws = XLSX.utils.aoa_to_sheet(aoa);
+                if (cols) ws['!cols'] = cols;
+                XLSX.utils.book_append_sheet(wb, ws, name);
+            };
+
+            // 1) รายวัน
+            const daily = computeReportDailyRows(trips);
+            addSheet('สรุปรายวัน',
+                ['วันที่', 'จำนวนคิว', 'น้ำมัน (ลิตร)', 'น้ำมัน (บาท)', 'รายรับ', 'สุทธิโอน'],
+                daily.map(r => [r.date, r.count, r.liters, r.baht, r.revenue, r.net]),
+                [{ wch: 14 }, { wch: 10 }, { wch: 13 }, { wch: 13 }, { wch: 12 }, { wch: 12 }],
+                ['รวม', trips.length, total(daily, 'liters'), total(daily, 'baht'), total(daily, 'revenue'), total(daily, 'net')]);
+
+            // 2) รายเส้นทาง
+            const routes = computeReportRouteRows(trips);
+            addSheet('รายเส้นทาง',
+                ['เส้นทาง', 'เที่ยว', 'ลิตรรวม', 'ลิตร/เที่ยว', 'บาท'],
+                routes.map(r => [r.route, r.count, r.liters, +(r.count ? r.liters / r.count : 0).toFixed(1), r.baht]),
+                [{ wch: 40 }, { wch: 8 }, { wch: 12 }, { wch: 12 }, { wch: 12 }]);
+
+            // 3) รายปั๊ม
+            const stations = computeReportStationRows(trips);
+            addSheet('รายปั๊ม',
+                ['ปั๊ม', 'จำนวนครั้ง', 'ลิตร', 'บาท'],
+                stations.map(r => [r.name, r.count, r.liters, r.baht]),
+                [{ wch: 28 }, { wch: 12 }, { wch: 12 }, { wch: 12 }]);
+
+            // 4) รายคนขับ
+            const drivers = computeReportDriverRows(trips);
+            addSheet('รายคนขับ',
+                ['คนขับ', 'คิว', 'ลิตร', 'รายรับ', 'เบี้ยเลี้ยง', 'สุทธิโอน'],
+                drivers.map(r => [r.driver, r.count, r.liters, r.revenue, r.allowance, r.net]),
+                [{ wch: 22 }, { wch: 8 }, { wch: 10 }, { wch: 12 }, { wch: 12 }, { wch: 12 }]);
+
+            XLSX.writeFile(wb, `รายงานสรุป_${appState.tripsMonth || localDateStr().slice(0, 7)}.xlsx`);
+        };
+        // Enumerate 'YYYY-MM' months inclusive between two (capped so a bad range can't loop forever).
+        const monthRange = (from, to) => {
+            const out = [];
+            let [y, m] = from.split('-').map(Number);
+            const [ty, tm] = to.split('-').map(Number);
+            if (!y || !ty || y > ty || (y === ty && m > tm)) return [];
+            while ((y < ty || (y === ty && m <= tm)) && out.length < 36) {
+                out.push(`${y}-${String(m).padStart(2, '0')}`);
+                m++; if (m > 12) { m = 1; y++; }
+            }
+            return out;
+        };
+
+        const handleReportsCompare = async () => {
+            const from = document.getElementById('cmp-from')?.value;
+            const to = document.getElementById('cmp-to')?.value;
+            if (!from || !to) { alert('เลือกช่วงเดือน (ตั้งแต่/ถึง) ก่อน'); return; }
+            const months = monthRange(from, to);
+            if (!months.length) { alert('ช่วงเดือนไม่ถูกต้อง (เดือนเริ่มต้องไม่เกินเดือนสิ้นสุด)'); return; }
+            const rs = appState.reportsState;
+            rs.compare = { from, to, data: null, loading: true };
+            rerenderReportsContent();
+            try {
+                const data = await logisticsService.getMonthlySummaries(months);
+                rs.compare = { from, to, data, loading: false };
+            } catch (err) {
+                console.error('Compare load failed:', err);
+                alert('โหลดข้อมูลเปรียบเทียบไม่สำเร็จ: ' + (err?.message || err));
+                rs.compare = { from, to, data: [], loading: false };
+            }
+            rerenderReportsContent();
+        };
+
+        // Re-render only the reports content region + re-bind its inner controls (fast; no full app render).
+        const rerenderReportsContent = () => {
+            const c = document.getElementById('reports-content');
+            if (!c) return;
+            c.innerHTML = renderReportsContent();
+            attachReportsContentListeners();
+        };
+
+        // Binds all controls INSIDE #reports-content (filters, view toggle, sort headers, export, compare).
+        const attachReportsContentListeners = () => {
+            const rs = appState.reportsState;
+            document.getElementById('rep-f-direction')?.addEventListener('change', (e) => { rs.fDirection = e.target.value; rerenderReportsContent(); });
+            document.getElementById('rep-f-drive')?.addEventListener('change', (e) => { rs.fDrive = e.target.value; rerenderReportsContent(); });
+            document.getElementById('rep-f-driver')?.addEventListener('input', (e) => {
+                rs.fDriver = e.target.value; rerenderReportsContent();
+                const el = document.getElementById('rep-f-driver'); if (el) { el.focus(); el.setSelectionRange(el.value.length, el.value.length); }
+            });
+            document.querySelectorAll('[data-report-view]').forEach(b => b.addEventListener('click', () => { rs.view = b.dataset.reportView; rerenderReportsContent(); }));
+            document.querySelectorAll('[data-sort-table]').forEach(th => th.addEventListener('click', () => {
+                const id = th.dataset.sortTable, key = th.dataset.sortKey;
+                const cur = rs.sorts[id];
+                rs.sorts[id] = (cur && cur.key === key) ? { key, dir: cur.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: 'desc' };
+                rerenderReportsContent();
+            }));
+            document.getElementById('reports-export-btn')?.addEventListener('click', handleReportsExport);
+            document.getElementById('cmp-load')?.addEventListener('click', handleReportsCompare);
+        };
+
         const attachReportsListeners = () => {
             const monthInput = document.getElementById('reports-month');
             const target = appState.tripsMonth || (monthInput ? monthInput.value : '');
             if (target && appState.tripsMonth !== target) logisticsService.loadTripsForMonth(target);
             monthInput?.addEventListener('change', (e) => logisticsService.loadTripsForMonth(e.target.value));
+            attachReportsContentListeners();
         };
 
         const renderVehicleManagementContent = () => {

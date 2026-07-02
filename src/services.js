@@ -35,6 +35,15 @@ export let appState = {
                 dateFrom: '',
                 dateTo: '',
             },
+            // Reports-specific state (view toggle / filters / per-table sort / cross-month compare)
+            reportsState: {
+                view: 'both',        // 'charts' | 'tables' | 'both'
+                fDirection: '',
+                fDrive: '',          // '', 'รถบริษัท', 'รถร่วม'
+                fDriver: '',
+                sorts: {},           // tableId -> { key, dir: 'asc'|'desc' }
+                compare: { from: '', to: '', data: null, loading: false },
+            },
             // Data Management-specific state
             dataManagementFilter: '',
             vehicleManagementFilter: '',
@@ -1055,6 +1064,24 @@ export let appState = {
                 });
             },
             getTrips: () => [...appState.trips],
+            // One-off aggregate read for cross-month comparison (does NOT touch the live month listener).
+            // Returns [{ month, count, liters, baht, revenue, net }] for each requested YYYY-MM.
+            getMonthlySummaries: async (months) => {
+                const out = [];
+                for (const ym of months) {
+                    const snap = await database.ref(`trips/${ym}`).once('value');
+                    const t = Object.values(snap.val() || {});
+                    out.push({
+                        month: ym,
+                        count: t.length,
+                        liters: t.reduce((s, x) => s + (x.totalLiters || 0), 0),
+                        baht: t.reduce((s, x) => s + (x.totalBaht || 0), 0),
+                        revenue: t.reduce((s, x) => s + (x.revenue || 0), 0),
+                        net: t.reduce((s, x) => s + (x.netTransfer || 0), 0),
+                    });
+                }
+                return out;
+            },
             addTrip: (ym, trip) => database.ref(`trips/${ym}`).push(trip),
             updateTrip: (ym, id, data) => database.ref(`trips/${ym}/${id}`).set(data),
             deleteTrip: (ym, id) => database.ref(`trips/${ym}/${id}`).remove(),

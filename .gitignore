@@ -32,3 +32,6 @@ Excel/
 
 # Temp / scratch scripts
 _*.mjs
+
+# Data backups (contain trip/driver data — keep out of the public repo)
+trips-backup-*.json
