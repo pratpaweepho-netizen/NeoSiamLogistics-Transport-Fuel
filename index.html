@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ระบบติดตามน้ำมันโลจิสติกส์</title>
+    <!-- Tailwind, Firebase and XLSX are now bundled via npm/Vite (see src/app.js) — no CDN. -->
+</head>
+<body class="bg-base-100 text-gray-300 font-sans">
+    <!-- Loading overlay: shown until the first batch of data arrives from Firebase -->
+    <div id="loading-overlay" class="fixed inset-0 z-[60] flex flex-col items-center justify-center bg-base-100 transition-opacity duration-300">
+        <div class="w-14 h-14 border-4 border-slate-600 border-t-accent rounded-full animate-spin"></div>
+        <p class="mt-4 text-gray-400 text-lg">กำลังโหลดข้อมูล...</p>
+    </div>
+    <div id="app-container">
+        <!-- App will be rendered here -->
+    </div>
+
+    <script type="module" src="/src/app.js?v=phase2"></script>
+</body>
+</html>
