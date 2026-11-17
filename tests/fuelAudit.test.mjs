@@ -80,7 +80,35 @@ eq('old table difference flagged', dropStd[0].flags.some(f => f.includes('120') 
 const ctxDrop = buildAuditContext([...standards, ...dropStd], vehicles);
 const drop = auditTrip(trip({ destination: 'แม่สอด', jobDetail: 'แม่ตรงร้าน วาไรตี้/ ตัดลูก กพ  ลนต.', gasStationsLiters: { jittamas_bangpain: 150, daopaisan_nakhonsawan: 80 } }), ctxDrop);
 eq('trailer-drop trip → manual check with total', [drop.status, drop.expectedTotal, drop.diff], ['manual', 210, 20]);
-eq('drop at Nakhon Sawan is not a KPP drop', auditTrip(trip({ jobDetail: 'แม่ กพ /ตัดลูก นว', gasStationsLiters: { jittamas_bangpain: 80 } }), ctxDrop).status, 'ok');
+eq('drop at Nakhon Sawan is not a KPP drop', auditTrip(trip({ jobDetail: 'แม่ กพ /ตัดลูก นว', gasStationsLiters: { jittamas_bangpain: 80 } }), ctxDrop).status !== 'manual', true);
+// User rule 17 Nov 2026: trailer dropped at นว → head (10-wheeler) rate uphill, towing rate downhill.
+const nswStd = [
+    { cls: '10W', origin: 'กรุงเทพ', destination: 'กำแพงเพชร', variant: 'standard', up: { jittamas_bangpain: 50 }, down: 120, downVictor: 120, flags: [] },
+    { cls: '18W', origin: 'กรุงเทพ', destination: 'กำแพงเพชร', variant: 'standard', up: { jittamas_bangpain: 80 }, down: 180, downVictor: 190, flags: [] },
+];
+const ctxNsw = buildAuditContext(nswStd, [{ registrationNumber: '70-8901-8158', vehicleType: '18W', driveType: 'รถบริษัท' }]);
+const nsw = (L, job = 'แม่ กพ /ตัดลูก นว ตัดลูกนว.') => auditTrip({ direction: 'ขาขึ้น', origin: 'สหพัฒน์', plate: '70-8901-8158', destination: 'กำแพงเพชร', jobDetail: job, gasStationsLiters: L }, ctxNsw);
+eq('NSW drop: 10W uphill + towing downhill = ok', [nsw({ jittamas_bangpain: 50, daopaisan_nakhonsawan: 180 }).status, nsw({ jittamas_bangpain: 50, daopaisan_nakhonsawan: 180 }).expectedTotal], ['ok', 230]);
+eq('NSW drop typo "ตักลูกนว." recognised', nsw({ jittamas_bangpain: 50, daopaisan_nakhonsawan: 180 }, 'ตักลูกนว.').status, 'ok');
+// review fixes for the NSW rule
+const ctxNsw2 = buildAuditContext([...nswStd,
+    { cls: '18W', origin: 'กรุงเทพ', destination: 'นครสวรรค์', variant: 'standard', up: {}, down: 180, downVictor: 190, flags: [] },
+    { cls: '18W', origin: 'กรุงเทพ', destination: 'พิษณุโลก', variant: 'standard', up: { jittamas_bangpain: 80 }, down: 180, downVictor: 190, flags: [] }],
+    [{ registrationNumber: '70-8901', vehicleType: '10W', driveType: 'รถบริษัท' }, { registrationNumber: '70-8901-8158', vehicleType: '18W', driveType: 'รถบริษัท', model: 'victor' }]);
+const n2 = (o) => auditTrip({ direction: 'ขาขึ้น', origin: 'HiQ', plate: '70-8901-8158', jobDetail: 'ตัดลูก นว', gasStationsLiters: {}, ...o }, ctxNsw2);
+eq('NSW drop, no 10W rate for the route → towing rate with a note', [n2({ destination: 'พิษณุโลก', gasStationsLiters: { jittamas_bangpain: 80 } }).status, n2({ destination: 'พิษณุโลก', gasStationsLiters: { jittamas_bangpain: 80 } }).flags.some(f => f.includes('ใช้อัตรา'))], ['ok', true]);
+eq('destination นครสวรรค์ itself → no drop rule', n2({ destination: 'นครสวรรค์', gasStationsLiters: { daopaisan_nakhonsawan: 190 } }).status, 'ok');
+eq('head-only plate on NSW drop uses the pair (victor 190 downhill)', auditTrip({ direction: 'ขาขึ้น', origin: 'HiQ', plate: '70-8901', jobDetail: 'ตัดลูกนว.', destination: 'กำแพงเพชร', gasStationsLiters: { jittamas_bangpain: 50, daopaisan_nakhonsawan: 190 } }, ctxNsw2).status, 'ok');
+eq('"ลูกนวล" is not a drop', auditTrip({ direction: 'ขาขึ้น', origin: 'HiQ', plate: '70-8901-8158', jobDetail: 'ส่งร้านลูกนวล', destination: 'กำแพงเพชร', gasStationsLiters: { jittamas_bangpain: 80, daopaisan_nakhonsawan: 190 } }, ctxNsw2).rateCls, undefined);
+eq('fallback to towing rate shows the class used', n2({ destination: 'พิษณุโลก', gasStationsLiters: { jittamas_bangpain: 80 } }).rateCls, '18W');
+// Codex P2: route has a 10W row but no 18W row → downhill must not borrow the 18W class-wide default.
+const ctxNsw3 = buildAuditContext([...nswStd,
+    { cls: '10W', origin: 'กรุงเทพ', destination: 'ตาก', variant: 'standard', up: { jittamas_bangpain: 60 }, down: 120, downVictor: 120, flags: [] }],
+    [{ registrationNumber: '70-8901-8158', vehicleType: '18W', driveType: 'รถบริษัท' }]);
+const n3 = auditTrip({ direction: 'ขาขึ้น', origin: 'HiQ', plate: '70-8901-8158', jobDetail: 'ตัดลูกนว.', destination: 'ตาก', gasStationsLiters: { jittamas_bangpain: 60, daopaisan_nakhonsawan: 170 } }, ctxNsw3);
+eq('NSW drop, no towing row for the route → downhill not checked, no class default', [n3.expectedTotal, n3.flags.some(f => f.includes('ไม่ได้ตรวจขาล่อง'))], [60, true]);
+eq('typo นครสรรค์ is a drop', n2({ jobDetail: 'ตัดลูก นครสรรค์', destination: 'กำแพงเพชร', gasStationsLiters: { jittamas_bangpain: 50, daopaisan_nakhonsawan: 190 } }).status, 'ok');
+eq('no drop: full trailer rate', auditTrip({ direction: 'ขาขึ้น', origin: 'สหพัฒน์', plate: '70-8901-8158', destination: 'กำแพงเพชร', gasStationsLiters: { jittamas_bangpain: 50, daopaisan_nakhonsawan: 180 } }, ctxNsw).status, 'under');
 
 // --- liters carried to the driver's next trip (like TMS) ---
 const seq = [

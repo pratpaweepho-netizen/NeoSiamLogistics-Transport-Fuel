@@ -191,7 +191,15 @@ function parseTrailerDropSheet(sheet, rows, startRow) {
     return out;
 }
 
+const tripNoteText = (trip) => `${clean(trip.jobDetail)} ${clean(trip.notes)} ${clean(trip.queueType)}`;
 const DROP_AT_KPP = /(ตัดลูก|ถอดหาง|ตัดหาง)\s*(ที่)?\s*(กพ|กำแพง)/;
+// "ตัดลูกนว.", "ตัด นว", "ลูกนว.", "ตัวลูกนครสวรรค์", typos "ตักลูกนว." / "นครสรรค์" — trailer left at Nakhon Sawan.
+// "นว" must not run on into another Thai letter ("ลูกนวล" is a name, "ตัดนวม" a word).
+const NSW_WORD = '(?:นว(?![ก-ฮ])|นครสวรรค์|นครสรรค์|นคสวรรค์)';
+const DROP_AT_NSW = new RegExp(`(?:ตัด|ตัก|ถอด)\\s*(?:ลูก|หาง)?\\s*(?:ที่)?\\s*${NSW_WORD}|ลูก\\s*${NSW_WORD}`);
+const isDropAtNsw = (trip) => DROP_AT_NSW.test(tripNoteText(trip));
+const HEAD_OF = { '18W': '10W', '6W_BOX': '6W' }; // towing class → its head running alone
+const TOW_OF = { '10W': '18W', '6W': '6W_BOX' };  // head → towing class
 
 // The same downhill fill must not be counted twice: once on the uphill board row and again on the
 // คิวขาล่อง trip. Flag a downhill trip when the same driver's uphill trip in the 5 days before already
@@ -341,11 +349,18 @@ function auditDownhillTrip(trip, ctx, tolerance, actual, actualTotal, vc, baht, 
 // if the fill matches the trailer (พ่วง) rate in total but not the solo rate, the trailer was most likely
 // just left off the board — use the trailer rate and say so.
 export function auditTrip(trip, ctx, tolerance = 0) {
-    const first = auditTripAs(trip, ctx, tolerance, null);
     const { towOption } = vehicleForPlate(trip.plate, ctx);
-    if (!first || !towOption || first.leg === 'down' || first.status === 'no-rate' || first.status === 'manual') return first;
+    const dropNsw = clean(trip.direction) === 'ขาขึ้น' && isDropAtNsw(trip);
+    // A trailer was dropped, so the truck WAS towing: judge it as its head+trailer pair (keeps e.g. a victor model).
+    if (dropNsw && towOption) {
+        const r = auditTripAs(trip, ctx, tolerance, towOption, true);
+        if (r) r.flags = r.flags.filter(f => !f.startsWith('หัวนี้มีหางพ่วง'));
+        return r;
+    }
+    const first = auditTripAs(trip, ctx, tolerance, null, dropNsw);
+    if (!first || !towOption || first.leg === 'down' || first.status === 'no-rate' || first.status === 'manual' || dropNsw) return first;
     if (Math.abs(first.diff) <= tolerance) return first;
-    const towed = auditTripAs(trip, ctx, tolerance, towOption);
+    const towed = auditTripAs(trip, ctx, tolerance, towOption, false);
     if (towed && towed.status !== 'no-rate' && Math.abs(towed.diff) <= tolerance) {
         towed.flags = [`กระดานคิวเขียนแค่ทะเบียนหัว แต่ลิตรรวมตรงกับอัตรา${AUDIT_CLASSES[towed.cls] || ''}ของ ${towOption.registrationNumber} — ตรวจแบบลากหาง (ควรเขียนเลขหางในกระดาน)`,
             ...towed.flags.filter(f => !f.startsWith('หัวนี้มีหางพ่วง'))];
@@ -354,7 +369,7 @@ export function auditTrip(trip, ctx, tolerance = 0) {
     return first;
 }
 
-function auditTripAs(trip, ctx, tolerance, forcedVehicle) {
+function auditTripAs(trip, ctx, tolerance, forcedVehicle, dropNswIn) {
     const dir = clean(trip.direction);
     if (dir !== 'ขาขึ้น' && dir !== 'ขาล่อง') return null;
     const actual = { ...(trip.gasStationsLiters || {}) };
@@ -374,7 +389,7 @@ function auditTripAs(trip, ctx, tolerance, forcedVehicle) {
     if (bahtTotal) base.flags.push(`เติมเป็นเงิน ${bahtTotal.toLocaleString()} บาท (ไม่มีอัตราเป็นเงิน)`);
     const none = (reason) => ({ ...base, status: 'no-rate', reason, diff: 0, expected: {}, expectedTotal: 0, downStatus: '' });
     // Trailer left at Kamphaeng Phet: the special table has total liters only (no pump) → manual check.
-    if (DROP_AT_KPP.test(`${clean(trip.jobDetail)} ${clean(trip.notes)} ${clean(trip.queueType)}`)) {
+    if (DROP_AT_KPP.test(tripNoteText(trip))) {
         const d = ctx.drop?.[destination];
         // The drop table has no downhill figure, but the ไพศาล downhill fill is often written on this trip —
         // name it so a normal downhill fill is not read as an overfill.
@@ -388,11 +403,33 @@ function auditTripAs(trip, ctx, tolerance, forcedVehicle) {
     if (!vc.cls) return none(vc.reason);
     if (!origin) return none(`ต้นทาง "${clean(trip.origin)}" เป็นสาขาอื่น (ตารางมีแค่ กรุงเทพ / นครสวรรค์)`);
     if (!destination) return none(`ปลายทาง "${clean(trip.destination) || '-'}" ไม่อยู่ในตารางอัตรา`);
-    const pick = (variant) => ctx.std[`${vc.cls}|${origin}|${destination}|${variant}`];
-    const s = (vc.model === 'sino' && pick('sino')) || pick('standard');
-    if (!s) return none(`ไม่มีอัตรา ${AUDIT_CLASSES[vc.cls]} ${origin} → ${destination}`);
+    // Trailer dropped at Nakhon Sawan (user rule, 17 Nov 2026): the head runs on alone at its own rate — a พ่วง's
+    // head is a 10-wheeler, a 6-wheel box trailer's head a 6-wheeler — and comes back towing the trailer, so
+    // the downhill fill follows the towing rate (seen on real trips: จิตตมาศ 50 + ไพศาล 180 to กำแพงเพชร).
+    // Not when the trip ends at นครสวรรค์ itself: the trailer was towed the whole way.
+    const pick = (cls, variant) => ctx.std[`${cls}|${origin}|${destination}|${variant}`];
+    const pickV = (cls) => (vc.model === 'sino' && pick(cls, 'sino')) || pick(cls, 'standard');
+    let dropNsw = !!dropNswIn && destination !== 'นครสวรรค์' && (vc.cls in HEAD_OF || vc.cls in TOW_OF);
+    let upCls = dropNsw ? (HEAD_OF[vc.cls] || vc.cls) : vc.cls;
+    const downCls = dropNsw ? (TOW_OF[upCls] || vc.cls) : vc.cls;
+    if (dropNsw && !pickV(upCls)) {
+        // No head-alone rate for this route → fall back to the towing rate, and say so.
+        base.flags.push(`ตัดหางที่นครสวรรค์ แต่ตารางไม่มีอัตรา${AUDIT_CLASSES[upCls]}ไป ${destination} — ใช้อัตรา${AUDIT_CLASSES[downCls]}แทน`);
+        dropNsw = false; upCls = downCls; base.rateCls = downCls;
+    }
+    const s = pickV(upCls);
+    if (!s) return none(`ไม่มีอัตรา ${AUDIT_CLASSES[upCls]} ${origin} → ${destination}`);
+    // Downhill comes from the towing class's row for THIS route only — a class-wide default may not match
+    // the route, so when the row is missing the downhill fill is left unchecked (and the note says so).
+    const sDown = upCls === downCls ? s : (pickV(downCls) || { down: 0, downVictor: 0 });
+    if (dropNsw) {
+        base.rateCls = upCls;
+        base.flags.push(sDown.down
+            ? `ตัดหางที่นครสวรรค์ — ขาขึ้นคิดอัตรา${AUDIT_CLASSES[upCls]} (ตัวแม่) ขาล่องคิดอัตรา${AUDIT_CLASSES[downCls]} (ลากหางกลับ)`
+            : `ตัดหางที่นครสวรรค์ — ขาขึ้นคิดอัตรา${AUDIT_CLASSES[upCls]} (ตัวแม่) · ไม่มีอัตราขาล่องของ${AUDIT_CLASSES[downCls]} จึงไม่ได้ตรวจขาล่อง`);
+    }
 
-    const down = vc.model === 'victor' ? s.downVictor : s.down;
+    const down = vc.model === 'victor' ? sDown.downVictor : sDown.down;
     const expected = { ...s.up };
     // The downhill ไพศาล fill is often written on the uphill trip, but not always. Assume whichever reading
     // (downhill included or not) is closer to what was filled at ไพศาล, so an uphill overfill there is not

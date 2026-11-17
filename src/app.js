@@ -1870,7 +1870,7 @@ const formatZeroAsEmpty = (value) => {
                     <td class="p-2 whitespace-nowrap">${esc(r.trip.date)}</td>
                     <td class="p-2 whitespace-nowrap">${esc(r.trip.driver)}</td>
                     <td class="p-2 whitespace-nowrap font-mono text-xs">${esc(r.trip.plate)}</td>
-                    <td class="p-2 whitespace-nowrap">${r.cls ? esc(AUDIT_CLASSES[r.cls]) : '-'}${r.model ? ` <span class="text-xs text-indigo-300">${esc(r.model)}</span>` : ''}</td>
+                    <td class="p-2 whitespace-nowrap">${r.cls ? esc(AUDIT_CLASSES[r.cls]) : '-'}${r.rateCls && r.rateCls !== r.cls ? `<div class="text-xs text-sky-300">ตัดหาง นว. → คิด${esc(AUDIT_CLASSES[r.rateCls])}</div>` : ''}${r.model ? ` <span class="text-xs text-indigo-300">${esc(r.model)}</span>` : ''}</td>
                     <td class="p-2">${r.leg === 'down' ? '<span class="px-1.5 py-0.5 rounded text-xs bg-teal-700 text-white">ขาล่อง</span> ' : ''}${esc(r.trip.origin)} → ${esc(r.trip.destination)}</td>
                     <td class="p-2">${fmtPumps(r.actual)}</td>
                     <td class="p-2">${r.status === 'no-rate' ? '-' : r.status === 'manual' ? (r.expectedTotal ? `รวม ${r.expectedTotal.toLocaleString()}` : '-') : fmtPumps(r.expected)}</td>
@@ -2003,7 +2003,7 @@ const formatZeroAsEmpty = (value) => {
                 ['วันที่', 'ทิศทาง', 'คนขับ', 'ทะเบียน', 'ประเภทรถ', 'รุ่น', 'ต้นทาง', 'ปลายทาง', 'ผล', 'เติมจริงรวม (ลิตร)', 'ตามอัตรารวม (ลิตร)', 'ต่าง (ลิตร)',
                     ...pumps.flatMap(p => [`${pumpName(p)} จริง`, `${pumpName(p)} อัตรา`]), 'เติมเป็นเงิน (บาท)',
                     'ขาล่องไพศาล อัตรา', 'ขาล่องไพศาล บันทึก', 'ขาล่อง ผล', 'ลิตรยกมา', 'ควรเติม (หลังหักยกมา)', 'ลิตรยกไป', 'หมายเหตุ'],
-                all.map(r => [r.trip.date, r.leg === 'down' ? 'ขาล่อง' : 'ขาขึ้น', r.trip.driver, r.trip.plate, r.cls ? AUDIT_CLASSES[r.cls] : '', r.model, r.trip.origin, r.trip.destination,
+                all.map(r => [r.trip.date, r.leg === 'down' ? 'ขาล่อง' : 'ขาขึ้น', r.trip.driver, r.trip.plate, r.cls ? AUDIT_CLASSES[r.cls] + (r.rateCls && r.rateCls !== r.cls ? ` (ตัดหาง นว. คิด${AUDIT_CLASSES[r.rateCls]})` : '') : '', r.model, r.trip.origin, r.trip.destination,
                     AUDIT_STATUS[r.status].label, n(r.actualTotal), r.status === 'no-rate' ? '' : n(r.expectedTotal), r.status === 'no-rate' ? '' : r.diff,
                     ...pumps.flatMap(p => [n(r.actual[p]), r.status === 'no-rate' ? '' : n((r.expected || {})[p])]), n(r.bahtTotal),
                     n(r.down), r.downStatus && r.downStatus !== 'missing' ? r.downActual : '', r.downStatus ? DOWN_STATUS[r.downStatus].label : '',
