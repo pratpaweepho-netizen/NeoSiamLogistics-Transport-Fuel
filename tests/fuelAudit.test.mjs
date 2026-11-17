@@ -1,5 +1,5 @@
 // Run: node tests/fuelAudit.test.mjs   (no network, no Excel file needed)
-import { parseRateSheet, buildAuditContext, auditTrip, canonDestination } from '../src/fuelAudit.js';
+import { parseRateSheet, buildAuditContext, auditTrip, canonDestination, applyCarry } from '../src/fuelAudit.js';
 
 let fail = 0;
 const eq = (name, a, b) => {
@@ -59,6 +59,57 @@ eq('unknown plate → no-rate', run({ plate: '99-0000', gasStationsLiters: { jit
 eq('destination outside sheet → no-rate', run({ destination: 'สาย 3', gasStationsLiters: { jittamas_bangpain: 80 } }).status, 'no-rate');
 eq('NSW branch origin', run({ origin: 'ย่อย นว', destination: 'กำแพงเพชร', gasStationsLiters: { nissan_singburi: 80 } }).origin, 'นครสวรรค์');
 eq('other branch origin → no-rate', run({ origin: 'สาขา ชม', gasStationsLiters: { jittamas_bangpain: 80 } }).status, 'no-rate');
+
+// --- downhill (ขาล่อง ไพศาล written on the uphill trip) ---
+eq('downhill recorded ok', run({ gasStationsLiters: { jittamas_bangpain: 80, daopaisan_nakhonsawan: 180 } }).downStatus, 'ok');
+eq('downhill not recorded', run({ gasStationsLiters: { jittamas_bangpain: 80 } }).downStatus, 'missing');
+const dOver = run({ gasStationsLiters: { jittamas_bangpain: 80, daopaisan_nakhonsawan: 200 } });
+eq('downhill over', [dOver.downStatus, dOver.downActual, dOver.down], ['over', 200, 180]);
+
+// --- trailer left at Kamphaeng Phet (sheet "ถอดหางกำแพงเพชร") ---
+const dropSheet = [
+    [], ['', '', '', '', 'แบบปัจจุบัน (เริ่ม 7 เม.ย. 69)'],
+    ['', 'ต้นทาง', 'ปลายทาง', 'จำนวนน้ำมันที่เติม(ลิตร)', 'ประเภทรถ', 'ปลายทาง', 'จำนวน น้ำมัน (ลิตร)', 'เบี้ยขับ'],
+    ['', 'กำแพงเพชร', 'แม่สอด', 120, 'แม่', 'แม่สอด', 130, 500],
+    ['', '', '', '', 'ลูก', 'กำแพงเพชร', 80, 300],
+    ['', '', '', '', '', '', 210, 800],
+];
+const dropStd = parseRateSheet({ 'เหนือ': sheet, 'ถอดหางกำแพงเพชร': dropSheet }).standards.filter(s => s.cls === 'KPP_DROP');
+eq('trailer-drop rows parsed', dropStd.map(s => [s.destination, s.upTotal, s.allowance, s.row]), [['แม่สอด', 210, 800, 4]]);
+eq('old table difference flagged', dropStd[0].flags.some(f => f.includes('120') && f.includes('130')), true);
+const ctxDrop = buildAuditContext([...standards, ...dropStd], vehicles);
+const drop = auditTrip(trip({ destination: 'แม่สอด', jobDetail: 'แม่ตรงร้าน วาไรตี้/ ตัดลูก กพ  ลนต.', gasStationsLiters: { jittamas_bangpain: 150, daopaisan_nakhonsawan: 80 } }), ctxDrop);
+eq('trailer-drop trip → manual check with total', [drop.status, drop.expectedTotal, drop.diff], ['manual', 210, 20]);
+eq('drop at Nakhon Sawan is not a KPP drop', auditTrip(trip({ jobDetail: 'แม่ กพ /ตัดลูก นว', gasStationsLiters: { jittamas_bangpain: 80 } }), ctxDrop).status, 'ok');
+
+// --- liters carried to the driver's next trip (like TMS) ---
+const seq = [
+    run({ date: '2026-11-01', gasStationsLiters: { jittamas_bangpain: 100 } }),               // +20 over
+    run({ date: '2026-11-02', destination: 'สาย 3', gasStationsLiters: { jittamas_bangpain: 50 } }), // no rate: balance unchanged
+    run({ date: '2026-11-03', gasStationsLiters: { jittamas_bangpain: 70 } }),                // allot 80−20=60, filled 70 → carry out 20+70−80 = +10
+    { ...run({ date: '2026-11-04', gasStationsLiters: { jittamas_bangpain: 50 } }), trip: { ...trip({ driver: 'B' }), date: '2026-11-04' } }, // other driver: 50−80 = −30
+    run({ date: '2026-11-05', gasStationsLiters: { jittamas_bangpain: 60 } }),                // allot 80−10=70, filled 60 → 10+60−80 = −10
+];
+seq.forEach((r, i) => { if (i !== 3) r.trip.driver = 'A'; });
+const bal = applyCarry(seq);
+// TMS DriverPayService: carry_out = carry_in + filled − standard; allot = max(0, standard − carry_in)
+eq('carry chain', seq.map(r => [r.carryIn, r.allot, r.carryOut]), [[0, 80, 20], [20, null, 20], [20, 60, 10], [0, 80, -30], [10, 70, -10]]);
+eq('balances per driver', bal, { A: -10, B: -30 });
+
+// --- review fixes ---
+const dropTwice = [...dropSheet,
+    ['', '', '', '', 'ประเภทรถ', 'ปลายทาง', 'จำนวน น้ำมัน (ลิตร)', 'เบี้ยขับ'],
+    ['', '', '', '', 'แม่', 'แม่สอด', 150, 500],
+    ['', '', '', '', 'ลูก', 'กำแพงเพชร', 80, 300]];
+const dupDrop = parseRateSheet({ 'ถอดหางกำแพงเพชร': dropTwice }).standards;
+eq('conflicting drop rows flagged as conflict', dupDrop.every(s => s.flags.some(f => f.startsWith('ขัดกับ'))), true);
+eq('audit uses the first drop row', buildAuditContext(dupDrop, vehicles).drop['แม่สอด'].upTotal, 210);
+const dropPaisan = auditTrip(trip({ destination: 'แม่สอด', jobDetail: 'ตัดลูก กพ', gasStationsLiters: { jittamas_bangpain: 130, daopaisan_nakhonsawan: 260 } }), ctxDrop);
+eq('drop trip names a possible downhill fill', dropPaisan.reason.includes('ไพศาล 260'), true);
+const unnamed = [run({ date: '2026-11-01', driver: '', gasStationsLiters: { jittamas_bangpain: 120 } }), run({ date: '2026-11-02', driver: '  ', gasStationsLiters: { jittamas_bangpain: 80 } })];
+unnamed.forEach(r => { r.trip.driver = r.trip.driver ?? ''; });
+const balU = applyCarry(unnamed);
+eq('unnamed drivers are not pooled', [unnamed.map(r => [r.carryIn, r.carryOut]), balU], [[[null, null], [null, null]], {}]);
 
 console.log(fail ? `FAILED ${fail}` : 'ALL PASS');
 process.exit(fail ? 1 : 0);

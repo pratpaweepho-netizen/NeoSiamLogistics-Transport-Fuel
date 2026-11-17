@@ -8,6 +8,7 @@ export const AUDIT_CLASSES = {
     '18W': 'พ่วง',
     '6W': 'หกล้อ',
     '6W_BOX': 'หกล้อ isuzu + หางตู้',
+    'KPP_DROP': 'ถอดหางที่กำแพงเพชร',
 };
 
 // Rate-sheet pump header fragment → station key used everywhere else in the app.
@@ -78,7 +79,11 @@ export function parseRateSheet(sheets) {
     for (const [sheet, value] of Object.entries(sheets || {})) {
         const rows = Array.isArray(value) ? value : (value?.rows || []);
         const startRow = Array.isArray(value) ? 0 : (value?.startRow || 0);
-        if (!(rows || []).some(r => (r || []).some(c => clean(c) === TOTAL_UP_HEADER))) { skippedSheets.push(sheet); continue; }
+        if (!(rows || []).some(r => (r || []).some(c => clean(c) === TOTAL_UP_HEADER))) {
+            const drop = parseTrailerDropSheet(sheet, rows, startRow);
+            if (drop.length) standards.push(...drop); else skippedSheets.push(sheet);
+            continue;
+        }
         let cls = null, header = null;
         rows.forEach((r, i) => {
             const a = clean(r?.[0]);
@@ -120,7 +125,8 @@ export function parseRateSheet(sheets) {
     for (const s of standards) (byKey[standardKey(s)] ||= []).push(s);
     for (const list of Object.values(byKey)) {
         if (list.length < 2) continue;
-        const same = list.every(s => JSON.stringify(s.up) === JSON.stringify(list[0].up) && s.down === list[0].down && s.downVictor === list[0].downVictor);
+        const sig = (s) => JSON.stringify([s.up, s.down, s.downVictor, s.upTotal, (s.parts || []).map(p => [p.part, p.destination, p.liters, p.allowance])]);
+        const same = list.every(s => sig(s) === sig(list[0]));
         list.forEach((s, n) => {
             s.flags.push(same ? 'แถวซ้ำ (ค่าเท่ากัน)' : `ขัดกับแถว ${list.filter(o => o !== s).map(o => `${o.sheet} แถว ${o.row}`).join(', ')}`);
             if (n > 0) s.duplicateOf = `${list[0].sheet}!${list[0].row}`; // audit uses the first row
@@ -140,6 +146,67 @@ export function parseRateSheet(sheets) {
 }
 
 export const standardKey = (s) => `${s.cls}|${s.origin}|${s.destination}|${s.variant}`;
+
+// Sheet "ถอดหางกำแพงเพชร": the trailer (ลูก) is left at the Kamphaeng Phet branch and the head (แม่) runs on
+// alone. The current table ("แบบปัจจุบัน") has blocks of  ประเภทรถ | ปลายทาง | จำนวน น้ำมัน (ลิตร) | เบี้ยขับ
+// with one แม่ row and one ลูก row each. It gives total liters only — no pump — so trips are flagged for a
+// manual check rather than auto-judged. The older left-hand table is only used to point out differences.
+export const DROP_CLASS = 'KPP_DROP';
+function parseTrailerDropSheet(sheet, rows, startRow) {
+    const out = [], old = {};
+    rows.forEach((r, i) => {
+        (r || []).forEach((cell, c) => {
+            // old table rows: ต้นทาง กำแพงเพชร | ปลายทาง | ลิตร | เบี้ยขับ
+            if (clean(cell) === 'กำแพงเพชร' && typeof r[c + 2] === 'number' && clean(rows[i - 1]?.[c]) !== 'ประเภทรถ' && canonDestination(r[c + 1])) old[canonDestination(r[c + 1])] = r[c + 2];
+            if (clean(cell) !== 'ประเภทรถ' || !clean(r[c + 2]).startsWith('จำนวน')) return;
+            const parts = [];
+            for (let k = i + 1; k < rows.length; k++) {
+                const part = clean(rows[k]?.[c]);
+                if (part !== 'แม่' && part !== 'ลูก') break;
+                parts.push({ part, destination: clean(rows[k][c + 1]), liters: cellLiters(rows[k][c + 2]), allowance: cellLiters(rows[k][c + 3]), row: startRow + k + 1 });
+            }
+            const head = parts.find(p => p.part === 'แม่');
+            if (!head) return;
+            const total = parts.reduce((a, p) => a + p.liters, 0);
+            out.push({
+                cls: DROP_CLASS, origin: '', destination: canonDestination(head.destination), destinationLabel: `${head.destination} (ถอดหางที่กำแพงเพชร)`,
+                variant: 'standard', up: {}, upTotal: total, down: 0, downVictor: 0, parts,
+                allowanceText: parts.map(p => `${p.part} ${p.allowance}`).join(' + '), allowance: parts.reduce((a, p) => a + p.allowance, 0),
+                distance: '', sheet, row: head.row, flags: [],
+            });
+        });
+    });
+    for (const s of out) {
+        const head = s.parts.find(p => p.part === 'แม่');
+        if (old[s.destination] != null && old[s.destination] !== head.liters) s.flags.push(`ตารางเก่าในชีตเดียวกันให้ แม่→${head.destination} ${old[s.destination]} ลิตร แต่ตารางปัจจุบัน ${head.liters} ลิตร`);
+    }
+    return out;
+}
+
+const DROP_AT_KPP = /(ตัดลูก|ถอดหาง|ตัดหาง)\s*(ที่)?\s*(กพ|กำแพง)/;
+
+// Liters carried from trip to trip per driver, like TMS DriverPayService: what a driver filled over (+) or
+// under (−) the rate is set against the next trip that has a rate. results must be in trip order.
+// Adds carryIn / allot / carryOut to each result and returns { [driver]: balance }.
+export function applyCarry(results) {
+    const bal = {};
+    for (const r of results) {
+        const d = clean(r.trip.driver);
+        // No driver name → nobody to carry to; never pool unnamed trips into one balance.
+        if (!d) { r.carryIn = null; r.allot = null; r.carryOut = null; continue; }
+        const before = bal[d] || 0;
+        r.carryIn = before;
+        if (['ok', 'over', 'under', 'wrong-pump'].includes(r.status)) {
+            r.allot = Math.max(0, r.expectedTotal - before);
+            r.carryOut = before + r.actualTotal - r.expectedTotal;
+            bal[d] = r.carryOut;
+        } else {
+            r.allot = null;
+            r.carryOut = before;
+        }
+    }
+    return bal;
+}
 
 // Vehicle master row → { cls, model, partner, ngv } (cls null when no rate class applies).
 export function vehicleClassOf(vehicle) {
@@ -163,12 +230,15 @@ const plateKey = (p) => clean(p).replace(/\s+/g, '').split('-').slice(0, 2).join
 
 // Build lookup tables once per render.
 export function buildAuditContext(standards, vehicles) {
-    const std = {};
-    for (const s of standards || []) if (!s.duplicateOf && s.destination) std[standardKey(s)] = s;
+    const std = {}, drop = {};
+    for (const s of standards || []) {
+        if (s.cls === DROP_CLASS) { if (s.destination && !s.duplicateOf) drop[s.destination] = s; continue; }
+        if (!s.duplicateOf && s.destination) std[standardKey(s)] = s;
+    }
     const veh = {};
     for (const v of vehicles || []) { const k = plateKey(v.registrationNumber); if (k) veh[k] = v; }
     const destinations = new Set((standards || []).map(s => s.destination).filter(Boolean));
-    return { std, veh, destinations };
+    return { std, drop, veh, destinations };
 }
 
 // Audit one trip. Returns null when the trip is out of scope (not uphill, partner truck, no fuel at all).
@@ -185,7 +255,19 @@ export function auditTrip(trip, ctx, tolerance = 0) {
     const origin = canonOrigin(trip.origin);
     const base = { trip, cls: vc.cls, model: vc.model || '', origin, destination, actual, actualTotal, baht, bahtTotal, flags: [] };
     if (bahtTotal) base.flags.push(`เติมเป็นเงิน ${bahtTotal.toLocaleString()} บาท (ไม่มีอัตราเป็นเงิน)`);
-    const none = (reason) => ({ ...base, status: 'no-rate', reason, diff: 0, expected: {}, expectedTotal: 0 });
+    const none = (reason) => ({ ...base, status: 'no-rate', reason, diff: 0, expected: {}, expectedTotal: 0, downStatus: '' });
+    // Trailer left at Kamphaeng Phet: the special table has total liters only (no pump) → manual check.
+    if (DROP_AT_KPP.test(`${clean(trip.jobDetail)} ${clean(trip.notes)} ${clean(trip.queueType)}`)) {
+        const d = ctx.drop?.[destination];
+        // The drop table has no downhill figure, but the ไพศาล downhill fill is often written on this trip —
+        // name it so a normal downhill fill is not read as an overfill.
+        const paisan = Number(actual[PAISAN]) || 0;
+        const paisanNote = paisan ? ` · ในยอดนี้มีปั๊มไพศาล ${paisan} ลิตร ซึ่งอาจเป็นการเติมขาล่อง` : '';
+        const reason = d
+            ? `เที่ยวถอดหางที่กำแพงเพชร — อัตราพิเศษ ${d.parts.map(p => `${p.part}→${p.destination} ${p.liters}`).join(' + ')} = ${d.upTotal} ลิตร (ไม่ระบุปั๊ม ไม่รวมขาล่อง) · เติมจริงรวม ${actualTotal} ลิตร (ต่าง ${actualTotal - d.upTotal > 0 ? '+' : ''}${actualTotal - d.upTotal})${paisanNote}`
+            : `เที่ยวถอดหางที่กำแพงเพชร — ตารางถอดหางไม่มีปลายทาง "${clean(trip.destination) || '-'}" ตรวจกับหัวหน้างาน${paisanNote}`;
+        return { ...base, status: 'manual', reason, diff: d ? actualTotal - d.upTotal : 0, expected: {}, expectedTotal: d ? d.upTotal : 0, downStatus: '' };
+    }
     if (!vc.cls) return none(vc.reason);
     if (!origin) return none(`ต้นทาง "${clean(trip.origin)}" เป็นสาขาอื่น (ตารางมีแค่ กรุงเทพ / นครสวรรค์)`);
     if (!destination) return none(`ปลายทาง "${clean(trip.destination) || '-'}" ไม่อยู่ในตารางอัตรา`);
@@ -218,13 +300,31 @@ export function auditTrip(trip, ctx, tolerance = 0) {
     else if (perPump.some(p => Math.abs(p.diff) > tolerance)) status = 'wrong-pump';
     else status = 'ok';
     if (s.flags.length) base.flags.push(`อัตราแถวนี้มีข้อสังเกต: ${s.flags.join('; ')}`);
-    return { ...base, status, standard: s, expected, expectedTotal, perPump, diff, down, downhillRecorded };
+    // Downhill (ขาล่อง) check: the only downhill liters in the data are the ไพศาล fills written on uphill trips
+    // (the Transport ขาล่อง sheet carries no liters).
+    const downActual = downhillRecorded ? actPaisan - upPaisan : 0;
+    let downStatus = '';
+    if (down) {
+        if (!downhillRecorded) downStatus = 'missing';
+        else if (downActual - down > tolerance) downStatus = 'over';
+        else if (downActual - down < -tolerance) downStatus = 'under';
+        else downStatus = 'ok';
+    }
+    return { ...base, status, standard: s, expected, expectedTotal, perPump, diff, down, downhillRecorded, downActual, downStatus };
 }
+
+export const DOWN_STATUS = {
+    'ok': { label: 'ตรง', cls: 'text-green-400' },
+    'over': { label: 'เกิน', cls: 'text-red-400' },
+    'under': { label: 'ขาด', cls: 'text-amber-300' },
+    'missing': { label: 'ไม่ได้บันทึก', cls: 'text-gray-400' },
+};
 
 export const AUDIT_STATUS = {
     'ok': { label: 'ตรง', cls: 'bg-green-700' },
     'over': { label: 'เติมเกิน', cls: 'bg-red-700' },
     'under': { label: 'เติมขาด', cls: 'bg-amber-700' },
     'wrong-pump': { label: 'ผิดปั๊ม', cls: 'bg-purple-700' },
+    'manual': { label: 'ต้องตรวจเอง', cls: 'bg-sky-700' },
     'no-rate': { label: 'ไม่มีอัตรา', cls: 'bg-slate-600' },
 };

@@ -6,7 +6,7 @@ import { ICONS, GAS_STATION_FRIENDLY_NAMES, ROUTE_STATION_COLUMNS } from "./cons
 import { parseFuelBaseRows } from "./importer.js";
 import { detectSheetType, parseUphillQueue, parseDownhillQueue, parsePartnerQueue, parseDailyRows } from "./importerTrips.js";
 import { parseDrivers, parseRateTable, parseVehicles } from "./importerMasters.js";
-import { parseRateSheet, buildAuditContext, auditTrip, AUDIT_CLASSES, AUDIT_STATUS } from "./fuelAudit.js";
+import { parseRateSheet, buildAuditContext, auditTrip, applyCarry, AUDIT_CLASSES, AUDIT_STATUS, DOWN_STATUS } from "./fuelAudit.js";
 
 const formatZeroAsEmpty = (value) => {
             const num = Number(value);
@@ -489,6 +489,10 @@ const formatZeroAsEmpty = (value) => {
         const esc = (v) => String(v ?? '').replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
         const pumpName = (key) => GAS_STATION_FRIENDLY_NAMES[key] || key;
         const fmtPumps = (obj) => Object.entries(obj || {}).filter(([, v]) => Number(v)).map(([k, v]) => `${esc(pumpName(k))} ${Number(v).toLocaleString()}`).join(' + ') || '-';
+        // A rate's uphill liters; trailer-drop rates have parts (แม่/ลูก) and a total but no pump.
+        const fmtRateUp = (s) => s.parts?.length
+            ? `${s.parts.map(p => `${esc(p.part)}→${esc(p.destination)} ${Number(p.liters).toLocaleString()}`).join(' + ')} = ${Number(s.upTotal).toLocaleString()} (ไม่ระบุปั๊ม)`
+            : fmtPumps(s.up);
 
         const renderRateImportPreview = ({ standards, warnings, skippedSheets, fileName }) => {
             const flagged = standards.filter(s => s.flags.length);
@@ -498,7 +502,7 @@ const formatZeroAsEmpty = (value) => {
                     <td class="p-2 whitespace-nowrap">${esc(s.sheet)} · ${s.row}</td>
                     <td class="p-2 whitespace-nowrap">${esc(AUDIT_CLASSES[s.cls])}${s.variant === 'sino' ? ' (sino)' : ''}</td>
                     <td class="p-2 whitespace-nowrap">${esc(s.origin)} → ${esc(s.destinationLabel)}</td>
-                    <td class="p-2">${fmtPumps(s.up)}</td>
+                    <td class="p-2">${fmtRateUp(s)}</td>
                     <td class="p-2 text-right">${s.down || '-'}${s.downVictor !== s.down ? ` <span class="text-xs text-gray-400">(victor ${s.downVictor})</span>` : ''}</td>
                     <td class="p-2 text-xs text-amber-300">${s.flags.map(esc).join('<br>')}</td>
                 </tr>`).join('');
@@ -1726,26 +1730,73 @@ const formatZeroAsEmpty = (value) => {
 
         // --- View: Fuel audit (ตรวจการเติม) — actual fills vs the official rate sheet ---
         // Audit results only change when trips, rates, vehicles or tolerance change — not on every search keystroke.
-        let auditCache = { key: null, all: [] };
+        let auditCache = {};
+        // Earlier months' trips, read once (no live listener) for the liters carried over from them.
+        // Cleared by refreshAuditPast() whenever the audit page is opened, the month / carry start changes,
+        // or the user presses "โหลดยอดยกใหม่", so edits made in earlier months are picked up.
+        let auditPastTrips = {};
+        let auditPastFailed = new Set();
+        let auditPastGen = 0; // ignores answers from a fetch started before the last refresh
+        const auditPastLoading = new Set();
+        let auditPastResults = { key: null, results: [] };
+        const refreshAuditPast = () => { auditPastTrips = {}; auditPastFailed = new Set(); auditPastLoading.clear(); auditPastGen++; auditPastResults = { key: null, results: [] }; };
+        const prevYm = (ym) => { let [y, m] = ym.split('-').map(Number); if (--m < 1) { m = 12; y--; } return `${y}-${String(m).padStart(2, '0')}`; };
+        const MAX_CARRY_MONTHS = 36; // monthRange's cap
+        const loadPastMonths = (months) => {
+            const todo = months.filter(m => !(m in auditPastTrips) && !auditPastFailed.has(m) && !auditPastLoading.has(m));
+            if (!todo.length) return;
+            const gen = auditPastGen;
+            todo.forEach(m => auditPastLoading.add(m));
+            Promise.all(todo.map(m => logisticsService.fetchTripsMonth(m)
+                .then(t => { if (gen === auditPastGen) auditPastTrips[m] = t; })
+                .catch(err => { console.error(`Load trips ${m} for carry-over failed:`, err); if (gen === auditPastGen) auditPastFailed.add(m); })
+                .finally(() => { if (gen === auditPastGen) auditPastLoading.delete(m); })))
+                .then(() => { if (gen === auditPastGen && appState.view === 'audit') rerenderAuditContent(); });
+        };
+        // Trip order inside a day: board row number when present, else the record id.
+        const tripOrder = (a, b) => (a.trip.date || '').localeCompare(b.trip.date || '') || ((a.trip.sourceRow || 0) - (b.trip.sourceRow || 0)) || String(a.trip.id || '').localeCompare(String(b.trip.id || ''));
+
         const computeAudit = () => {
             const as = appState.auditState;
             const tol = Math.max(0, Number(as.tolerance) || 0);
-            if (auditCache.trips !== appState.trips || auditCache.std !== appState.rateStandards || auditCache.veh !== appState.vehicles || auditCache.tol !== tol) {
+            const month = appState.tripsMonth;
+            const carryOn = /^\d{4}-\d{2}$/.test(as.carryStart || '') && /^\d{4}-\d{2}$/.test(month || '') && month >= as.carryStart;
+            const pastAll = carryOn && as.carryStart < month ? monthRange(as.carryStart, prevYm(month)) : [];
+            const carryTooLong = carryOn && as.carryStart < month && pastAll[pastAll.length - 1] !== prevYm(month);
+            const pastMonths = carryTooLong ? [] : pastAll;
+            loadPastMonths(pastMonths);
+            const carryFailed = pastMonths.filter(m => auditPastFailed.has(m));
+            const carryPending = !carryFailed.length && pastMonths.some(m => !(m in auditPastTrips));
+            const carryReady = carryOn && !carryTooLong && !carryPending && !carryFailed.length;
+            const pastKey = carryReady ? pastMonths.map(m => `${m}:${auditPastTrips[m].length}`).join(',') + `|${auditPastGen}` : 'none';
+            if (auditCache.trips !== appState.trips || auditCache.std !== appState.rateStandards || auditCache.veh !== appState.vehicles || auditCache.tol !== tol || auditCache.pastKey !== pastKey) {
                 const ctx = buildAuditContext(appState.rateStandards, appState.vehicles);
-                auditCache = {
-                    trips: appState.trips, std: appState.rateStandards, veh: appState.vehicles, tol,
-                    all: appState.trips.map(t => auditTrip(t, ctx, tol)).filter(Boolean).sort((a, b) => (a.trip.date || '').localeCompare(b.trip.date || '')),
-                };
+                const run = (trips) => (trips || []).map(t => auditTrip(t, ctx, tol)).filter(Boolean);
+                const all = run(appState.trips).sort(tripOrder);
+                let balances = {};
+                if (carryReady) {
+                    // Earlier months do not change with the live month — audit them once per (data, rates, vehicles, tolerance).
+                    if (auditPastResults.key !== pastKey || auditPastResults.std !== appState.rateStandards || auditPastResults.veh !== appState.vehicles || auditPastResults.tol !== tol) {
+                        auditPastResults = { key: pastKey, std: appState.rateStandards, veh: appState.vehicles, tol, results: pastMonths.flatMap(m => run(auditPastTrips[m])) };
+                    }
+                    balances = applyCarry([...auditPastResults.results.map(r => ({ ...r })), ...all].sort(tripOrder));
+                }
+                auditCache = { trips: appState.trips, std: appState.rateStandards, veh: appState.vehicles, tol, pastKey, all, balances };
             }
-            const all = auditCache.all;
+            const { all, balances } = auditCache;
             const q = (as.search || '').trim().toLowerCase();
             const shown = all.filter(r => (!as.status || r.status === as.status) &&
                 (!q || `${r.trip.driver} ${r.trip.plate} ${r.trip.destination} ${r.trip.origin}`.toLowerCase().includes(q)));
             const count = {}; all.forEach(r => { count[r.status] = (count[r.status] || 0) + 1; });
+            const downCount = {}; all.forEach(r => { if (r.downStatus) downCount[r.downStatus] = (downCount[r.downStatus] || 0) + 1; });
             const sumDiff = (st) => all.filter(r => r.status === st).reduce((a, r) => a + r.diff, 0);
             const byDriver = {};
+            const newDriver = (name) => ({ driver: name, n: 0, checked: 0, ok: 0, over: 0, overL: 0, under: 0, underL: 0, wrong: 0, balance: carryReady && name in balances ? balances[name] : (carryReady ? 0 : null) });
+            // Drivers still owing / owed liters from earlier months stay listed even with no trip this month.
+            if (carryReady) for (const name of Object.keys(balances)) if (balances[name]) byDriver[name] = newDriver(name);
             for (const r of all) {
-                const d = byDriver[r.trip.driver || '(ไม่ระบุ)'] ||= { driver: r.trip.driver || '(ไม่ระบุ)', n: 0, checked: 0, ok: 0, over: 0, overL: 0, under: 0, underL: 0, wrong: 0 };
+                const name = String(r.trip.driver || '').trim() || '(ไม่ระบุ)';
+                const d = byDriver[name] ||= newDriver(name);
                 d.n++;
                 if (r.status !== 'no-rate') d.checked++;
                 if (r.status === 'ok') d.ok++;
@@ -1754,7 +1805,7 @@ const formatZeroAsEmpty = (value) => {
                 if (r.status === 'wrong-pump') d.wrong++;
             }
             const drivers = Object.values(byDriver).sort((a, b) => b.overL - a.overL || b.over - a.over);
-            return { all, shown, count, overL: sumDiff('over'), underL: sumDiff('under'), drivers, tol };
+            return { all, shown, count, downCount, overL: sumDiff('over'), underL: sumDiff('under'), drivers, tol, carryOn, carryReady, carryPending, carryFailed, carryTooLong, pastMonths };
         };
 
         const renderAudit = () => {
@@ -1770,6 +1821,8 @@ const formatZeroAsEmpty = (value) => {
                                     <input type="month" id="audit-month" value="${month}" class="bg-slate-800 border border-slate-600 rounded-md px-3 py-2 text-white" /></div>
                                 <div><label class="block text-xs text-gray-400 mb-1">ยอมให้คลาดเคลื่อน (ลิตร)</label>
                                     <input type="number" min="0" step="1" id="audit-tolerance" value="${appState.auditState.tolerance}" class="w-28 bg-slate-800 border border-slate-600 rounded-md px-3 py-2 text-white" /></div>
+                                <div><label class="block text-xs text-gray-400 mb-1" title="ลิตรที่คนขับเติมเกิน/ขาด จะยกไปหักในเที่ยวถัดไปที่มีอัตรา เริ่มนับจากเดือนนี้ (ว่าง = ไม่ยกยอด)">ยกยอดลิตรเริ่มเดือน</label>
+                                    <input type="month" id="audit-carry-start" value="${esc(appState.auditState.carryStart)}" class="bg-slate-800 border border-slate-600 rounded-md px-3 py-2 text-white" /></div>
                                 <button id="audit-export-btn" class="flex items-center gap-2 bg-emerald-700 hover:bg-emerald-800 text-white font-bold py-2 px-4 rounded-lg shadow-md whitespace-nowrap">${ICONS.Download} Export Excel</button>
                             </div>
                         </div>
@@ -1785,7 +1838,19 @@ const formatZeroAsEmpty = (value) => {
             if (!appState.rateStandards.length) return '';
             if (!logisticsService.getTrips().length) return `<p class="text-center py-8 text-gray-500">ไม่มีคิวรถในเดือนนี้ — เลือกเดือนอื่น</p>`;
             const as = appState.auditState;
-            const { all, shown, count, overL, underL, drivers, tol } = computeAudit();
+            const { all, shown, count, downCount, overL, underL, drivers, tol, carryOn, carryReady, carryPending, carryFailed, carryTooLong, pastMonths } = computeAudit();
+            const signed = (v) => (v > 0 ? '+' : '') + Number(v).toLocaleString();
+            const refreshBtn = pastMonths.length ? ' <button id="audit-carry-refresh" class="text-sky-300 hover:text-sky-200 font-bold">↻ โหลดยอดยกใหม่</button>' : '';
+            const carryNote = !carryOn
+                ? 'ไม่ได้ยกยอดลิตร (ตั้ง "ยกยอดลิตรเริ่มเดือน" เพื่อเปิดใช้)'
+                : carryTooLong ? `<span class="text-red-400">ยกยอดย้อนหลังได้ไม่เกิน ${MAX_CARRY_MONTHS} เดือน — เลื่อน "ยกยอดลิตรเริ่มเดือน" ให้ใกล้ขึ้น</span>`
+                : carryFailed.length ? `<span class="text-red-400">โหลดคิวเดือน ${carryFailed.join(', ')} ไม่สำเร็จ — ยังคำนวณยอดยกไม่ได้</span>${refreshBtn}`
+                : carryPending ? `กำลังโหลดคิว ${pastMonths.length} เดือนก่อนหน้าเพื่อคำนวณยอดยก…`
+                : `ยกยอดลิตรตั้งแต่ ${esc(appState.auditState.carryStart)} (${pastMonths.length ? `รวม ${pastMonths.length} เดือนก่อนหน้า` : 'เริ่มเดือนนี้'}) · + = เติมเกินค้างไว้ หักจากเที่ยวถัดไป · − = เติมขาด ได้เพิ่มเที่ยวถัดไป · ไม่ยกยอดเที่ยวที่ไม่มีชื่อคนขับ${refreshBtn}`;
+            const downCell = (r) => !r.downStatus ? '' :
+                `<span class="${DOWN_STATUS[r.downStatus].cls}">${r.downStatus === 'missing' ? `อัตรา ${r.down} · ${DOWN_STATUS.missing.label}` : `${r.downActual}/${r.down} ${DOWN_STATUS[r.downStatus].label}`}</span>`;
+            const carryCell = (r) => !carryReady ? '' : r.carryIn == null ? '<span class="text-gray-500">ไม่มีชื่อคนขับ</span>' :
+                `<div class="whitespace-nowrap">ยกมา ${signed(r.carryIn)}</div>${r.allot != null && r.carryIn ? `<div class="text-xs text-gray-400 whitespace-nowrap">ควรเติม ${r.allot.toLocaleString()}</div>` : ''}<div class="whitespace-nowrap font-bold ${r.carryOut > 0 ? 'text-red-400' : r.carryOut < 0 ? 'text-amber-300' : 'text-gray-400'}">ยกไป ${signed(r.carryOut)}</div>`;
             const card = (status, label, value, sub = '') => `
                 <button data-audit-status="${status}" class="text-left rounded-lg p-3 border ${as.status === status ? 'border-accent bg-slate-700' : 'border-slate-700 bg-slate-800 hover:bg-slate-700'}">
                     <div class="text-xs text-gray-400">${label}</div>
@@ -1802,9 +1867,11 @@ const formatZeroAsEmpty = (value) => {
                     <td class="p-2 whitespace-nowrap">${r.cls ? esc(AUDIT_CLASSES[r.cls]) : '-'}${r.model ? ` <span class="text-xs text-indigo-300">${esc(r.model)}</span>` : ''}</td>
                     <td class="p-2">${esc(r.trip.origin)} → ${esc(r.trip.destination)}</td>
                     <td class="p-2">${fmtPumps(r.actual)}</td>
-                    <td class="p-2">${r.status === 'no-rate' ? '-' : fmtPumps(r.expected)}</td>
-                    <td class="p-2 text-right font-bold ${r.diff > 0 ? 'text-red-400' : r.diff < 0 ? 'text-amber-300' : 'text-gray-400'}">${r.status === 'no-rate' ? '' : (r.diff > 0 ? '+' : '') + r.diff.toLocaleString()}</td>
+                    <td class="p-2">${r.status === 'no-rate' ? '-' : r.status === 'manual' ? (r.expectedTotal ? `รวม ${r.expectedTotal.toLocaleString()}` : '-') : fmtPumps(r.expected)}</td>
+                    <td class="p-2 text-right font-bold ${r.diff > 0 ? 'text-red-400' : r.diff < 0 ? 'text-amber-300' : 'text-gray-400'}">${r.status === 'no-rate' || (r.status === 'manual' && !r.expectedTotal) ? '' : signed(r.diff)}</td>
                     <td class="p-2">${badge(r.status)}</td>
+                    <td class="p-2 text-xs">${downCell(r)}</td>
+                    <td class="p-2 text-xs">${carryCell(r)}</td>
                     <td class="p-2 text-xs text-gray-300">${[r.reason, ...r.flags].filter(Boolean).map(esc).join('<br>')}</td>
                 </tr>`).join('');
             const driverRows = drivers.map(d => `
@@ -1813,25 +1880,29 @@ const formatZeroAsEmpty = (value) => {
                     <td class="p-2 text-right text-red-400">${d.over}</td><td class="p-2 text-right text-red-400 font-bold">${d.overL ? '+' + d.overL.toLocaleString() : ''}</td>
                     <td class="p-2 text-right text-amber-300">${d.under}</td><td class="p-2 text-right text-amber-300">${d.underL ? d.underL.toLocaleString() : ''}</td>
                     <td class="p-2 text-right text-purple-300">${d.wrong}</td>
+                    <td class="p-2 text-right font-bold ${d.balance > 0 ? 'text-red-400' : d.balance < 0 ? 'text-amber-300' : 'text-gray-400'}">${d.balance == null ? '-' : signed(d.balance)}</td>
                 </tr>`).join('');
             const stdRows = appState.rateStandards.map(s => `
                 <tr class="border-b border-slate-700 ${s.flags.length ? 'bg-amber-900/20' : ''}">
                     <td class="p-2 whitespace-nowrap">${esc(AUDIT_CLASSES[s.cls])}${s.variant === 'sino' ? ' (sino)' : ''}</td>
                     <td class="p-2 whitespace-nowrap">${esc(s.origin)} → ${esc(s.destinationLabel)}</td>
-                    <td class="p-2">${fmtPumps(s.up)}</td>
+                    <td class="p-2">${fmtRateUp(s)}</td>
                     <td class="p-2 text-right">${s.down || '-'}${s.downVictor !== s.down ? ` (victor ${s.downVictor})` : ''}</td>
                     <td class="p-2 text-xs">${esc(s.allowanceText)}</td>
                     <td class="p-2 text-xs text-amber-300">${(s.flags || []).map(esc).join('<br>')}${s.duplicateOf ? '<br>(ไม่ใช้ตรวจ — ใช้แถวแรก)' : ''}</td>
                 </tr>`).join('');
             return `
-                <div class="grid grid-cols-2 md:grid-cols-6 gap-3 mb-4">
+                <div class="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-3 mb-3">
                     ${card('', 'ทั้งหมด (ขาขึ้นที่มีการเติม)', all.length)}
                     ${card('ok', 'ตรงตามอัตรา', count.ok || 0)}
                     ${card('over', 'เติมเกิน', count.over || 0, overL ? `รวม +${overL.toLocaleString()} ลิตร` : '')}
                     ${card('under', 'เติมขาด', count.under || 0, underL ? `รวม ${underL.toLocaleString()} ลิตร` : '')}
                     ${card('wrong-pump', 'ลิตรรวมถูก แต่ผิดปั๊ม', count['wrong-pump'] || 0)}
+                    ${card('manual', 'ต้องตรวจเอง (ถอดหาง กพ.)', count.manual || 0)}
                     ${card('no-rate', 'ตรวจไม่ได้ (ไม่มีอัตรา)', count['no-rate'] || 0)}
                 </div>
+                <p class="text-xs text-gray-400 mb-1">ขาล่อง (ปั๊มไพศาล ที่บันทึกในเที่ยวขาขึ้น): ตรง ${downCount.ok || 0} · เกิน ${downCount.over || 0} · ขาด ${downCount.under || 0} · ไม่ได้บันทึก ${downCount.missing || 0} เที่ยว — เที่ยวขาล่องจากไฟล์ Transport ไม่มีลิตร จึงตรวจได้เท่านี้</p>
+                <p class="text-xs text-gray-400 mb-4">${carryNote}</p>
                 <div class="flex flex-wrap items-center gap-3 mb-3">
                     <input type="text" id="audit-search" value="${esc(as.search)}" placeholder="ค้นหา คนขับ / ทะเบียน / ปลายทาง" class="w-full md:w-80 bg-slate-800 border border-slate-600 rounded-md px-3 py-2 text-white" />
                     <span class="text-xs text-gray-400">แสดง ${Math.min(shown.length, LIMIT).toLocaleString()} จาก ${shown.length.toLocaleString()} เที่ยว${shown.length > LIMIT ? ' (Export Excel เพื่อดูครบ)' : ''} · คลาดเคลื่อนได้ ${tol} ลิตร · ไม่รวมรถร่วม</span>
@@ -1840,7 +1911,7 @@ const formatZeroAsEmpty = (value) => {
                     <table class="w-full text-sm text-left">
                         <thead class="bg-slate-800 text-gray-400 sticky top-0"><tr>
                             <th class="p-2">วันที่</th><th class="p-2">คนขับ</th><th class="p-2">ทะเบียน</th><th class="p-2">ประเภทรถ</th><th class="p-2">ต้นทาง → ปลายทาง</th>
-                            <th class="p-2">เติมจริง (ลิตร)</th><th class="p-2">ตามอัตรา (ลิตร)</th><th class="p-2 text-right">ต่าง</th><th class="p-2">ผล</th><th class="p-2">หมายเหตุ</th>
+                            <th class="p-2">เติมจริง (ลิตร)</th><th class="p-2">ตามอัตรา (ลิตร)</th><th class="p-2 text-right">ต่าง</th><th class="p-2">ผล</th><th class="p-2">ขาล่องไพศาล (บันทึก/อัตรา)</th><th class="p-2">ยอดยก (ลิตร)</th><th class="p-2">หมายเหตุ</th>
                         </tr></thead>
                         <tbody>${rows}</tbody>
                     </table>
@@ -1851,7 +1922,7 @@ const formatZeroAsEmpty = (value) => {
                     <table class="w-full text-sm">
                         <thead class="bg-slate-800 text-gray-400"><tr>
                             <th class="p-2 text-left">คนขับ</th><th class="p-2 text-right">เที่ยว</th><th class="p-2 text-right">ตรวจได้</th><th class="p-2 text-right">ตรง</th>
-                            <th class="p-2 text-right">เกิน (เที่ยว)</th><th class="p-2 text-right">เกิน (ลิตร)</th><th class="p-2 text-right">ขาด (เที่ยว)</th><th class="p-2 text-right">ขาด (ลิตร)</th><th class="p-2 text-right">ผิดปั๊ม</th>
+                            <th class="p-2 text-right">เกิน (เที่ยว)</th><th class="p-2 text-right">เกิน (ลิตร)</th><th class="p-2 text-right">ขาด (เที่ยว)</th><th class="p-2 text-right">ขาด (ลิตร)</th><th class="p-2 text-right">ผิดปั๊ม</th><th class="p-2 text-right">ลิตรค้างยกไป</th>
                         </tr></thead>
                         <tbody>${driverRows}</tbody>
                     </table>
@@ -1884,15 +1955,24 @@ const formatZeroAsEmpty = (value) => {
                 if (again) { again.focus(); again.setSelectionRange(pos, pos); }
             });
             document.getElementById('audit-toggle-standards')?.addEventListener('click', () => { as.showStandards = !as.showStandards; rerenderAuditContent(); });
+            document.getElementById('audit-carry-refresh')?.addEventListener('click', () => { refreshAuditPast(); rerenderAuditContent(); });
         };
         const attachAuditListeners = () => {
             const monthInput = document.getElementById('audit-month');
             const target = appState.tripsMonth || (monthInput ? monthInput.value : '');
             if (target && appState.tripsMonth !== target) logisticsService.loadTripsForMonth(target);
-            monthInput?.addEventListener('change', (e) => logisticsService.loadTripsForMonth(e.target.value));
+            monthInput?.addEventListener('change', (e) => { refreshAuditPast(); logisticsService.loadTripsForMonth(e.target.value); });
+            // Shared settings: saved to Firebase so every user audits with the same tolerance / carry start.
             document.getElementById('audit-tolerance')?.addEventListener('change', (e) => {
                 appState.auditState.tolerance = Math.max(0, Number(e.target.value) || 0);
                 rerenderAuditContent();
+                logisticsService.saveAuditSettings({ tolerance: appState.auditState.tolerance }).catch(err => console.error('Save audit settings failed:', err));
+            });
+            document.getElementById('audit-carry-start')?.addEventListener('change', (e) => {
+                appState.auditState.carryStart = /^\d{4}-\d{2}$/.test(e.target.value) ? e.target.value : '';
+                refreshAuditPast();
+                rerenderAuditContent();
+                logisticsService.saveAuditSettings({ carryStart: appState.auditState.carryStart }).catch(err => console.error('Save audit settings failed:', err));
             });
             document.getElementById('audit-export-btn')?.addEventListener('click', handleAuditExport);
             attachAuditContentListeners();
@@ -1900,8 +1980,10 @@ const formatZeroAsEmpty = (value) => {
 
         const handleAuditExport = () => {
             if (!appState.rateStandards.length) { alert('ยังไม่มีอัตรามาตรฐาน'); return; }
-            const { all, drivers, tol } = computeAudit();
+            const { all, drivers, tol, carryOn, carryReady } = computeAudit();
             if (!all.length) { alert('ไม่มีเที่ยวให้ export ในเดือนนี้'); return; }
+            // Never hand out a file with blank carry columns that look final.
+            if (carryOn && !carryReady) { alert('ยอดยกลิตรยังคำนวณไม่เสร็จ (กำลังโหลดหรือโหลดเดือนก่อนหน้าไม่สำเร็จ) — รอสักครู่หรือกด "โหลดยอดยกใหม่" แล้วลอง Export อีกครั้ง'); return; }
             const pumps = [...new Set(all.flatMap(r => [...Object.keys(r.actual), ...Object.keys(r.expected || {})]))];
             const wb = XLSX.utils.book_new();
             const sheet = (name, headers, data, widths) => {
@@ -1913,16 +1995,19 @@ const formatZeroAsEmpty = (value) => {
             const n = (v) => (Number(v) ? Number(v) : '');
             sheet('ผลตรวจ',
                 ['วันที่', 'คนขับ', 'ทะเบียน', 'ประเภทรถ', 'รุ่น', 'ต้นทาง', 'ปลายทาง', 'ผล', 'เติมจริงรวม (ลิตร)', 'ตามอัตรารวม (ลิตร)', 'ต่าง (ลิตร)',
-                    ...pumps.flatMap(p => [`${pumpName(p)} จริง`, `${pumpName(p)} อัตรา`]), 'เติมเป็นเงิน (บาท)', 'หมายเหตุ'],
+                    ...pumps.flatMap(p => [`${pumpName(p)} จริง`, `${pumpName(p)} อัตรา`]), 'เติมเป็นเงิน (บาท)',
+                    'ขาล่องไพศาล อัตรา', 'ขาล่องไพศาล บันทึก', 'ขาล่อง ผล', 'ลิตรยกมา', 'ควรเติม (หลังหักยกมา)', 'ลิตรยกไป', 'หมายเหตุ'],
                 all.map(r => [r.trip.date, r.trip.driver, r.trip.plate, r.cls ? AUDIT_CLASSES[r.cls] : '', r.model, r.trip.origin, r.trip.destination,
-                    AUDIT_STATUS[r.status].label, n(r.actualTotal), r.status === 'no-rate' ? '' : r.expectedTotal, r.status === 'no-rate' ? '' : r.diff,
+                    AUDIT_STATUS[r.status].label, n(r.actualTotal), r.status === 'no-rate' ? '' : n(r.expectedTotal), r.status === 'no-rate' ? '' : r.diff,
                     ...pumps.flatMap(p => [n(r.actual[p]), r.status === 'no-rate' ? '' : n((r.expected || {})[p])]), n(r.bahtTotal),
+                    n(r.down), r.downStatus && r.downStatus !== 'missing' ? r.downActual : '', r.downStatus ? DOWN_STATUS[r.downStatus].label : '',
+                    carryReady && r.carryIn != null ? r.carryIn : '', carryReady && r.allot != null ? r.allot : '', carryReady && r.carryOut != null ? r.carryOut : '',
                     [r.reason, ...r.flags].filter(Boolean).join(' | ')]),
-                [11, 22, 14, 18, 8, 20, 18, 12, 12, 12, 10, ...pumps.flatMap(() => [12, 12]), 12, 60]);
+                [11, 22, 14, 18, 8, 20, 18, 12, 12, 12, 10, ...pumps.flatMap(() => [12, 12]), 12, 12, 12, 12, 10, 14, 10, 60]);
             sheet('สรุปคนขับ',
-                ['คนขับ', 'เที่ยว', 'ตรวจได้', 'ตรง', 'เกิน (เที่ยว)', 'เกิน (ลิตร)', 'ขาด (เที่ยว)', 'ขาด (ลิตร)', 'ผิดปั๊ม'],
-                drivers.map(d => [d.driver, d.n, d.checked, d.ok, d.over, d.overL, d.under, d.underL, d.wrong]),
-                [24, 8, 8, 8, 10, 10, 10, 10, 8]);
+                ['คนขับ', 'เที่ยว', 'ตรวจได้', 'ตรง', 'เกิน (เที่ยว)', 'เกิน (ลิตร)', 'ขาด (เที่ยว)', 'ขาด (ลิตร)', 'ผิดปั๊ม', 'ลิตรค้างยกไป (+ เกิน / − ขาด)'],
+                drivers.map(d => [d.driver, d.n, d.checked, d.ok, d.over, d.overL, d.under, d.underL, d.wrong, d.balance == null ? '' : d.balance]),
+                [24, 8, 8, 8, 10, 10, 10, 10, 8, 16]);
             sheet('อัตรามาตรฐาน',
                 ['ชีต', 'แถว', 'ประเภทรถ', 'รุ่น', 'ต้นทาง', 'ปลายทาง', 'ขาขึ้น (ลิตร)', 'รวมขาขึ้น', 'ขาล่องไพศาล', 'ขาล่อง victor', 'เบี้ยขับ', 'ข้อสังเกต'],
                 appState.rateStandards.map(s => [s.sheet, s.row, AUDIT_CLASSES[s.cls], s.variant === 'sino' ? 'sino' : '', s.origin, s.destinationLabel,
@@ -2290,6 +2375,7 @@ const formatZeroAsEmpty = (value) => {
                     // Store the intended view to navigate to after successful authentication
                     appState.pendingView = view; 
                 } else {
+                    if (view === 'audit') refreshAuditPast(); // pick up edits made in earlier months since last time
                     appState.view = view;
                     renderApp();
                 }

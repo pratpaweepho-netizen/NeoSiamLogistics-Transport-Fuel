@@ -25,7 +25,8 @@ export let appState = {
             // Fuel audit (ตรวจการเติม): official rate sheet rows + the audit page's UI state
             rateStandards: [],
             rateStandardsMeta: null,
-            auditState: { status: '', search: '', tolerance: 0, showStandards: false },
+            // tolerance / carryStart are shared settings (Firebase settings/fuelAudit); the rest is per-screen UI state.
+            auditState: { status: '', search: '', tolerance: 0, carryStart: '2026-11', showStandards: false },
             driverFilter: '',
             payrollMonth: '',
             // Form-specific state
@@ -1044,7 +1045,18 @@ export let appState = {
                     // Not 'import': re-rendering there would wipe the preview and the "saved" message right after saving.
                     if (appState.view === 'audit') ui.render();
                 }, onListenerError('fuelRateStandards'));
+
+                database.ref('settings/fuelAudit').on('value', (snapshot) => {
+                    const s = snapshot.val() || {};
+                    if (typeof s.tolerance === 'number') appState.auditState.tolerance = s.tolerance;
+                    if (typeof s.carryStart === 'string') appState.auditState.carryStart = s.carryStart;
+                    if (appState.view === 'audit') ui.render();
+                }, onListenerError('settings/fuelAudit'));
             },
+            saveAuditSettings: (patch) => database.ref('settings/fuelAudit').update(patch),
+            // One-off read of a whole month (no live listener) — used for the liters carried over from earlier months.
+            fetchTripsMonth: (ym) => database.ref(`trips/${ym}`).once('value')
+                .then(s => { const v = s.val(); return v ? Object.entries(v).map(([id, t]) => ({ id, ...t })) : []; }),
             getRateStandards: () => [...appState.rateStandards],
             // Replace the whole rate master with a freshly parsed sheet (the sheet is the source of truth).
             replaceRateStandards: (standards, meta) => {
