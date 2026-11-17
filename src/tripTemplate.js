@@ -6,6 +6,8 @@
 import { clean } from './parseUtils.js';
 import { GAS_STATION_FRIENDLY_NAMES, ROUTE_STATION_COLUMNS } from './constants.js';
 import { textDropPlace, normPlate, plateKey } from './fuelAudit.js';
+import { createAllIfAbsent } from './dbUtils.js';
+import { ymd } from './importerTrips.js';
 
 export const TEMPLATE_SHEET = 'นำเข้าเที่ยวรถ';
 export const LIST_SHEET = 'รายการ';
@@ -152,8 +154,8 @@ export function findTemplateHeader(rows) {
 export function parseTemplateDate(v) {
     let y, m, d;
     if (v instanceof Date && !isNaN(v)) {
-        const t = new Date(v.getTime() + 60 * 1000); // absorb the sub-minute shift before midnight
-        y = t.getFullYear(); m = t.getMonth() + 1; d = t.getDate();
+        // Same reading as every Excel import (absorbs SheetJS's few seconds before midnight).
+        [y, m, d] = ymd(v).split('-').map(Number);
     } else if (typeof v === 'number' && isFinite(v) && v > 20000 && v < 80000) {
         const t = new Date(Date.UTC(1899, 11, 30) + Math.round(v) * 864e5);
         y = t.getUTCFullYear(); m = t.getUTCMonth() + 1; d = t.getUTCDate();
@@ -372,16 +374,6 @@ export async function saveTemplateTrips(db, parsedRows, { includeKeys = [], conc
     const chosen = parsedRows.filter(p => p.status !== 'error' && p.key
         && (p.importState === 'new' || (p.importState === 'possible-dup' && extra.has(p.key)))
         && !seen.has(p.key) && seen.add(p.key));
-    let added = 0, skipped = 0, failed = 0;
-    const savedKeys = [], errors = [];
-    for (let i = 0; i < chosen.length; i += concurrency) {
-        const batch = chosen.slice(i, i + concurrency);
-        const res = await Promise.allSettled(batch.map(p => db.createIfAbsent(p.trip.yearMonth, p.key, p.trip)));
-        res.forEach((r, j) => {
-            if (r.status === 'rejected') { failed++; errors.push(r.reason); }
-            else if (r.value) { added++; savedKeys.push(batch[j].key); }
-            else skipped++;
-        });
-    }
-    return { added, skipped, failed, savedKeys, error: errors[0] || null };
+    const { added, skipped, failed, error, addedItems } = await createAllIfAbsent(chosen, p => db.createIfAbsent(p.trip.yearMonth, p.key, p.trip), concurrency);
+    return { added, skipped, failed, error, savedKeys: addedItems.map(p => p.key) };
 }

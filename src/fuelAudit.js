@@ -28,7 +28,7 @@ const PUMP_HEADERS = [
     ['นิสสัน', 'nissan_singburi'],
     ['ชำนาญ', 'chamnan'],
 ];
-const PAISAN = 'daopaisan_nakhonsawan';
+export const PAISAN = 'daopaisan_nakhonsawan';
 const TOTAL_UP_HEADER = 'รวมยอดขาขึ้น/ลิตร';
 
 // Section title → truck class. Order matters: "หกล้อใหม่ isuzu + หางตู้" before plain หกล้อ.
@@ -214,23 +214,54 @@ const TOW_OF = { '10W': '18W', '6W': '6W_BOX' };  // head → towing class
 // carries a recorded downhill ไพศาล fill. results must be in trip order. allTrips (optional) = every trip
 // of the same period, including downhill trips with no fill (they are not in results): a downhill trip of
 // that driver in between means the uphill fill belonged to that one, not to this one.
+// Pair by driver name AND by head plate: the daily board writes first names only while the Transport file and the
+// template use full names, so the same driver can appear under two names (seen 17 Nov 2026: 0 of 38 board names
+// match the driver master exactly).
+// Statuses that hold a checked figure (and feed carry-over).
+export const CHECKED = ['ok', 'over', 'under', 'wrong-pump'];
+// A downhill fill at another pump after the uphill trip already holds the downhill ไพศาล fill → manual check.
+export function markExtraDownhill(r, up) {
+    Object.assign(r, {
+        status: 'manual', diff: 0,
+        reason: `เที่ยวขาขึ้น ${up.trip.date} บันทึกไพศาลขาล่อง ${up.downActual} ลิตรไว้แล้ว · ขาล่องเติมเพิ่ม ${r.actualTotal} ลิตร${r.trip.fuelText ? ` (${r.trip.fuelText})` : ''} — ตารางอัตรายังไม่มีกฎการเติมเพิ่มขาล่อง ตรวจเอง`,
+    });
+    return r;
+}
+const pairKeys = (t) => [clean(t.driver) && `D:${clean(t.driver)}`, plateKey(t.plate) && `P:${plateKey(t.plate)}`].filter(Boolean);
 export function flagDoubleDownhill(results, allTrips = []) {
     const downTrips = {};
-    for (const t of allTrips) if (clean(t.direction) === 'ขาล่อง' && clean(t.driver)) (downTrips[clean(t.driver)] ||= []).push(t);
+    for (const t of allTrips) if (clean(t.direction) === 'ขาล่อง') for (const k of pairKeys(t)) (downTrips[k] ||= []).push(t);
     const lastUp = {};
     for (const r of results) {
-        const d = clean(r.trip.driver);
-        if (!d) continue;
-        // Only the driver's most recent uphill trip can share its downhill fill with the next downhill trip.
-        if (r.leg !== 'down') { if (r.downhillRecorded) lastUp[d] = r; else delete lastUp[d]; continue; }
-        const up = lastUp[d];
-        const between = up && (downTrips[d] || []).some(t => t !== r.trip && t.id !== r.trip.id && t.date >= up.trip.date && t.date <= r.trip.date);
-        if (up && !between && (Date.parse(r.trip.date) - Date.parse(up.trip.date)) / 86400000 <= 5) {
-            // new arrays, not push: results may be shallow copies of cached ones
-            r.flags = [...r.flags, `อาจบันทึกขาล่องซ้ำ: เที่ยวขาขึ้น ${up.trip.date} บันทึกไพศาลขาล่อง ${up.downActual} ลิตรไว้แล้ว`];
-            up.flags = [...up.flags, `อาจบันทึกขาล่องซ้ำ: เที่ยวขาล่อง ${r.trip.date} มีการเติมไพศาล ${r.actualTotal} ลิตรด้วย`];
-            delete lastUp[d]; // one downhill fill pairs with one downhill trip
+        const ks = pairKeys(r.trip);
+        if (!ks.length) continue;
+        // Only the most recent uphill trip (of this driver / truck) can share its downhill fill with the next downhill
+        // trip. A new uphill replaces the previous one under ALL of that one's keys, so a driver who changed trucks
+        // does not leave a stale entry on the old truck.
+        if (r.leg !== 'down') {
+            for (const k of ks) { const old = lastUp[k]; if (old) for (const x of pairKeys(old.trip)) if (lastUp[x] === old) delete lastUp[x]; }
+            if (r.downhillRecorded) for (const k of ks) lastUp[k] = r;
+            continue;
         }
+        const k = ks.find(x => lastUp[x]);
+        const up = k && lastUp[k];
+        // Any other downhill trip of this driver OR truck in between means the uphill fill belongs to that one.
+        const keysBoth = [...new Set([...ks, ...(up ? pairKeys(up.trip) : [])])];
+        const between = up && keysBoth.some(x => (downTrips[x] || []).some(t => t !== r.trip && t.id !== r.trip.id && t.date >= up.trip.date && t.date <= r.trip.date));
+        if (!up || between || (Date.parse(r.trip.date) - Date.parse(up.trip.date)) / 86400000 > 5) continue;
+        const paisan = Number(r.actual?.[PAISAN]) || 0;
+        if (paisan > 0) {
+            // A ไพศาล fill on both legs may be the same fill written twice. New arrays, not push: results may be
+            // shallow copies of cached ones.
+            r.flags = [...r.flags, `อาจบันทึกขาล่องซ้ำ: เที่ยวขาขึ้น ${up.trip.date} บันทึกไพศาลขาล่อง ${up.downActual} ลิตรไว้แล้ว`];
+            up.flags = [...up.flags, `อาจบันทึกขาล่องซ้ำ: เที่ยวขาล่อง ${r.trip.date} มีการเติมไพศาล ${paisan} ลิตรด้วย`];
+        } else if (!r.trip.fuelRef?.date) { // column L names its uphill exactly → reconcileColumnL handles it
+            // Fill at another pump (นิสสัน, เอกวิทัศน์) after the downhill ไพศาล was already filled on the uphill trip:
+            // probably an extra fill. This pairing is a guess (driver OR truck within 5 days), so it is a NOTE only —
+            // the status and the carry-over stay as audited (rule: loose matches are hints, never auto-applied).
+            r.flags = [...r.flags, `อาจเป็นการเติมเพิ่มขาล่อง: เที่ยวขาขึ้น ${up.trip.date} บันทึกไพศาลขาล่อง ${up.downActual} ลิตรไว้แล้ว — ตรวจเอง`];
+        }
+        for (const x of pairKeys(up.trip)) if (lastUp[x] === up) delete lastUp[x]; // one downhill fill pairs with one downhill trip
     }
 }
 
@@ -245,7 +276,7 @@ export function applyCarry(results) {
         if (!d) { r.carryIn = null; r.allot = null; r.carryOut = null; continue; }
         const before = bal[d] || 0;
         r.carryIn = before;
-        if (['ok', 'over', 'under', 'wrong-pump'].includes(r.status)) {
+        if (CHECKED.includes(r.status)) {
             r.allot = Math.max(0, r.expectedTotal - before);
             r.carryOut = before + r.actualTotal - r.expectedTotal;
             bal[d] = r.carryOut;

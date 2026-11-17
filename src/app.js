@@ -7,6 +7,8 @@ import { parseFuelBaseRows } from "./importer.js";
 import { detectSheetType, parseUphillQueue, parseDownhillQueue, parsePartnerQueue, parseDailyRows } from "./importerTrips.js";
 import { parseDrivers, parseRateTable, parseVehicles } from "./importerMasters.js";
 import { parseRateSheet, buildAuditContext, auditTrip, applyCarry, flagDoubleDownhill, AUDIT_CLASSES, AUDIT_STATUS, DOWN_STATUS } from "./fuelAudit.js";
+import { COLL_STATUS, downhillTripKeys, planDownhillFuel, withDownhillFuel, reconcileColumnL, createAllIfAbsent } from "./downhillFuel.js";
+import { planDateFix, buildDateFixBatches, recheckBatch, prevDay } from "./dateFix.js";
 import { TEMPLATE_SHEET, buildTemplateLists, generateTemplate, findTemplateHeader, parseTemplateRows, planTemplateSave, saveTemplateTrips } from "./tripTemplate.js";
 
 const formatZeroAsEmpty = (value) => {
@@ -570,6 +572,15 @@ const formatZeroAsEmpty = (value) => {
                         <div id="tpl-msg" class="mt-2 text-sm"></div>
                     `)}
                     ${renderCard(`
+                        <h2 class="text-xl font-bold text-white mb-2">แก้วันที่เที่ยวจากไฟล์ Transport (บันทึกไว้เร็วไป 1 วัน)</h2>
+                        <p class="text-gray-400 text-sm mb-4">เที่ยวที่นำเข้าจากไฟล์ Transport ถูกบันทึกวันที่เร็วกว่าใน Excel 1 วัน (พบ 17 พ.ย. 2569) · เลือกไฟล์ Transport ล่าสุด → ตรวจ (ยังไม่บันทึก) → ดาวน์โหลดสำรองข้อมูล → กดแก้ · เที่ยวจากกระดานคิวรายวันและแม่แบบไม่ถูกแตะ</p>
+                        <div class="flex flex-wrap items-end gap-3">
+                            <input type="file" id="dfix-file" accept=".xlsx,.xls" class="text-sm text-gray-300 file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-slate-600 file:text-white file:font-bold" />
+                            <button id="dfix-check-btn" class="bg-sky-600 hover:bg-sky-700 text-white font-bold py-2 px-4 rounded-lg">ตรวจ (ยังไม่บันทึก)</button>
+                        </div>
+                        <div id="dfix-out" class="mt-4 text-sm"></div>
+                    `)}
+                    ${renderCard(`
                         <h2 class="text-2xl font-bold text-white mb-2 flex items-center gap-3">${ICONS.Download} นำเข้าเส้นทางจาก Excel</h2>
                         <p class="text-gray-400 mb-6">อัปโหลดไฟล์ Excel แล้วเลือกชีต — ระบบตรวจชนิดให้อัตโนมัติ:<br>• <span class="text-accent">แม่แบบนำเข้าเที่ยวรถ</span> → คิวรถ (ขาขึ้น/ขาล่อง) &nbsp;•&nbsp; <span class="text-accent">ฐานคำนวนน้ำมันขาขึ้น</span> → เส้นทาง &nbsp;•&nbsp; <span class="text-accent">คิวขาขึ้น/ขาล่อง, คิวรถร่วม</span> → คิวรถ &nbsp;•&nbsp; <span class="text-accent">ทะเบียน, คนขับ, ฐานคำนวน</span> → รถ/คนขับ/เบี้ยเลี้ยง</p>
                         <div class="rounded-lg border-2 border-dashed border-slate-500 p-6 text-center">
@@ -692,9 +703,10 @@ const formatZeroAsEmpty = (value) => {
             } else if (kind === 'uphill' || kind === 'downhill' || kind === 'partnerqueue') {
                 const result = kind === 'uphill' ? parseUphillQueue(rows) : kind === 'downhill' ? parseDownhillQueue(rows) : parsePartnerQueue(rows);
                 importParsedTrips = result.trips;
-                preview.innerHTML = renderTripsImportPreview(result, kind);
+                preview.innerHTML = (kind === 'downhill' ? '<div id="coll-section" class="mb-6"><p class="text-sky-400">กำลังอ่านลิตรขาล่องจากช่อง "คิวรถล่าสุด"...</p></div>' : '') + renderTripsImportPreview(result, kind);
                 document.getElementById('import-trips-replace-btn')?.addEventListener('click', () => handleImportTripsCommit('replace'));
                 document.getElementById('import-trips-merge-btn')?.addEventListener('click', () => handleImportTripsCommit('merge'));
+                if (kind === 'downhill') prepareColumnL(result);
             } else if (kind === 'drivers' || kind === 'ratetable' || kind === 'vehicles') {
                 const result = kind === 'drivers' ? parseDrivers(rows) : kind === 'vehicles' ? parseVehicles(rows) : parseRateTable(rows);
                 const items = kind === 'drivers' ? result.drivers : kind === 'vehicles' ? result.vehicles : result.rates;
@@ -1078,6 +1090,211 @@ const formatZeroAsEmpty = (value) => {
             XLSX.writeFile(wb, `แถวที่ผิด_${(importParsedTemplate.fileName || 'แม่แบบ').replace(/\.xlsx?$/i, '')}.xlsx`);
         };
 
+        // ---- Downhill liters from column L ("คิวรถล่าสุด") of the Transport คิวขาล่อง sheet (option ก, 17 Nov 2026) ----
+        // Saved to downhillFuel/{ym}/{tripKey}; the downhill trips themselves are never modified.
+        let collPlan = null, collGen = 0;
+        const sha1hex = async (s) => [...new Uint8Array(await crypto.subtle.digest('SHA-1', new TextEncoder().encode(s)))].map(b => b.toString(16).padStart(2, '0')).join('');
+
+        const prepareColumnL = async (result) => {
+            const gen = ++collGen;
+            collPlan = null;
+            const box = () => (gen === collGen ? document.getElementById('coll-section') : null);
+            try {
+                const lastQueue = result.lastQueue || [];
+                if (!lastQueue.some(Boolean)) { if (box()) box().innerHTML = ''; return; }
+                const keys = await downhillTripKeys(result.trips, sha1hex);
+                // Only months that have column L text; only tdh_ trips (the Transport downhill import) can be linked.
+                const months = [...new Set(result.trips.filter((t, i) => lastQueue[i]).map(t => t.yearMonth))].sort();
+                const existingTrips = {}, existingFuel = {};
+                await Promise.all(months.map(async (ym) => {
+                    [existingTrips[ym], existingFuel[ym]] = await Promise.all([logisticsService.fetchDownhillTripsMonth(ym), logisticsService.fetchDownhillFuelMonth(ym)]);
+                }));
+                if (gen !== collGen) return;
+                // tdh_ trips still carrying the one-day-early date (not fixed yet) have keys built from that wrong date:
+                // a row could hash onto the previous day's identical trip. Leave them out until "แก้วันที่" has run.
+                let unfixed = 0;
+                for (const ym of months) for (const [k, t] of Object.entries(existingTrips[ym] || {})) {
+                    if (!t?.dateFixedFrom) { unfixed++; delete existingTrips[ym][k]; }
+                }
+                const fileName = document.getElementById('import-file')?.files?.[0]?.name || '';
+                const plan = planDownhillFuel(result.trips, lastQueue, keys, existingTrips, existingFuel, { importedFrom: fileName, importedAt: new Date().toLocaleString('th-TH') });
+                plan.unfixed = unfixed;
+                if (!box()) return;
+                collPlan = plan;
+                box().innerHTML = renderColumnLSection(plan);
+                document.getElementById('coll-save-btn')?.addEventListener('click', handleColumnLSave);
+            } catch (err) {
+                console.error('Column L read failed:', err);
+                if (box()) box().innerHTML = `<p class="text-red-400">อ่านลิตรขาล่องจากช่อง "คิวรถล่าสุด" ไม่สำเร็จ: ${esc(err.message)}</p>`;
+            }
+        };
+
+        const renderColumnLSection = (plan) => {
+            const n = plan.toSave.length;
+            const statusRows = Object.entries(COLL_STATUS).map(([k, label]) => {
+                const c = plan.byStatus[k] || 0;
+                return c ? `<tr class="border-b border-slate-700"><td class="p-2">${label}</td><td class="p-2 text-right">${c.toLocaleString()}</td></tr>` : '';
+            }).join('');
+            const liters = plan.toSave.reduce((s, e) => s + (e.record.status === 'filled' ? e.record.totalLiters : 0), 0);
+            const unparsed = plan.toSave.filter(e => e.record.status === 'unparsed');
+            return `
+                <div class="bg-slate-800/60 border border-sky-700 rounded-lg p-4">
+                    <div class="text-lg font-bold text-white mb-1">ลิตรขาล่องจากช่อง "คิวรถล่าสุด" (คอลัมน์ L)</div>
+                    <p class="text-sm text-gray-400 mb-3">เก็บแยกจากเที่ยวรถ — <b class="text-white">ไม่แก้ไขเที่ยวขาล่องเดิม</b> · หน้า "ตรวจการเติม" จะใช้ลิตรนี้ตรวจขาล่องที่ยังไม่มีลิตร</p>
+                    <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+                        ${importStatCard('ผูกกับเที่ยวในระบบได้ (จะบันทึก)', n)}
+                        ${importStatCard('ลิตรรวม (เฉพาะที่มีลิตร)', liters)}
+                        ${importStatCard('บันทึกไว้แล้ว (ข้าม)', plan.already)}
+                        ${importStatCard('ไม่มีเที่ยวนี้ในระบบ (ข้าม)', plan.noTrip)}
+                    </div>
+                    ${plan.unfixed ? `<p class="text-red-300 bg-red-900/30 border border-red-700 rounded-lg p-3 text-sm mb-3">⚠️ เที่ยวขาล่องในระบบ ${plan.unfixed.toLocaleString()} เที่ยวยังบันทึกวันที่เร็วไป 1 วัน — ยังผูกลิตรให้ไม่ได้ ให้กด "แก้วันที่" ในการ์ดด้านบนก่อน แล้วอ่านไฟล์นี้ใหม่</p>` : ''}
+                    ${plan.changed ? `<p class="text-amber-300 text-sm mb-3">⚠️ ${plan.changed} รายการเคยบันทึกแล้วแต่ข้อความในไฟล์เปลี่ยนไป — ระบบไม่ทับของเดิม</p>` : ''}
+                    ${statusRows ? `<table class="text-sm mb-3"><tbody>${statusRows}</tbody></table>` : ''}
+                    ${unparsed.length ? `<details class="mb-3 text-sm"><summary class="cursor-pointer text-yellow-300">อ่านไม่ได้ ${unparsed.length} รายการ — ตรวจเอง</summary><ul class="mt-2 space-y-1 text-gray-300">${unparsed.slice(0, 100).map(e => `<li>${esc(e.record.date)} ${esc(e.record.plate)} · ${esc(e.record.raw)}</li>`).join('')}</ul></details>` : ''}
+                    <p class="text-xs text-yellow-300 mb-3">ถ้าเที่ยวขาล่องมีในระบบอยู่แล้ว ใช้ปุ่มนี้อย่างเดียว — ไม่ต้องกด "เพิ่มเข้าไป" ด้านล่าง (จะทำให้เที่ยวซ้ำ)</p>
+                    <button id="coll-save-btn" class="bg-success hover:bg-green-600 text-white font-bold py-2 px-5 rounded-lg shadow-md ${n ? '' : 'opacity-60 cursor-not-allowed'}" ${n ? '' : 'disabled'}>บันทึกลิตรขาล่อง (${n.toLocaleString()} รายการ)</button>
+                    <div id="coll-result" class="mt-3"></div>
+                </div>`;
+        };
+
+        const handleColumnLSave = async () => {
+            if (!collPlan || collPlan.saved || !collPlan.toSave.length) return;
+            const n = collPlan.toSave.length;
+            if (!confirm(`บันทึกลิตรขาล่องจากช่อง "คิวรถล่าสุด" ${n.toLocaleString()} รายการ?\n\nเก็บแยกจากเที่ยวรถ ไม่แก้ไขเที่ยวขาล่องเดิม และไม่ทับรายการที่บันทึกไว้แล้ว`)) return;
+            const btn = document.getElementById('coll-save-btn');
+            const out = document.getElementById('coll-result');
+            btn.disabled = true; btn.classList.add('opacity-60', 'cursor-not-allowed');
+            out.innerHTML = '<p class="text-sky-400">กำลังบันทึก...</p>';
+            const plan = collPlan;
+            const { added, skipped, failed, error } = await createAllIfAbsent(plan.toSave, (e) => logisticsService.createDownhillFuel(e.ym, e.key, e.record));
+            plan.saved = true;
+            if (failed) {
+                console.error('Column L save failed for some rows:', error);
+                out.innerHTML = `<p class="text-red-400 font-bold">บันทึกได้ ${added.toLocaleString()} รายการ แต่ไม่สำเร็จ ${failed} รายการ (${esc(error?.message || error)}) — กด "อ่าน &amp; ตรวจสอบ" แล้วบันทึกอีกครั้ง ระบบจะเติมเฉพาะที่ยังขาด</p>`;
+            } else {
+                resetDownhillFuel(); // the audit reloads the months it needs
+                out.innerHTML = `<p class="text-green-400 font-bold">✓ บันทึกลิตรขาล่องแล้ว ${added.toLocaleString()} รายการ${skipped ? ` · ข้าม ${skipped} รายการที่มีอยู่แล้ว` : ''} — ดูผลที่หน้า "ตรวจการเติม"</p>`;
+            }
+        };
+
+        // ---- One-time date fix (user decision A, 17 Nov 2026): Transport trips stored one day early ----
+        let dfix = null; // { plan, backupDone, fileName }
+        const dfixOut = (html) => { const el = document.getElementById('dfix-out'); if (el) el.innerHTML = html; };
+        const thMoney = (n) => Number(n || 0).toLocaleString('th-TH', { maximumFractionDigits: 2 });
+
+        const handleDateFixCheck = async () => {
+            const f = document.getElementById('dfix-file')?.files?.[0];
+            if (!f) { dfixOut('<p class="text-red-400">เลือกไฟล์ Transport ก่อน</p>'); return; }
+            if (dfix?.running) return; // never re-plan while a fix is being written
+            dfix = null;
+            const btn = document.getElementById('dfix-check-btn');
+            btn.disabled = true;
+            dfixOut('<p class="text-sky-400">กำลังอ่านไฟล์และข้อมูลในระบบทั้งหมด (อาจใช้เวลา 1–2 นาที)...</p>');
+            try {
+                const wb = XLSX.read(await f.arrayBuffer(), { type: 'array', cellDates: true });
+                const rowsOf = (name) => wb.Sheets[name] ? XLSX.utils.sheet_to_json(wb.Sheets[name], { header: 1, blankrows: false, defval: '' }) : null;
+                const upRows = rowsOf('คิวขาขึ้น'), downRows = rowsOf('คิวขาล่อง');
+                if (!upRows || !downRows) { dfixOut('<p class="text-red-400">ไฟล์นี้ไม่มีชีต "คิวขาขึ้น" และ "คิวขาล่อง" — ใช้ไฟล์ Transport</p>'); return; }
+                const up = parseUphillQueue(upRows).trips, down = parseDownhillQueue(downRows).trips;
+                // tdh_ keys (Transport downhill import, 17 Nov 2026) contain the date: old key (date one day early) → new key.
+                const [oldKeys, newKeys] = await Promise.all([downhillTripKeys(down.map(t => ({ ...t, date: prevDay(t.date) })), sha1hex), downhillTripKeys(down, sha1hex)]);
+                const tdhKeyMap = Object.fromEntries(oldKeys.map((k, i) => [k, newKeys[i]]));
+                const all = await logisticsService.fetchAllTrips();
+                const plan = planDateFix([...up, ...down], all, tdhKeyMap);
+                dfix = { plan, all, backupDone: false, fileName: f.name };
+                dfixOut(renderDateFixPreview(plan));
+                document.getElementById('dfix-backup-btn')?.addEventListener('click', handleDateFixBackup);
+                document.getElementById('dfix-apply-btn')?.addEventListener('click', handleDateFixApply);
+            } catch (err) {
+                console.error('Date fix check failed:', err);
+                dfixOut(`<p class="text-red-400">ตรวจไม่สำเร็จ: ${esc(err.message)}</p>`);
+            } finally { btn.disabled = false; }
+        };
+
+        const renderDateFixPreview = (plan) => {
+            const c = plan.counts;
+            const byMonth = {};
+            for (const m of plan.moves) { const b = byMonth[m.fromYm] ||= { n: 0, out: 0, net: 0 }; b.n++; if (m.toYm !== m.fromYm) { b.out++; b.net += Number(m.trip.netTransfer) || 0; } }
+            const monthRows = Object.keys(byMonth).sort().map(ym => `<tr class="border-b border-slate-700"><td class="p-2">${esc(ym)}</td><td class="p-2 text-right">${byMonth[ym].n.toLocaleString()}</td><td class="p-2 text-right">${byMonth[ym].out ? `${byMonth[ym].out} เที่ยว → เดือนถัดไป` : '-'}</td><td class="p-2 text-right">${byMonth[ym].out ? thMoney(byMonth[ym].net) : '-'}</td></tr>`).join('');
+            const moved = plan.moves.filter(m => m.toYm !== m.fromYm);
+            const movedNet = moved.reduce((s, m) => s + (Number(m.trip.netTransfer) || 0), 0);
+            const amb = plan.ambiguous.slice(0, 200).map(a => `<li>${esc(a.date)} ${esc(a.direction)} ${esc(a.plate)} ${esc(a.driver)} — ${esc(a.reason)}</li>`).join('');
+            return `
+                <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+                    ${importStatCard('จะแก้วันที่ (+1 วัน)', c.shift)}
+                    ${importStatCard('ย้ายไปเดือนถัดไป', c.monthChange)}
+                    ${importStatCard('ไม่พบในไฟล์ (ไม่แตะ)', c.notInFile)}
+                    ${importStatCard('บอกไม่ได้ / ชนกัน (ไม่แตะ)', c.ambiguous + c.conflict)}
+                </div>
+                <p class="mb-3 text-amber-300">⚠️ ${c.monthChange.toLocaleString()} เที่ยวจะย้ายเดือน (วันจริงคือวันที่ 1 ของเดือนถัดไป) · โอนสุทธิรวม ${thMoney(movedNet)} บาท — ยอดรายเดือนในหน้าการเงิน/รายงานของเดือนเหล่านี้จะเปลี่ยน</p>
+                <div class="overflow-x-auto max-h-80 overflow-y-auto rounded-lg border border-slate-700 mb-3">
+                    <table class="w-full text-sm"><thead class="bg-slate-800 text-gray-400 sticky top-0"><tr><th class="p-2 text-left">เดือน (เดิม)</th><th class="p-2 text-right">แก้วันที่</th><th class="p-2 text-right">ย้ายเดือน</th><th class="p-2 text-right">โอนสุทธิที่ย้าย (บาท)</th></tr></thead><tbody>${monthRows}</tbody></table>
+                </div>
+                ${amb ? `<details class="mb-3"><summary class="cursor-pointer text-yellow-300">รายการที่ไม่แตะ ${plan.ambiguous.length} รายการ</summary><ul class="mt-2 space-y-1 text-gray-300">${amb}</ul></details>` : ''}
+                ${plan.conflicts.length ? `<p class="mb-3 text-yellow-300">ชนกับเที่ยวอื่น ${plan.conflicts.length} รายการ — ไม่แตะ</p>` : ''}
+                <ol class="list-decimal ml-5 space-y-1 text-gray-300 mb-3">
+                    <li>กด "ดาวน์โหลดสำรองข้อมูล" (บังคับ) — เก็บไฟล์ไว้ ใช้กู้คืนได้</li>
+                    <li>กด "แก้วันที่" แล้วยืนยัน · ระหว่างแก้อย่าให้คนอื่นนำเข้าหรือแก้คิวรถ</li>
+                </ol>
+                <div class="flex flex-wrap gap-3">
+                    <button id="dfix-backup-btn" class="bg-slate-600 hover:bg-slate-500 text-white font-bold py-2 px-4 rounded-lg">ดาวน์โหลดสำรองข้อมูล</button>
+                    <button id="dfix-apply-btn" class="bg-error hover:bg-red-600 text-white font-bold py-2 px-4 rounded-lg opacity-60 cursor-not-allowed" disabled>แก้วันที่ ${c.shift.toLocaleString()} เที่ยว</button>
+                </div>
+                <div id="dfix-result" class="mt-3"></div>`;
+        };
+
+        const handleDateFixBackup = () => {
+            if (!dfix) return;
+            const blob = new Blob([JSON.stringify(dfix.all)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url; a.download = `trips-backup-before-datefix-${localDateStr()}.json`;
+            document.body.appendChild(a); a.click(); a.remove();
+            setTimeout(() => URL.revokeObjectURL(url), 2000);
+            dfix.backupDone = true;
+            const btn = document.getElementById('dfix-apply-btn');
+            if (btn && dfix.plan.moves.length) { btn.disabled = false; btn.classList.remove('opacity-60', 'cursor-not-allowed'); }
+        };
+
+        const handleDateFixApply = async () => {
+            const cur = dfix; // the plan being applied — a new "ตรวจ" must not swap it out mid-run
+            if (!cur || !cur.backupDone || cur.running || cur.done) return;
+            const { plan } = cur;
+            if (!confirm(`แก้วันที่ ${plan.counts.shift.toLocaleString()} เที่ยว (+1 วัน ให้ตรงกับไฟล์ Excel)?\n\n${plan.counts.monthChange} เที่ยวจะย้ายไปเดือนถัดไป\nเก็บวันเดิมไว้ในช่อง dateFixedFrom ของแต่ละเที่ยว\n\nสำรองข้อมูลแล้วใช่ไหม?`)) return;
+            cur.running = true;
+            const btn = document.getElementById('dfix-apply-btn');
+            const checkBtn = document.getElementById('dfix-check-btn');
+            btn.disabled = true; btn.classList.add('opacity-60', 'cursor-not-allowed');
+            if (checkBtn) checkBtn.disabled = true;
+            const out = document.getElementById('dfix-result');
+            const committedFrom = new Set(); // source paths of moves actually written so far
+            const batches = buildDateFixBatches(plan.moves);
+            let done = 0, dropped = 0, failedAt = '';
+            for (const b0 of batches) {
+                if (out) out.innerHTML = `<p class="text-sky-400">กำลังแก้เดือน ${esc(b0.month)} (${done.toLocaleString()} / ${plan.counts.shift.toLocaleString()} เที่ยว)...</p>`;
+                try {
+                    // Re-read the months this batch touches; skip trips changed since the preview.
+                    const months = [...new Set(b0.moves.flatMap(m => [m.fromYm, m.toYm]))];
+                    const fresh = Object.fromEntries(await Promise.all(months.map(async ym => [ym, await logisticsService.fetchTripsMonthRaw(ym)])));
+                    const b = recheckBatch(b0, fresh, committedFrom);
+                    if (Object.keys(b.updates).length) await logisticsService.applyTripsUpdate(b.updates); // atomic per month
+                    for (const m of b.moves) committedFrom.add(`${m.fromYm}/${m.fromKey}`);
+                    done += b.moves.length; dropped += b.dropped.length;
+                } catch (err) {
+                    console.error('Date fix batch failed:', b0.month, err);
+                    failedAt = `${b0.month}: ${err.message}`;
+                    break;
+                }
+            }
+            cur.running = false; cur.done = !failedAt;
+            if (checkBtn) checkBtn.disabled = false;
+            const entry = { at: new Date().toISOString(), file: cur.fileName, planned: plan.counts.shift, fixed: done, skipped: dropped, monthChange: plan.counts.monthChange, error: failedAt || '' };
+            logisticsService.logDateFix(entry).catch(err => console.error('Date fix log failed:', err));
+            if (out) out.innerHTML = failedAt
+                ? `<p class="text-red-400 font-bold">หยุดที่เดือน ${esc(failedAt)} — แก้ไปแล้ว ${done.toLocaleString()} เที่ยว (เดือนที่สำเร็จแก้ครบทั้งเดือน) · กด "ตรวจ" ใหม่แล้วแก้ต่อได้ ระบบจะแก้เฉพาะที่เหลือ</p>`
+                : `<p class="text-green-400 font-bold">✓ แก้วันที่แล้ว ${done.toLocaleString()} เที่ยว${dropped ? ` · ข้าม ${dropped} เที่ยวที่ถูกแก้ระหว่างนั้น` : ''} — กด "ตรวจ" อีกครั้งเพื่อยืนยัน (ควรเหลือ 0)</p>`;
+        };
+
         // Daily-board / Transport imports overlapping the template period → the same trip may be counted twice.
         const templateOverlapNote = (trips) => {
             const start = appState.templateStartMonth;
@@ -1092,6 +1309,7 @@ const formatZeroAsEmpty = (value) => {
             document.getElementById('import-file')?.addEventListener('change', handleImportFile);
             document.getElementById('import-parse-btn')?.addEventListener('click', handleImportParse);
             document.getElementById('tpl-download-btn')?.addEventListener('click', handleTemplateDownload);
+            document.getElementById('dfix-check-btn')?.addEventListener('click', handleDateFixCheck);
             document.getElementById('tpl-start-save')?.addEventListener('click', handleTemplateStartSave);
         };
 
@@ -1981,6 +2199,25 @@ const formatZeroAsEmpty = (value) => {
                 .finally(() => { if (gen === auditPastGen) auditPastLoading.delete(m); })))
                 .then(() => { if (gen === auditPastGen && appState.view === 'audit') rerenderAuditContent(); });
         };
+        // Column L downhill liters (downhillFuel/{ym}) — fetched once per month the audit shows, never the whole node.
+        const dfuelLoaded = new Set(), dfuelLoading = new Set();
+        const loadDownhillFuel = (months) => {
+            const todo = months.filter(m => /^\d{4}-\d{2}$/.test(m || '') && !dfuelLoaded.has(m) && !dfuelLoading.has(m));
+            if (!todo.length) return;
+            todo.forEach(m => dfuelLoading.add(m));
+            Promise.all(todo.map(m => logisticsService.fetchDownhillFuelMonth(m)
+                .then(v => { dfuelLoaded.add(m); return v; })
+                .catch(err => { console.error(`Load downhillFuel ${m} failed:`, err); return {}; })
+                .finally(() => dfuelLoading.delete(m))))
+                .then(parts => {
+                    const merged = Object.assign({}, appState.downhillFuel, ...parts);
+                    if (Object.keys(merged).length !== Object.keys(appState.downhillFuel).length) {
+                        appState.downhillFuel = merged; // new object → the audit cache recomputes
+                        if (appState.view === 'audit') rerenderAuditContent();
+                    }
+                });
+        };
+        const resetDownhillFuel = () => { dfuelLoaded.clear(); appState.downhillFuel = {}; };
         // Trip order inside a day: board row number when present, else the record id.
         const tripOrder = (a, b) => (a.trip.date || '').localeCompare(b.trip.date || '') || ((a.leg === 'down') - (b.leg === 'down')) || ((a.trip.sourceRow || 0) - (b.trip.sourceRow || 0)) || String(a.trip.id || '').localeCompare(String(b.trip.id || ''));
 
@@ -1997,23 +2234,32 @@ const formatZeroAsEmpty = (value) => {
             const carryPending = !carryFailed.length && pastMonths.some(m => !(m in auditPastTrips));
             const carryReady = carryOn && !carryTooLong && !carryPending && !carryFailed.length;
             const pastKey = carryReady ? pastMonths.map(m => `${m}:${auditPastTrips[m].length}`).join(',') + `|${auditPastGen}` : 'none';
-            if (auditCache.trips !== appState.trips || auditCache.std !== appState.rateStandards || auditCache.veh !== appState.vehicles || auditCache.tol !== tol || auditCache.pastKey !== pastKey) {
+            loadDownhillFuel([...pastMonths, month]);
+            const dfuel = appState.downhillFuel;
+            if (auditCache.trips !== appState.trips || auditCache.std !== appState.rateStandards || auditCache.veh !== appState.vehicles || auditCache.tol !== tol || auditCache.pastKey !== pastKey || auditCache.dfuel !== dfuel) {
                 const ctx = buildAuditContext(appState.rateStandards, appState.vehicles);
-                const run = (trips) => (trips || []).map(t => auditTrip(t, ctx, tol)).filter(Boolean);
+                // Downhill trips without their own liters take the column L fill (downhillFuel); the trip itself is untouched.
+                const run = (trips) => (trips || []).map(t => {
+                    const r = auditTrip(withDownhillFuel(t, dfuel[t.id]), ctx, tol);
+                    if (r && r.trip.fuelFrom === 'colL') r.flags = [...r.flags, `ลิตรจากช่อง "คิวรถล่าสุด" ไฟล์ Transport: ${r.trip.fuelText}`];
+                    return r;
+                }).filter(Boolean);
                 const all = run(appState.trips).sort(tripOrder);
                 let balances = {};
                 if (carryReady) {
                     // Earlier months do not change with the live month — audit them once per (data, rates, vehicles, tolerance).
-                    if (auditPastResults.key !== pastKey || auditPastResults.std !== appState.rateStandards || auditPastResults.veh !== appState.vehicles || auditPastResults.tol !== tol) {
-                        auditPastResults = { key: pastKey, std: appState.rateStandards, veh: appState.vehicles, tol, results: pastMonths.flatMap(m => run(auditPastTrips[m])) };
+                    if (auditPastResults.key !== pastKey || auditPastResults.std !== appState.rateStandards || auditPastResults.veh !== appState.vehicles || auditPastResults.tol !== tol || auditPastResults.dfuel !== dfuel) {
+                        auditPastResults = { key: pastKey, std: appState.rateStandards, veh: appState.vehicles, tol, dfuel, results: pastMonths.flatMap(m => run(auditPastTrips[m])) };
                     }
                     const ordered = [...auditPastResults.results.map(r => ({ ...r })), ...all].sort(tripOrder);
+                    reconcileColumnL(ordered, new Set([...pastMonths, month]));
                     flagDoubleDownhill(ordered, [...pastMonths.flatMap(m => auditPastTrips[m] || []), ...appState.trips]);
                     balances = applyCarry(ordered);
                 } else {
+                    reconcileColumnL(all, new Set([month]));
                     flagDoubleDownhill(all, appState.trips);
                 }
-                auditCache = { trips: appState.trips, std: appState.rateStandards, veh: appState.vehicles, tol, pastKey, all, balances };
+                auditCache = { trips: appState.trips, std: appState.rateStandards, veh: appState.vehicles, tol, pastKey, dfuel, all, balances };
             }
             const { all, balances } = auditCache;
             const q = (as.search || '').trim().toLowerCase();

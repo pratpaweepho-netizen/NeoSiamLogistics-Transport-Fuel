@@ -5,11 +5,15 @@
 import { parseNum, clean } from './parseUtils.js';
 
 // Local calendar date (Thai tz in the browser) → 'YYYY-MM-DD'. Avoids UTC off-by-one.
-const ymd = (v) => {
+// SheetJS (cellDates) can land a whole-day Excel date a few seconds BEFORE local midnight — seen in Node on
+// Asia/Bangkok (serial 46328 = 2 Nov 2026 → "1 Nov 23:59:56"), while Edge gives exact midnight. Shift by one minute
+// before reading the day, so both give the date that Excel shows.
+export const ymd = (v) => {
     if (v instanceof Date && !isNaN(v)) {
-        let y = v.getFullYear();
+        const t = new Date(v.getTime() + 60 * 1000);
+        let y = t.getFullYear();
         if (y >= 2500) y -= 543; // normalize Buddhist-era years (e.g. 2569 → 2026)
-        return `${y}-${String(v.getMonth() + 1).padStart(2, '0')}-${String(v.getDate()).padStart(2, '0')}`;
+        return `${y}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`;
     }
     const s = clean(v);
     const m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
@@ -71,7 +75,8 @@ export function detectSheetType(rows) {
     if (clean(h0[0]) === 'ทะเบียน' && has('บริษัทรถ')) return 'vehicles';
     // Transport 2026.xlsx trip sheets (header on row 0, station columns like ปั๊มจิตตมาศ).
     if (clean(h0[0]) === 'Date' && has('พขร.') && has('ปลายทาง')) return 'uphill';
-    if (clean(h0[0]) === 'วันที่' && has('คนขับ') && has('ขึ้นที่')) return 'downhill';
+    // Transport 01.xlsx (Nov 2026) has a blank A1 header; "คิวรถล่าสุด" (column L) only exists on the downhill sheet.
+    if ((clean(h0[0]) === 'วันที่' || (clean(h0[0]) === '' && h0.map(clean).includes('คิวรถล่าสุด'))) && has('คนขับ') && has('ขึ้นที่')) return 'downhill';
     // Partner queue board (คิวรถร่วม-ขาขึ้น 2026.xlsx)
     if (has('คิวรถร่วม') && (has('ว/ด/ป') || has('รายละเอียด'))) return 'partnerqueue';
     // Daily dispatch board (คิวขาขึ้น ปี 2026.xlsx): title "คิวรถ วันที่...", generic single 'ปั๊มน้ำมัน' column.
@@ -123,8 +128,10 @@ export function parseUphillQueue(rows) {
 // คิวขาล่อง (downhill). Returns { trips, stats, warnings }.
 export function parseDownhillQueue(rows) {
     const warnings = [];
-    if (!rows || rows.length < 2) return { trips: [], stats: emptyStats(), warnings: ['ไม่พบข้อมูล'] };
+    if (!rows || rows.length < 2) return { trips: [], lastQueue: [], stats: emptyStats(), warnings: ['ไม่พบข้อมูล'] };
     const trips = [];
+    // Column L (คิวรถล่าสุด) holds the downhill fill as text; kept parallel to trips, NOT stored on the trip (see downhillFuel.js).
+    const lastQueue = [];
     let skipped = 0;
     for (let r = 1; r < rows.length; r++) {
         const row = rows[r];
@@ -149,8 +156,9 @@ export function parseDownhillQueue(rows) {
             distance: parseNum(row[21]),
             extraNote: '',
         });
+        lastQueue.push(clean(row[11]));
     }
-    return { trips, stats: statsOf(trips, skipped), warnings };
+    return { trips, lastQueue, stats: statsOf(trips, skipped), warnings };
 }
 
 // Partner queue board (คิวรถร่วม-ขาขึ้น 2026.xlsx): เดือน | ว/ด/ป | คิวรถร่วม | พขร. | ทะเบียน | ต้นทาง | รายละเอียด | ปลายทาง

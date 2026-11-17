@@ -29,6 +29,9 @@ export let appState = {
             auditState: { status: '', search: '', tolerance: 0, carryStart: '2026-11', showStandards: false },
             // Excel trip template start month (settings/tripTemplate.startMonth); '' = not set yet → template import blocked.
             templateStartMonth: '',
+            // Column L downhill liters by trip key (downhillFuel/{ym}/{key}), only for the months the audit loaded
+            // (see loadDownhillFuel in app.js); replaced by a new object whenever a month arrives.
+            downhillFuel: {},
             driverFilter: '',
             payrollMonth: '',
             // Form-specific state
@@ -65,6 +68,12 @@ export let appState = {
         
         let database;
         let tripsRef = null; // active month listener for the queue view
+
+        // Create-only write used by every import: the transaction aborts (returns undefined) when the path already holds
+        // data, so a concurrent import can never overwrite it. Resolves true when written.
+        const createIfAbsent = (path, value) => database.ref(path)
+            .transaction(cur => (cur === null ? value : undefined))
+            .then(r => !!r.committed);
 
         export const logisticsService = {
             initialize: () => {
@@ -1066,14 +1075,20 @@ export let appState = {
             },
             saveAuditSettings: (patch) => database.ref('settings/fuelAudit').update(patch),
             saveTemplateSettings: (patch) => database.ref('settings/tripTemplate').update(patch),
+            // One-time date fix (dateFix.js): the whole trips node (also the backup), one month, and one atomic
+            // multi-path update under trips/ per month.
+            fetchAllTrips: () => database.ref('trips').once('value').then(s => s.val() || {}),
+            fetchTripsMonthRaw: (ym) => database.ref(`trips/${ym}`).once('value').then(s => s.val() || {}),
+            applyTripsUpdate: (updates) => database.ref('trips').update(updates),
+            logDateFix: (entry) => database.ref('settings/dateFixLog').push(entry),
+            // Column L downhill liters (downhillFuel/{ym}/{tripKey}) — separate from trips, which are never modified.
+            fetchDownhillTripsMonth: (ym) => database.ref(`trips/${ym}`).orderByKey().startAt('tdh_').endAt('tdh_\uf8ff').once('value').then(s => s.val() || {}),
+            fetchDownhillFuelMonth: (ym) => database.ref(`downhillFuel/${ym}`).once('value').then(s => s.val() || {}),
+            createDownhillFuel: (ym, key, rec) => createIfAbsent(`downhillFuel/${ym}/${key}`, rec),
             // Database adapter for the Excel trip template (tripTemplate.js).
             templateTripsDb: {
                 fetchMonth: (ym) => database.ref(`trips/${ym}`).once('value').then(s => s.val()),
-                // Create-only write: the transaction aborts (returns undefined) when the key already holds a trip,
-                // so a concurrent import can never overwrite it. Resolves true when written.
-                createIfAbsent: (ym, key, trip) => database.ref(`trips/${ym}/${key}`)
-                    .transaction(cur => (cur === null ? trip : undefined))
-                    .then(r => !!r.committed),
+                createIfAbsent: (ym, key, trip) => createIfAbsent(`trips/${ym}/${key}`, trip),
             },
             // One-off read of a whole month (no live listener) — used for the liters carried over from earlier months.
             fetchTripsMonth: (ym) => database.ref(`trips/${ym}`).once('value')
