@@ -235,10 +235,10 @@ const formatZeroAsEmpty = (value) => {
                                     ${money2('form-allowance', 'เบี้ยขับ / ค่าเดินทาง')}
                                     ${money2('form-deduction', 'หักเงิน')}
                                     ${money2('form-distance', 'ระยะทาง (กม.)')}
-                                    ${money2('form-advance', 'สำรองค่าลง / ตั้งเบิกเพิ่ม (บาท)')}
+                                    ${money2('form-advance', 'สำรองค่าลงสินค้า (บาท)')}
                                 </div>
                                 <button type="button" data-action="calc-allowance-form" class="text-sm bg-sky-700 hover:bg-sky-600 text-white py-1.5 px-3 rounded-lg">🧮 คำนวณ เบี้ยเลี้ยง / หัก / สุทธิโอน จากตารางเบี้ยเลี้ยง</button>
-                                <p class="text-xs text-gray-500">เบี้ยขับ = เบี้ยตามตาราง + ค่าน้ำมัน/แก๊ส + สำรองค่าลง/ตั้งเบิกเพิ่ม · สุทธิโอน = เบี้ยขับ − หัก · รถ NGV คิวหนักล่อง ต้องกรอกช่อง "สำรองค่าลง / ตั้งเบิกเพิ่ม" ก่อน (ไม่มีใส่ 0)</p>
+                                <p class="text-xs text-gray-500">เบี้ยขับ = เบี้ยตามตาราง + ค่าน้ำมัน/แก๊ส + สำรองค่าลงสินค้า · สุทธิโอน = เบี้ยขับ − หัก · รถ NGV คิวหนักล่อง ต้องกรอกช่อง "สำรองค่าลงสินค้า" ก่อน (ไม่มีใส่ 0)</p>
 
                                 <div><label class="block text-sm font-medium text-gray-400 mb-1">หมายเหตุ</label>
                                     <textarea id="form-notes" rows="2" class="w-full bg-slate-800 border border-slate-600 rounded-md px-3 py-2 text-white"></textarea></div>
@@ -1582,11 +1582,11 @@ const formatZeroAsEmpty = (value) => {
                         ${money('driverAllowance', 'เบี้ยขับ / ค่าเดินทาง', trip?.driverAllowance)}
                         ${money('deduction', 'หักเงิน', trip?.deduction)}
                         ${money('distance', 'ระยะทาง (กม.)', trip?.distance)}
-                        <div><label class="block text-xs text-gray-400 mb-1">สำรองค่าลง / ตั้งเบิกเพิ่ม (บาท)</label>
+                        <div><label class="block text-xs text-gray-400 mb-1">สำรองค่าลงสินค้า (บาท)</label>
                             <input type="number" name="unloadAdvance" value="${trip && trip.unloadAdvance != null && trip.unloadAdvance !== '' ? Number(trip.unloadAdvance) : ''}" class="w-full bg-slate-800 border border-slate-600 rounded-md px-3 py-2 text-white" /></div>
                     </div>
                     <button type="button" data-action="calc-allowance" class="text-sm bg-sky-700 hover:bg-sky-600 text-white py-1.5 px-3 rounded-lg">🧮 คำนวณ เบี้ยเลี้ยง / หัก / สุทธิโอน จากตารางเบี้ยเลี้ยง (ตาม ประเภทคิว + ประเภทรถ)</button>
-                    <p class="text-xs text-gray-500">เบี้ยขับ = เบี้ยตามตาราง + ค่าน้ำมัน/แก๊ส + สำรองค่าลง/ตั้งเบิกเพิ่ม · สุทธิโอน = เบี้ยขับ − หัก · รถ NGV คิวหนักล่อง ต้องกรอก "สำรองค่าลง / ตั้งเบิกเพิ่ม" ก่อน (ไม่มีใส่ 0)</p>
+                    <p class="text-xs text-gray-500">เบี้ยขับ = เบี้ยตามตาราง + ค่าน้ำมัน/แก๊ส + สำรองค่าลงสินค้า · สุทธิโอน = เบี้ยขับ − หัก · รถ NGV คิวหนักล่อง ต้องกรอก "สำรองค่าลงสินค้า" ก่อน (ไม่มีใส่ 0)</p>
                     <div><label class="block text-xs text-gray-400 mb-1">หมายเหตุ</label>
                         <input type="text" name="notes" value="${trip?.notes || ''}" class="w-full bg-slate-800 border border-slate-600 rounded-md px-3 py-2 text-white" /></div>
 
@@ -1623,7 +1623,7 @@ const formatZeroAsEmpty = (value) => {
 
         // Auto-fill เบี้ยเลี้ยง/หัก/สุทธิโอน from the imported rate table (ตารางเบี้ยเลี้ยง). silent = no alert.
         // Formula (user decision 17 Nov 2026, option ก — how accounting paid 214 real gas/fuel trips, src/tripMoney.js):
-        // เบี้ยขับ = ตาราง + ค่าน้ำมัน/แก๊ส + สำรองค่าลง/ตั้งเบิกเพิ่ม, สุทธิโอน = เบี้ยขับ − หัก; NGV หนักล่อง must state the
+        // เบี้ยขับ = ตาราง + ค่าน้ำมัน/แก๊ส + สำรองค่าลงสินค้า, สุทธิโอน = เบี้ยขับ − หัก; NGV หนักล่อง must state the
         // advance (0 = none) first. Money already typed/saved is never overwritten silently: the automatic run (queue /
         // vehicle type / fuel / advance changed) only replaces the calc's own amounts and otherwise leaves a note; the
         // button asks before replacing other non-zero amounts.

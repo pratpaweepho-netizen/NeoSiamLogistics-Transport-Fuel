@@ -2,10 +2,11 @@
 //
 // User decision 17 Nov 2026 (option ก), taken from the way accounting paid 214 real downhill trips with a gas/fuel cost
 // (2025-01 → 2026-11, net = เบี้ยขับ − หัก on all 214; the new formula reproduces 158 of the 159 that have a table rate):
-//   เบี้ยขับ   = เบี้ยตามตาราง + ค่าน้ำมัน/แก๊ส + สำรองค่าลง/ตั้งเบิกเพิ่ม
+//   เบี้ยขับ   = เบี้ยตามตาราง + ค่าน้ำมัน/แก๊ส + สำรองค่าลงสินค้า
 //   หัก       = ตามตาราง
 //   สุทธิโอน  = เบี้ยขับ − หัก
-// The extra advance (2,650–3,000 baht on 56 NGV "หนักล่อง" trips, notes "ตั้งเบิกที่ …") cannot be derived from
+// The extra advance = สำรองค่าลงสินค้า (user confirmed 17 Nov 2026; 2,650–3,000 baht on 56 NGV "หนักล่อง" trips,
+// notes "ตั้งเบิกที่ …") cannot be derived from
 // anything stored, so it is typed — and for NGV หนักล่อง it is required (0 = none).
 // The table is the DOWNHILL allowance table; an uphill trip with a fuel cost has no confirmed formula → typed by hand.
 
@@ -43,10 +44,10 @@ export function calcTripMoney(rate, inputs = {}) {
 }
 
 export const MONEY_MSG = {
-    'need-advance': 'รถ NGV คิวหนักล่อง: กรอกช่อง "สำรองค่าลง / ตั้งเบิกเพิ่ม" ก่อน (ไม่มีใส่ 0) แล้วระบบจะคำนวณเบี้ยขับและสุทธิโอนให้',
-    'bad-number': 'ค่าน้ำมัน/แก๊ส และ สำรองค่าลง ต้องเป็นตัวเลขไม่ติดลบ',
+    'need-advance': 'รถ NGV คิวหนักล่อง: กรอกช่อง "สำรองค่าลงสินค้า" ก่อน (ไม่มีใส่ 0) แล้วระบบจะคำนวณเบี้ยขับและสุทธิโอนให้',
+    'bad-number': 'ค่าน้ำมัน/แก๊ส และ สำรองค่าลงสินค้า ต้องเป็นตัวเลขไม่ติดลบ',
     'uphill-fuel': 'เที่ยวขาขึ้นที่มีค่าน้ำมัน: ตารางเบี้ยเลี้ยงเป็นอัตราขาล่อง และยังไม่มีสูตรที่ยืนยันสำหรับขาขึ้น — กรอกยอดเงินเอง',
-    stale: 'ประเภทคิว / ประเภทรถ / ทิศทาง / ค่าน้ำมัน หรือ สำรองค่าลง เปลี่ยนหลังจากคำนวณยอดเงิน — กดปุ่มคำนวณใหม่ หรือกรอกยอดเองก่อนบันทึก',
+    stale: 'ประเภทคิว / ประเภทรถ / ทิศทาง / ค่าน้ำมัน หรือ สำรองค่าลงสินค้า เปลี่ยนหลังจากคำนวณยอดเงิน — กดปุ่มคำนวณใหม่ หรือกรอกยอดเองก่อนบันทึก',
 };
 
 /**
@@ -66,7 +67,7 @@ export function describeTripMoney(m) {
     if (!m?.ok) return '';
     const parts = [`ตาราง ${m.table.toLocaleString()}`];
     if (m.f) parts.push(`ค่าน้ำมัน/แก๊ส ${m.f.toLocaleString()}`);
-    if (m.v) parts.push(`สำรองค่าลง/ตั้งเบิกเพิ่ม ${m.v.toLocaleString()}`);
+    if (m.v) parts.push(`สำรองค่าลงสินค้า ${m.v.toLocaleString()}`);
     return `เบี้ยขับ = ${parts.join(' + ')} = ${m.a.toLocaleString()} · สุทธิโอน = ${m.a.toLocaleString()} − หัก ${m.d.toLocaleString()} = ${m.n.toLocaleString()}`;
 }
 

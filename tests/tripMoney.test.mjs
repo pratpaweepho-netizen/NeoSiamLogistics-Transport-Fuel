@@ -21,7 +21,7 @@ eq('no rate → no-rate', pick(calcTripMoney(null, {})), 'no-rate');
 eq('negative / text numbers refused', [pick(calcTripMoney(NGV, { fuelCost: -1 })), pick(calcTripMoney(NGV, { advance: 'abc' }))], ['bad-number', 'bad-number']);
 eq('needsAdvance only for NGV หนักล่อง', [needsAdvance('หนักล่อง', 'รถNGV'), needsAdvance(' หนักล่อง ', 'รถ ngv'), needsAdvance('ตีเปล่า', 'รถNGV'), needsAdvance('หนักล่อง', '18W')], [true, true, false, false]);
 eq('note explains the sum', describeTripMoney(calcTripMoney(NGV, { fuelCost: 4900, advance: 3000, queueType: 'หนักล่อง', vehicleType: 'รถNGV' })),
-    'เบี้ยขับ = ตาราง 1,500 + ค่าน้ำมัน/แก๊ส 4,900 + สำรองค่าลง/ตั้งเบิกเพิ่ม 3,000 = 9,400 · สุทธิโอน = 9,400 − หัก 200 = 9,200');
+    'เบี้ยขับ = ตาราง 1,500 + ค่าน้ำมัน/แก๊ส 4,900 + สำรองค่าลงสินค้า 3,000 = 9,400 · สุทธิโอน = 9,400 − หัก 200 = 9,200');
 
 // review round (17 Nov 2026)
 eq('uphill trip with a fuel cost → refused (no confirmed formula)', pick(calcTripMoney(NGV, { fuelCost: 3000, queueType: 'ตีเปล่า', vehicleType: 'รถNGV', direction: 'ขาขึ้น' })), 'uphill-fuel');
