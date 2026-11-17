@@ -258,12 +258,13 @@ const formatZeroAsEmpty = (value) => {
             const filters = appState.dashboardFilters;
             const day = filters.day || '';
             const plateFilter = (filters.vehicleRegistration || '').toUpperCase();
-            let trips = logisticsService.getTrips();
+            let trips = tripsAsAudited();
             if (day) trips = trips.filter(t => t.date === day);
             if (plateFilter) trips = trips.filter(t => (t.plate || '').toUpperCase().includes(plateFilter));
 
             const totalLiters = trips.reduce((s, t) => s + (t.totalLiters || 0), 0);
             const totalBaht = trips.reduce((s, t) => s + (t.totalBaht || 0), 0);
+            const colLWarn = columnLWarning();
 
             const friendlyNames = logisticsService.getAllGasStationFriendlyNames();
 
@@ -314,7 +315,7 @@ const formatZeroAsEmpty = (value) => {
             return `
                 <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
                     ${renderCard(`<h3 class="text-lg text-gray-400">จำนวนคิว</h3><p class="text-4xl font-bold text-accent">${trips.length.toLocaleString()}</p>`, 'text-center')}
-                    ${renderCard(`<h3 class="text-lg text-gray-400">น้ำมันรวม</h3><p class="text-4xl font-bold text-accent">${totalLiters.toLocaleString()} <span class="text-2xl">ลิตร</span></p>`, 'text-center')}
+                    ${renderCard(`<h3 class="text-lg text-gray-400">น้ำมันรวม</h3><p class="text-4xl font-bold text-accent">${totalLiters.toLocaleString()} <span class="text-2xl">ลิตร</span></p><p class="text-xs text-gray-500 mt-1">รวมลิตรขาล่องจากไฟล์ Transport (คอลัมน์ L)</p>${colLWarn}`, 'text-center')}
                     ${renderCard(`<h3 class="text-lg text-gray-400">น้ำมันรวม (บาท)</h3><p class="text-4xl font-bold text-accent">${totalBaht.toLocaleString()}<span class="text-2xl"> บาท</span></p>`, 'text-center')}
                 </div>
                 <div class="space-y-4">
@@ -456,7 +457,10 @@ const formatZeroAsEmpty = (value) => {
                 <div class="space-y-8">
                     ${renderCard(`
                         <div class="flex flex-wrap justify-between items-center gap-4">
-                            <h2 class="text-2xl font-bold text-white flex items-center gap-3">${ICONS.Database}จัดการข้อมูลเส้นทาง</h2>
+                            <div>
+                                <h2 class="text-2xl font-bold text-white flex items-center gap-3">${ICONS.Database}จัดการข้อมูลเส้นทาง <span class="text-sm font-normal text-amber-300">(ฐานเดิม)</span></h2>
+                                <p class="text-xs text-amber-300 mt-1">⚠️ ตารางนี้คือฐานคำนวนเดิม ไม่ใช่ตารางอัตราเติมน้ำมันที่ใช้ตรวจ — ลิตรมาตรฐานดูที่หน้า "ตรวจการเติม" → ตารางอัตรามาตรฐาน (หน้าบันทึกน้ำมันก็ใช้ตารางอัตรานั้น)</p>
+                            </div>
                             <div class="flex flex-wrap items-center gap-4">
                                 <input type="text" id="data-management-filter" value="${appState.dataManagementFilter}" placeholder="ค้นหา..." class="w-full md:w-64 bg-slate-800 border border-slate-600 rounded-md px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent" />
                                 <button id="refresh-routes-btn" title="รีเฟรชข้อมูล" class="bg-sky-600 hover:bg-sky-700 text-white font-bold p-2 rounded-lg shadow-md transition-transform transform hover:scale-105">
@@ -1566,19 +1570,57 @@ const formatZeroAsEmpty = (value) => {
         };
 
         // Auto-fill เบี้ยเลี้ยง/หัก/สุทธิโอน from the imported rate table (ตารางเบี้ยเลี้ยง). silent = no alert.
+        // Allowance from the เบี้ยเลี้ยง table (rateTable). Money already typed/saved is never overwritten silently:
+        // the automatic run (queue/vehicle type changed) only fills EMPTY money fields and otherwise leaves a note; the
+        // button asks before replacing non-zero amounts. Net = allowance − deduction ONLY (no fuel cost / gas) — the user
+        // has not confirmed a formula including fuelCost yet (full check 17 Nov 2026), so the note says so when fuelCost > 0.
+        const applyAllowanceRate = ({ queueType, vehicleType, fields, note }, silent) => {
+            const rate = logisticsService.findRate(queueType, vehicleType);
+            const cur = { a: Number(fields.allowance.value) || 0, d: Number(fields.deduction.value) || 0, n: Number(fields.net.value) || 0 };
+            const fuelCost = Number(fields.fuelCost?.value) || 0;
+            const fuelNote = fuelCost ? ` · เที่ยวนี้มีค่าน้ำมัน ${fuelCost.toLocaleString()} บาท ซึ่งสูตรนี้ไม่ได้รวม ตรวจยอดสุทธิโอนเอง` : '';
+            if (!rate) {
+                const msg = `ไม่พบอัตราในตารางเบี้ยเลี้ยงสำหรับ ประเภทคิว "${queueType || '(ว่าง)'}" + ประเภทรถ "${vehicleType || '(ว่าง)'}" — ยอดเงินไม่ถูกเปลี่ยน`;
+                if (silent) note(cur.a || cur.d || cur.n ? msg : ''); else alert(msg);
+                return;
+            }
+            const next = { a: rate.allowance, d: rate.deduction, n: rate.allowance - rate.deduction };
+            const hasMoney = cur.a || cur.d || cur.n;
+            const same = cur.a === next.a && cur.d === next.d && cur.n === next.n;
+            // Money this calc filled itself (and nobody edited since) is not "typed money": it may be replaced.
+            const auto = fields.net.dataset.autoMoney ? JSON.parse(fields.net.dataset.autoMoney) : null;
+            const ownFill = auto && auto.a === cur.a && auto.d === cur.d && auto.n === cur.n;
+            if (hasMoney && !same && !ownFill) {
+                if (silent) { note(`ยอดเงินเดิมไม่ถูกเปลี่ยน — ตามตารางเบี้ยเลี้ยงจะเป็น เบี้ยขับ ${next.a.toLocaleString()} หัก ${next.d.toLocaleString()} สุทธิ ${next.n.toLocaleString()} (กดปุ่มคำนวณถ้าต้องการใช้)${fuelNote}`); return; }
+                if (!confirm(`แทนยอดเงินเดิมด้วยตารางเบี้ยเลี้ยง?\n\nเดิม: เบี้ยขับ ${cur.a.toLocaleString()} · หัก ${cur.d.toLocaleString()} · สุทธิโอน ${cur.n.toLocaleString()}\nใหม่: เบี้ยขับ ${next.a.toLocaleString()} · หัก ${next.d.toLocaleString()} · สุทธิโอน ${next.n.toLocaleString()}${fuelCost ? `\n\n⚠️ เที่ยวนี้มีค่าน้ำมัน ${fuelCost.toLocaleString()} บาท ซึ่งสูตรนี้ไม่ได้รวม` : ''}`)) return;
+            }
+            fields.allowance.value = next.a;
+            fields.deduction.value = next.d;
+            fields.net.value = next.n; // สุทธิโอน = เบี้ยเลี้ยง − หัก
+            fields.net.dataset.autoMoney = JSON.stringify(next); // cleared as soon as someone edits a money field
+            note(fuelNote ? `คำนวณจากตารางเบี้ยเลี้ยงแล้ว${fuelNote}` : '');
+        };
+        // Typing in a money field makes it the user's own value (no longer the calc's).
+        const watchMoneyEdits = (fields) => {
+            for (const el of [fields.allowance, fields.deduction, fields.net]) el?.addEventListener('input', () => { if (fields.net) delete fields.net.dataset.autoMoney; });
+        };
+        // Saving is blocked while the net transfer is the calc's own value AND the trip has a fuel cost: that formula
+        // (net = allowance − deduction) leaves the fuel cost out and has not been confirmed (rule: unsure money blocks saving).
+        const unconfirmedNet = (netInput, fuelCostInput) => !!netInput?.dataset.autoMoney && (Number(fuelCostInput?.value) || 0) > 0;
+        // A small note under the net-transfer field (created on demand).
+        const allowanceNote = (netInput) => (text) => {
+            if (!netInput) return;
+            let el = netInput.parentElement?.querySelector('[data-allowance-note]');
+            if (!el && text) { el = document.createElement('p'); el.setAttribute('data-allowance-note', ''); el.className = 'text-xs text-amber-300 mt-1'; netInput.parentElement.appendChild(el); }
+            if (el) el.textContent = text;
+        };
         const handleCalcAllowance = (form, silent = false) => {
             form = form?.closest ? form.closest('#trip-form') : form;
             if (!form) return;
-            const queueType = form.querySelector('[name="queueType"]').value;
-            const vehicleType = form.querySelector('[name="vehicleType"]').value;
-            const rate = logisticsService.findRate(queueType, vehicleType);
-            if (!rate) {
-                if (!silent) alert(`ไม่พบอัตราสำหรับ ประเภทคิว "${queueType || '(ว่าง)'}" + ประเภทรถ "${vehicleType || '(ว่าง)'}"\n\nประเภทวิ่งในตาราง: หนักล่อง, ตีเปล่า, คิวพิเศษ`);
-                return;
-            }
-            form.querySelector('[name="driverAllowance"]').value = rate.allowance;
-            form.querySelector('[name="deduction"]').value = rate.deduction;
-            form.querySelector('[name="netTransfer"]').value = rate.allowance - rate.deduction; // สุทธิโอน = เบี้ยเลี้ยง − หัก
+            const q = (n) => form.querySelector(`[name="${n}"]`);
+            const fields = { allowance: q('driverAllowance'), deduction: q('deduction'), net: q('netTransfer'), fuelCost: q('fuelCost') };
+            if (!fields.net.dataset.watch) { watchMoneyEdits(fields); fields.net.dataset.watch = '1'; }
+            applyAllowanceRate({ queueType: q('queueType').value, vehicleType: q('vehicleType').value, fields, note: allowanceNote(q('netTransfer')) }, silent);
         };
 
         const attachTripFormExtras = () => {
@@ -1620,6 +1662,7 @@ const formatZeroAsEmpty = (value) => {
         const handleTripFormSubmit = async (e) => {
             e.preventDefault();
             const form = e.target;
+            if (unconfirmedNet(form.querySelector('[name="netTransfer"]'), form.querySelector('[name="fuelCost"]'))) { alert('ยอดสุทธิโอนมาจากตารางเบี้ยเลี้ยง (เบี้ยขับ − หัก) ซึ่งยังไม่รวมค่าน้ำมันของเที่ยวนี้ — กรอกยอดสุทธิโอนที่ถูกต้องเองก่อนบันทึก'); return; }
             const fd = new FormData(form);
             const id = fd.get('id');
             const originalMonth = fd.get('originalMonth');
@@ -1755,12 +1798,14 @@ const formatZeroAsEmpty = (value) => {
 
         // --- View: Payroll (สรุปการเงินคนขับ) — aggregated from the loaded month's trips ---
         const aggregatePayroll = () => {
-            const trips = logisticsService.getTrips();
+            // Board short names and full names are one driver (confirmed aliases, settings/fuelAudit.driverAliases).
+            const trips = tripsAsAudited();
             const byDriver = {};
             trips.forEach(t => {
-                const key = t.driver || '(ไม่ระบุ)';
-                if (!byDriver[key]) byDriver[key] = { driver: key, count: 0, revenue: 0, allowance: 0, deduction: 0, net: 0 };
+                const key = String(t.driver || '').trim() || '(ไม่ระบุ)';
+                if (!byDriver[key]) byDriver[key] = { driver: key, boardNames: new Set(), count: 0, revenue: 0, allowance: 0, deduction: 0, net: 0 };
                 const g = byDriver[key];
+                if (t.driverBoard) g.boardNames.add(String(t.driverBoard).trim());
                 g.count++; g.revenue += t.revenue || 0; g.allowance += t.driverAllowance || 0; g.deduction += t.deduction || 0; g.net += t.netTransfer || 0;
             });
             const bankOf = {}; logisticsService.getDrivers().forEach(d => { bankOf[(d.name || '').trim()] = d.bankAccount || ''; });
@@ -1788,8 +1833,8 @@ const formatZeroAsEmpty = (value) => {
             const { list, bankOf } = aggregatePayroll();
             const rows = list.map(g => `
                 <tr class="border-b border-slate-700 hover:bg-slate-700/20">
-                    <td class="p-2 whitespace-nowrap">${g.driver}</td>
-                    <td class="p-2 font-mono text-gray-400 whitespace-nowrap">${bankOf[g.driver.trim()] || ''}</td>
+                    <td class="p-2 whitespace-nowrap">${esc(g.driver)}${g.boardNames.size ? `<div class="text-xs text-gray-500">กระดาน: ${esc([...g.boardNames].join(', '))}</div>` : ''}</td>
+                    <td class="p-2 font-mono text-gray-400 whitespace-nowrap">${esc(bankOf[g.driver.trim()] || '')}</td>
                     <td class="p-2 text-right">${g.count}</td>
                     <td class="p-2 text-right">${g.revenue.toLocaleString()}</td>
                     <td class="p-2 text-right">${g.allowance.toLocaleString()}</td>
@@ -1817,8 +1862,8 @@ const formatZeroAsEmpty = (value) => {
         const handlePayrollExport = () => {
             const { list, bankOf } = aggregatePayroll();
             if (!list.length) { alert('ไม่มีข้อมูลให้ export'); return; }
-            const headers = ['คนขับ', 'เลขบัญชี', 'จำนวนคิว', 'รายรับ', 'เบี้ยขับ', 'หักเงิน', 'สุทธิโอน'];
-            const data = list.map(g => [g.driver, bankOf[g.driver.trim()] || '', g.count, g.revenue, g.allowance, g.deduction, g.net]);
+            const headers = ['คนขับ', 'เลขบัญชี', 'จำนวนคิว', 'รายรับ', 'เบี้ยขับ', 'หักเงิน', 'สุทธิโอน', 'ชื่อในกระดานคิว'];
+            const data = list.map(g => [g.driver, bankOf[g.driver.trim()] || '', g.count, g.revenue, g.allowance, g.deduction, g.net, [...g.boardNames].join(', ')]);
             const ws = XLSX.utils.aoa_to_sheet([headers, ...data]);
             const wb = XLSX.utils.book_new();
             XLSX.utils.book_append_sheet(wb, ws, 'Payroll');
@@ -1842,7 +1887,8 @@ const formatZeroAsEmpty = (value) => {
         };
         const renderReportsContent = () => {
             const rs = appState.reportsState;
-            const allTrips = logisticsService.getTrips();
+            // Column-L downhill liters merged in; driver names merged with the confirmed aliases (board name kept).
+            const allTrips = tripsAsAudited();
             if (!allTrips.length) return `<p class="text-center py-8 text-gray-500">ไม่มีข้อมูล — เลือกเดือนที่นำเข้าคิวรถแล้ว</p>`;
 
             // plate → own/partner classification
@@ -1854,7 +1900,7 @@ const formatZeroAsEmpty = (value) => {
             let trips = allTrips;
             if (rs.fDirection) trips = trips.filter(t => (t.direction || '') === rs.fDirection);
             if (rs.fDrive) trips = trips.filter(t => driveClass(t) === rs.fDrive);
-            if (rs.fDriver) { const q = rs.fDriver.toLowerCase(); trips = trips.filter(t => (t.driver || '').toLowerCase().includes(q)); }
+            if (rs.fDriver) { const q = rs.fDriver.toLowerCase(); trips = trips.filter(t => `${t.driver || ''} ${t.driverBoard || ''}`.toLowerCase().includes(q)); }
 
             const viewBtn = (val, label) => `<button data-report-view="${val}" class="px-3 py-1.5 rounded-md text-sm ${rs.view === val ? 'bg-accent text-white' : 'text-gray-300 hover:bg-slate-600'}">${label}</button>`;
             const filterBar = `
@@ -1968,7 +2014,7 @@ const formatZeroAsEmpty = (value) => {
 
             return `
                 ${filterBar}
-                <p class="text-xs text-gray-500 mb-3">เดือน ${appState.tripsMonth || '(เลือกเดือน)'} · แสดง ${trips.length.toLocaleString()} จาก ${allTrips.length.toLocaleString()} คิว · 💡 คลิกหัวคอลัมน์เพื่อเรียงลำดับ</p>
+                <p class="text-xs text-gray-500 mb-3">เดือน ${appState.tripsMonth || '(เลือกเดือน)'} · แสดง ${trips.length.toLocaleString()} จาก ${allTrips.length.toLocaleString()} คิว · ลิตรรวมขาล่องจากไฟล์ Transport (คอลัมน์ L) · ชื่อคนขับรวมชื่อในกระดานกับชื่อเต็มแล้ว · 💡 คลิกหัวคอลัมน์เพื่อเรียงลำดับ</p>${columnLWarning()}
                 <div class="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
                     ${importStatCard('จำนวนคิว', trips.length)}
                     ${importStatCard('น้ำมัน (ลิตร)', totLiters)}
@@ -2027,7 +2073,7 @@ const formatZeroAsEmpty = (value) => {
                     { label: 'รายรับ', key: 'revenue' },
                     { label: 'สุทธิโอน', key: 'net', cls: 'text-green-400' },
                 ], c.data, { key: 'month', dir: 'asc' });
-                body = `<div class="space-y-2 mb-4">${barsHtml}</div>${tbl}`;
+                body = `<div class="space-y-2 mb-4">${barsHtml}</div>${tbl}<p class="text-xs text-gray-500 mt-2">ลิตรในตารางเปรียบเทียบเป็นลิตรที่บันทึกในเที่ยว ยังไม่รวมลิตรขาล่องจากไฟล์ Transport (คอลัมน์ L) ซึ่งรวมอยู่ในตัวเลขของเดือนที่เลือกด้านบน</p>`;
             } else if (c.data) body = '<p class="text-gray-500 text-sm">ไม่มีข้อมูลในช่วงที่เลือก</p>';
             else body = '<p class="text-gray-500 text-sm">เลือกช่วงเดือนแล้วกด "เปรียบเทียบ" เพื่อดูแนวโน้มข้ามเดือน</p>';
             return renderCard(`<h3 class="font-bold text-white mb-3 flex items-center gap-2">${ICONS.ChartBar} เปรียบเทียบรายเดือน</h3>${controls}<div id="reports-compare-body">${body}</div>`);
@@ -2120,7 +2166,7 @@ const formatZeroAsEmpty = (value) => {
         };
 
         const handleReportsExport = () => {
-            const trips = logisticsService.getTrips();
+            const trips = tripsAsAudited(); // same liters / driver merge as the report on screen
             if (!trips.length) { alert('ไม่มีข้อมูลให้ export'); return; }
             const total = (rows, f) => rows.reduce((s, r) => s + (r[f] || 0), 0);
             const wb = XLSX.utils.book_new();
@@ -2250,24 +2296,48 @@ const formatZeroAsEmpty = (value) => {
                 .then(() => { if (gen === auditPastGen && appState.view === 'audit') rerenderAuditContent(); });
         };
         // Column L downhill liters (downhillFuel/{ym}) — fetched once per month the audit shows, never the whole node.
-        const dfuelLoaded = new Set(), dfuelLoading = new Set();
+        const dfuelLoaded = new Set(), dfuelLoading = new Set(), dfuelFailed = new Set();
         const loadDownhillFuel = (months) => {
-            const todo = months.filter(m => /^\d{4}-\d{2}$/.test(m || '') && !dfuelLoaded.has(m) && !dfuelLoading.has(m));
+            const todo = months.filter(m => /^\d{4}-\d{2}$/.test(m || '') && !dfuelLoaded.has(m) && !dfuelLoading.has(m) && !dfuelFailed.has(m));
             if (!todo.length) return;
             todo.forEach(m => dfuelLoading.add(m));
             Promise.all(todo.map(m => logisticsService.fetchDownhillFuelMonth(m)
                 .then(v => { dfuelLoaded.add(m); return v; })
-                .catch(err => { console.error(`Load downhillFuel ${m} failed:`, err); return {}; })
+                .catch(err => { console.error(`Load downhillFuel ${m} failed:`, err); dfuelFailed.add(m); return {}; }) // not retried until reload
                 .finally(() => dfuelLoading.delete(m))))
                 .then(parts => {
                     const merged = Object.assign({}, appState.downhillFuel, ...parts);
                     if (Object.keys(merged).length !== Object.keys(appState.downhillFuel).length) {
                         appState.downhillFuel = merged; // new object → the audit cache recomputes
                         if (appState.view === 'audit') rerenderAuditContent();
+                        if (appState.view === 'dashboard') { const c = document.getElementById('dashboard-content'); if (c) c.innerHTML = renderDashboardContent(); }
+                        if (appState.view === 'reports') {
+                            // Keep the cursor in a report filter box the user may be typing in.
+                            const a = document.activeElement, id = a?.id, pos = a?.selectionStart;
+                            rerenderReportsContent();
+                            const again = id && document.getElementById(id);
+                            if (again && again !== a) { again.focus(); if (pos != null && again.setSelectionRange) again.setSelectionRange(pos, pos); }
+                        }
                     }
                 });
         };
-        const resetDownhillFuel = () => { dfuelLoaded.clear(); appState.downhillFuel = {}; };
+        const resetDownhillFuel = () => { dfuelLoaded.clear(); dfuelFailed.clear(); appState.downhillFuel = {}; };
+        // The loaded month's trips with column-L downhill liters merged in (only downhill trips with no liters of their
+        // own — the same rule as the audit page), so dashboard / report liter totals match the audit.
+        const tripsWithColumnL = (trips) => {
+            const months = [...new Set(trips.map(t => t.yearMonth || String(t.date || '').slice(0, 7)).filter(Boolean))];
+            loadDownhillFuel(months);
+            const df = appState.downhillFuel;
+            return trips.map(t => withDownhillFuel(t, df[t.id]));
+        };
+        // The loaded month's trips as the audit sees them: column-L downhill liters merged in and board short names
+        // merged with the confirmed full names (board name kept in driverBoard). Used by every page AND export that
+        // shows liters or per-driver money, so screen, export and audit agree.
+        const tripsAsAudited = () => tripsWithColumnL(logisticsService.getTrips()).map(t => applyDriverAlias(t, appState.auditState.driverAliases));
+        const columnLWarning = () => {
+            const months = [...new Set(logisticsService.getTrips().map(t => t.yearMonth).filter(Boolean))].filter(m => dfuelFailed.has(m));
+            return months.length ? `<p class="text-xs text-red-400 mb-2">⚠️ โหลดลิตรขาล่องจากไฟล์ Transport (คอลัมน์ L) ของเดือน ${esc(months.join(', '))} ไม่สำเร็จ — ลิตรรวมยังไม่รวมส่วนนี้ (รีเฟรชหน้าเพื่อลองใหม่)</p>` : '';
+        };
         // Trip order inside a day: board row number when present, else the record id.
         const tripOrder = (a, b) => (a.trip.date || '').localeCompare(b.trip.date || '') || ((a.leg === 'down') - (b.leg === 'down')) || ((a.trip.sourceRow || 0) - (b.trip.sourceRow || 0)) || String(a.trip.id || '').localeCompare(String(b.trip.id || ''));
 
@@ -3229,7 +3299,7 @@ const formatZeroAsEmpty = (value) => {
             const search = appState.dataManagementFilter;
             const safe = search.replace(/[\\/:*?"<>|]/g, '').trim().slice(0, 30);
             const suffix = search ? `_ค้นหา-${safe || 'กรองแล้ว'}` : '';
-            XLSX.writeFile(wb, `เส้นทาง_${localDateStr()}${suffix}.xlsx`);
+            XLSX.writeFile(wb, `เส้นทาง-ฐานเดิม(ไม่ใช่ตารางอัตรา)_${localDateStr()}${suffix}.xlsx`);
         };
 
          const attachVehicleManagementListeners = () => {
@@ -3474,6 +3544,8 @@ const formatZeroAsEmpty = (value) => {
                 document.getElementById('form-total-liters').value = '';
                 document.getElementById('form-total-baht').value = '';
                 vlookupDown.key = ''; // next record starts from the practice default
+                const netEl = document.getElementById('form-net');
+                if (netEl) { delete netEl.dataset.autoMoney; netEl.parentElement?.querySelector('[data-allowance-note]')?.remove(); }
                 updateVlookupCard();
                 const status = document.getElementById('form-status');
                 if (status) status.innerHTML = '';
@@ -3482,22 +3554,18 @@ const formatZeroAsEmpty = (value) => {
         
         // 🧮 for the page form (reads/writes by id). silent = no alert (used for auto-calc on change).
         const handleCalcAllowanceForm = (silent = false) => {
-            const queueType = document.getElementById('form-queue-type')?.value || '';
-            const vehicleType = document.getElementById('form-vehicle-type')?.value || '';
-            const rate = logisticsService.findRate(queueType, vehicleType);
-            if (!rate) {
-                if (!silent) alert(`ไม่พบอัตราสำหรับ ประเภทคิว "${queueType || '(ว่าง)'}" + ประเภทรถ "${vehicleType || '(ว่าง)'}"\n\nประเภทวิ่งในตาราง: หนักล่อง, ตีเปล่า, คิวพิเศษ (ต้องนำเข้าชีต "ฐานคำนวน" ก่อน)`);
-                return;
-            }
-            document.getElementById('form-allowance').value = rate.allowance;
-            document.getElementById('form-deduction').value = rate.deduction;
-            document.getElementById('form-net').value = rate.allowance - rate.deduction;
+            const g = (id) => document.getElementById(id);
+            if (!g('form-allowance') || !g('form-deduction') || !g('form-net')) return;
+            const fields = { allowance: g('form-allowance'), deduction: g('form-deduction'), net: g('form-net'), fuelCost: g('form-fuelcost') };
+            if (!fields.net.dataset.watch) { watchMoneyEdits(fields); fields.net.dataset.watch = '1'; }
+            applyAllowanceRate({ queueType: g('form-queue-type')?.value || '', vehicleType: g('form-vehicle-type')?.value || '', fields, note: allowanceNote(g('form-net')) }, silent);
         };
 
         // Save the page trip-entry form → a trip (trips/{month}).
         const handleTripEntrySubmit = async (e) => {
             e.preventDefault();
             const statusDiv = document.getElementById('form-status');
+            if (unconfirmedNet(document.getElementById('form-net'), document.getElementById('form-fuelcost'))) { if (statusDiv) statusDiv.innerHTML = '<p class="text-red-400">ยอดสุทธิโอนมาจากตารางเบี้ยเลี้ยง (เบี้ยขับ − หัก) ซึ่งยังไม่รวมค่าน้ำมันของเที่ยวนี้ — กรอกยอดสุทธิโอนที่ถูกต้องเองก่อนบันทึก</p>'; return; }
             const getDist = (unit) => {
                 const container = document.getElementById(`distribution-list-${unit}`);
                 const data = {};
@@ -3824,7 +3892,7 @@ const handleFuelRecordEditFormSubmit = async (e) => {
             const filters = appState.dashboardFilters;
             const day = filters.day || '';
             const plateFilter = (filters.vehicleRegistration || '').toUpperCase();
-            let trips = logisticsService.getTrips();
+            let trips = tripsAsAudited(); // same liters as the dashboard cards
             if (day) trips = trips.filter(t => t.date === day);
             if (plateFilter) trips = trips.filter(t => (t.plate || '').toUpperCase().includes(plateFilter));
             if (!trips.length) { alert('ไม่มีข้อมูลให้ export'); return; }

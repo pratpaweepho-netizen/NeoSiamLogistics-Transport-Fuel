@@ -1068,7 +1068,11 @@ export let appState = {
                     // unchanged so the audit caches (keyed by this object) stay valid.
                     {
                         const nextAliases = normalizeDriverAliases(s.driverAliases);
-                        if (JSON.stringify(nextAliases) !== JSON.stringify(appState.auditState.driverAliases)) appState.auditState.driverAliases = nextAliases;
+                        if (JSON.stringify(nextAliases) !== JSON.stringify(appState.auditState.driverAliases)) {
+                            appState.auditState.driverAliases = nextAliases;
+                            // Payroll / reports / dashboard group drivers with the aliases too — refresh them.
+                            if (['payroll', 'reports', 'dashboard'].includes(appState.view)) ui.render();
+                        }
                     }
                     // Destinations whose downhill ไพศาล is written on the uphill record (entry-form default); saved list
                     // wins (false = none), never saved → the default from real trips.
