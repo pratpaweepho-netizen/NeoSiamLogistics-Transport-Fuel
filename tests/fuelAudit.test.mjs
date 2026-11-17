@@ -1,5 +1,5 @@
 // Run: node tests/fuelAudit.test.mjs   (no network, no Excel file needed)
-import { parseRateSheet, buildAuditContext, auditTrip, canonDestination, applyCarry } from '../src/fuelAudit.js';
+import { parseRateSheet, buildAuditContext, auditTrip, canonDestination, applyCarry, flagDoubleDownhill } from '../src/fuelAudit.js';
 
 let fail = 0;
 const eq = (name, a, b) => {
@@ -53,7 +53,7 @@ eq('tolerance', run({ gasStationsLiters: { jittamas_bangpain: 100 } }, 20).statu
 eq('victor downhill 190', run({ plate: '70-2222', gasStationsLiters: { jittamas_bangpain: 80, daopaisan_nakhonsawan: 190 } }).status, 'ok');
 eq('sino rate used', run({ plate: '70-3333', destination: 'เชียงใหม่', gasStationsLiters: { jittamas_bangpain: 265, srinakorn_klongklung: 50 } }).status, 'ok');
 eq('partner truck skipped', run({ plate: '75-9999', gasStationsLiters: { jittamas_bangpain: 80 } }), null);
-eq('downhill trip skipped', run({ direction: 'ขาล่อง', gasStationsLiters: { jittamas_bangpain: 80 } }), null);
+eq('downhill trip with liters is audited as a downhill leg', run({ direction: 'ขาล่อง', gasStationsLiters: { jittamas_bangpain: 80 } }).leg, 'down');
 eq('no fuel skipped', run({}), null);
 eq('unknown plate → no-rate', run({ plate: '99-0000', gasStationsLiters: { jittamas_bangpain: 80 } }).status, 'no-rate');
 eq('destination outside sheet → no-rate', run({ destination: 'สาย 3', gasStationsLiters: { jittamas_bangpain: 80 } }).status, 'no-rate');
@@ -110,6 +110,62 @@ const unnamed = [run({ date: '2026-11-01', driver: '', gasStationsLiters: { jitt
 unnamed.forEach(r => { r.trip.driver = r.trip.driver ?? ''; });
 const balU = applyCarry(unnamed);
 eq('unnamed drivers are not pooled', [unnamed.map(r => [r.carryIn, r.carryOut]), balU], [[[null, null], [null, null]], {}]);
+
+// --- downhill trips (คิวขาล่อง) once the team fills ปั๊มไพศาล ---
+const down = (o) => auditTrip({ direction: 'ขาล่อง', origin: 'เกษตรไทย(ตาคลี)', destination: 'สุชาวดี(สมุทรสงคราม)', plate: '70-1111-6436', gasStationsLiters: {}, ...o }, ctx);
+eq('downhill trip without liters skipped', down({}), null);
+eq('downhill trip ok at class rate', [down({ gasStationsLiters: { daopaisan_nakhonsawan: 180 } }).status, down({ gasStationsLiters: { daopaisan_nakhonsawan: 180 } }).leg], ['ok', 'down']);
+eq('downhill trip over', [down({ gasStationsLiters: { daopaisan_nakhonsawan: 200 } }).status, down({ gasStationsLiters: { daopaisan_nakhonsawan: 200 } }).diff], ['over', 20]);
+eq('downhill victor 190', down({ plate: '70-2222', gasStationsLiters: { daopaisan_nakhonsawan: 190 } }).status, 'ok');
+eq('downhill other pump → wrong pump', down({ gasStationsLiters: { nissan_singburi: 180 } }).status, 'wrong-pump');
+eq('downhill partner skipped', down({ plate: '75-9999', gasStationsLiters: { daopaisan_nakhonsawan: 180 } }), null);
+const pair = [
+    { ...run({ gasStationsLiters: { jittamas_bangpain: 80, daopaisan_nakhonsawan: 180 } }) },
+    down({ gasStationsLiters: { daopaisan_nakhonsawan: 180 } }),
+];
+pair[0].trip = { ...pair[0].trip, driver: 'C', date: '2026-11-10' };
+pair[1].trip = { ...pair[1].trip, driver: 'C', date: '2026-11-12' };
+flagDoubleDownhill(pair);
+eq('same downhill fill on both records is flagged', pair.map(r => r.flags.some(f => f.startsWith('อาจบันทึกขาล่องซ้ำ'))), [true, true]);
+eq('downhill trip moves the carry balance', applyCarry(pair).C, 0);
+
+// --- 10-wheel head listed twice in the vehicle master: alone (10W) and with its trailer (18W) ---
+const vehPair = [
+    { registrationNumber: '70-8901', vehicleType: '10W', driveType: 'รถบริษัท' },
+    { registrationNumber: '70-8901-8158', vehicleType: '18W', driveType: 'รถบริษัท' },
+    { registrationNumber: '70-5555', vehicleType: '10W', driveType: 'รถบริษัท' },
+];
+const ctxPair = buildAuditContext(standards, vehPair);
+const tp = (plate) => auditTrip(trip({ plate, destination: 'เชียงใหม่', gasStationsLiters: { jittamas_bangpain: 255, srinakorn_klongklung: 50 } }), ctxPair);
+eq('head+trailer plate uses the 18W row', [tp('70-8901-8158').cls, tp('70-8901-8158').status], ['18W', 'ok']);
+eq('head alone uses the 10W row, with a hint', [tp('70-8901').cls, tp('70-8901').flags.some(f => f.includes('70-8901-8158'))], ['10W', true]);
+eq('other trailer number on a known head → that head\'s pair', tp('70-8901-9999').cls, '18W');
+eq('10W head towing an unknown trailer → พ่วง rate', tp('70-5555-1234').cls, '18W');
+// review fixes for downhill
+const dd = buildAuditContext([{ cls: '18W', origin: 'กรุงเทพ', destination: 'ตาก', variant: 'standard', up: { jittamas_bangpain: 130 }, down: 180, downVictor: 190, flags: [] },
+    { cls: '18W', origin: 'กรุงเทพ', destination: 'แพร่', variant: 'standard', up: { jittamas_bangpain: 200 }, down: 180, downVictor: 180, flags: [] },
+    { cls: '18W', origin: 'กรุงเทพ', destination: 'ลำปาง', variant: 'standard', up: { jittamas_bangpain: 200 }, down: 180, downVictor: 180, flags: [] }], []).downDefault['18W'];
+eq('victor downhill taken from rows that name it', dd, { down: 180, downVictor: 190 });
+const seq2 = [
+    run({ gasStationsLiters: { jittamas_bangpain: 80, daopaisan_nakhonsawan: 180 } }),
+    down({ gasStationsLiters: { daopaisan_nakhonsawan: 180 } }),
+    run({ gasStationsLiters: { jittamas_bangpain: 80 } }),
+    down({ gasStationsLiters: { daopaisan_nakhonsawan: 180 } }),
+];
+['2026-11-01', '2026-11-02', '2026-11-03', '2026-11-04'].forEach((d, i) => { seq2[i].trip = { ...seq2[i].trip, driver: 'D', date: d }; seq2[i].flags = []; });
+flagDoubleDownhill(seq2);
+eq('only the matching pair is flagged', seq2.map(r => r.flags.length), [1, 1, 0, 0]);
+const bahtOnlyDown = auditTrip({ direction: 'ขาล่อง', plate: '70-1111', gasStationsLiters: {}, gasStationsBaht: { daourai_sai3: 3000 } }, ctx);
+eq('baht-only downhill trip is listed, not dropped', [bahtOnlyDown?.status, bahtOnlyDown?.bahtTotal], ['no-rate', 3000]);
+eq('pump names in Thai', down({ gasStationsLiters: { nissan_singburi: 180 } }).flags.some(f => f.includes('nissan_singburi')), false);
+
+// Codex round: a downhill trip with no fill in between breaks the pairing; malformed plates stay unmatched
+const seq3 = [run({ gasStationsLiters: { jittamas_bangpain: 80, daopaisan_nakhonsawan: 180 } }), down({ gasStationsLiters: { daopaisan_nakhonsawan: 180 } })];
+seq3[0].trip = { ...seq3[0].trip, driver: 'E', date: '2026-11-01', id: 'u1' }; seq3[0].flags = [];
+seq3[1].trip = { ...seq3[1].trip, driver: 'E', date: '2026-11-04', id: 'd2' }; seq3[1].flags = [];
+flagDoubleDownhill(seq3, [seq3[0].trip, { id: 'd1', direction: 'ขาล่อง', driver: 'E', date: '2026-11-02' }, seq3[1].trip]);
+eq('downhill trip without fill in between → no duplicate flag', seq3.map(r => r.flags.length), [0, 0]);
+eq('4-part plate does not inherit the trailer rate', tp('70-8901-8158-X').cls !== '18W' || tp('70-8901-8158-X').flags.some(f => f.startsWith('กระดานคิวเขียนแค่ทะเบียนหัว')), true);
 
 console.log(fail ? `FAILED ${fail}` : 'ALL PASS');
 process.exit(fail ? 1 : 0);

@@ -6,7 +6,7 @@ import { ICONS, GAS_STATION_FRIENDLY_NAMES, ROUTE_STATION_COLUMNS } from "./cons
 import { parseFuelBaseRows } from "./importer.js";
 import { detectSheetType, parseUphillQueue, parseDownhillQueue, parsePartnerQueue, parseDailyRows } from "./importerTrips.js";
 import { parseDrivers, parseRateTable, parseVehicles } from "./importerMasters.js";
-import { parseRateSheet, buildAuditContext, auditTrip, applyCarry, AUDIT_CLASSES, AUDIT_STATUS, DOWN_STATUS } from "./fuelAudit.js";
+import { parseRateSheet, buildAuditContext, auditTrip, applyCarry, flagDoubleDownhill, AUDIT_CLASSES, AUDIT_STATUS, DOWN_STATUS } from "./fuelAudit.js";
 
 const formatZeroAsEmpty = (value) => {
             const num = Number(value);
@@ -1754,7 +1754,7 @@ const formatZeroAsEmpty = (value) => {
                 .then(() => { if (gen === auditPastGen && appState.view === 'audit') rerenderAuditContent(); });
         };
         // Trip order inside a day: board row number when present, else the record id.
-        const tripOrder = (a, b) => (a.trip.date || '').localeCompare(b.trip.date || '') || ((a.trip.sourceRow || 0) - (b.trip.sourceRow || 0)) || String(a.trip.id || '').localeCompare(String(b.trip.id || ''));
+        const tripOrder = (a, b) => (a.trip.date || '').localeCompare(b.trip.date || '') || ((a.leg === 'down') - (b.leg === 'down')) || ((a.trip.sourceRow || 0) - (b.trip.sourceRow || 0)) || String(a.trip.id || '').localeCompare(String(b.trip.id || ''));
 
         const computeAudit = () => {
             const as = appState.auditState;
@@ -1779,7 +1779,11 @@ const formatZeroAsEmpty = (value) => {
                     if (auditPastResults.key !== pastKey || auditPastResults.std !== appState.rateStandards || auditPastResults.veh !== appState.vehicles || auditPastResults.tol !== tol) {
                         auditPastResults = { key: pastKey, std: appState.rateStandards, veh: appState.vehicles, tol, results: pastMonths.flatMap(m => run(auditPastTrips[m])) };
                     }
-                    balances = applyCarry([...auditPastResults.results.map(r => ({ ...r })), ...all].sort(tripOrder));
+                    const ordered = [...auditPastResults.results.map(r => ({ ...r })), ...all].sort(tripOrder);
+                    flagDoubleDownhill(ordered, [...pastMonths.flatMap(m => auditPastTrips[m] || []), ...appState.trips]);
+                    balances = applyCarry(ordered);
+                } else {
+                    flagDoubleDownhill(all, appState.trips);
                 }
                 auditCache = { trips: appState.trips, std: appState.rateStandards, veh: appState.vehicles, tol, pastKey, all, balances };
             }
@@ -1789,6 +1793,8 @@ const formatZeroAsEmpty = (value) => {
                 (!q || `${r.trip.driver} ${r.trip.plate} ${r.trip.destination} ${r.trip.origin}`.toLowerCase().includes(q)));
             const count = {}; all.forEach(r => { count[r.status] = (count[r.status] || 0) + 1; });
             const downCount = {}; all.forEach(r => { if (r.downStatus) downCount[r.downStatus] = (downCount[r.downStatus] || 0) + 1; });
+            const downTrips = {}; all.forEach(r => { if (r.leg === 'down') downTrips[r.status] = (downTrips[r.status] || 0) + 1; });
+            const downTripsTotal = Object.values(downTrips).reduce((a, b) => a + b, 0);
             const sumDiff = (st) => all.filter(r => r.status === st).reduce((a, r) => a + r.diff, 0);
             const byDriver = {};
             const newDriver = (name) => ({ driver: name, n: 0, checked: 0, ok: 0, over: 0, overL: 0, under: 0, underL: 0, wrong: 0, balance: carryReady && name in balances ? balances[name] : (carryReady ? 0 : null) });
@@ -1805,7 +1811,7 @@ const formatZeroAsEmpty = (value) => {
                 if (r.status === 'wrong-pump') d.wrong++;
             }
             const drivers = Object.values(byDriver).sort((a, b) => b.overL - a.overL || b.over - a.over);
-            return { all, shown, count, downCount, overL: sumDiff('over'), underL: sumDiff('under'), drivers, tol, carryOn, carryReady, carryPending, carryFailed, carryTooLong, pastMonths };
+            return { all, shown, count, downCount, downTrips, downTripsTotal, overL: sumDiff('over'), underL: sumDiff('under'), drivers, tol, carryOn, carryReady, carryPending, carryFailed, carryTooLong, pastMonths };
         };
 
         const renderAudit = () => {
@@ -1838,7 +1844,7 @@ const formatZeroAsEmpty = (value) => {
             if (!appState.rateStandards.length) return '';
             if (!logisticsService.getTrips().length) return `<p class="text-center py-8 text-gray-500">ไม่มีคิวรถในเดือนนี้ — เลือกเดือนอื่น</p>`;
             const as = appState.auditState;
-            const { all, shown, count, downCount, overL, underL, drivers, tol, carryOn, carryReady, carryPending, carryFailed, carryTooLong, pastMonths } = computeAudit();
+            const { all, shown, count, downCount, downTrips, downTripsTotal, overL, underL, drivers, tol, carryOn, carryReady, carryPending, carryFailed, carryTooLong, pastMonths } = computeAudit();
             const signed = (v) => (v > 0 ? '+' : '') + Number(v).toLocaleString();
             const refreshBtn = pastMonths.length ? ' <button id="audit-carry-refresh" class="text-sky-300 hover:text-sky-200 font-bold">↻ โหลดยอดยกใหม่</button>' : '';
             const carryNote = !carryOn
@@ -1865,7 +1871,7 @@ const formatZeroAsEmpty = (value) => {
                     <td class="p-2 whitespace-nowrap">${esc(r.trip.driver)}</td>
                     <td class="p-2 whitespace-nowrap font-mono text-xs">${esc(r.trip.plate)}</td>
                     <td class="p-2 whitespace-nowrap">${r.cls ? esc(AUDIT_CLASSES[r.cls]) : '-'}${r.model ? ` <span class="text-xs text-indigo-300">${esc(r.model)}</span>` : ''}</td>
-                    <td class="p-2">${esc(r.trip.origin)} → ${esc(r.trip.destination)}</td>
+                    <td class="p-2">${r.leg === 'down' ? '<span class="px-1.5 py-0.5 rounded text-xs bg-teal-700 text-white">ขาล่อง</span> ' : ''}${esc(r.trip.origin)} → ${esc(r.trip.destination)}</td>
                     <td class="p-2">${fmtPumps(r.actual)}</td>
                     <td class="p-2">${r.status === 'no-rate' ? '-' : r.status === 'manual' ? (r.expectedTotal ? `รวม ${r.expectedTotal.toLocaleString()}` : '-') : fmtPumps(r.expected)}</td>
                     <td class="p-2 text-right font-bold ${r.diff > 0 ? 'text-red-400' : r.diff < 0 ? 'text-amber-300' : 'text-gray-400'}">${r.status === 'no-rate' || (r.status === 'manual' && !r.expectedTotal) ? '' : signed(r.diff)}</td>
@@ -1893,7 +1899,7 @@ const formatZeroAsEmpty = (value) => {
                 </tr>`).join('');
             return `
                 <div class="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-3 mb-3">
-                    ${card('', 'ทั้งหมด (ขาขึ้นที่มีการเติม)', all.length)}
+                    ${card('', 'ทั้งหมด (เที่ยวที่มีการเติม)', all.length, downTripsTotal ? `ขาล่อง ${downTripsTotal} เที่ยว` : '')}
                     ${card('ok', 'ตรงตามอัตรา', count.ok || 0)}
                     ${card('over', 'เติมเกิน', count.over || 0, overL ? `รวม +${overL.toLocaleString()} ลิตร` : '')}
                     ${card('under', 'เติมขาด', count.under || 0, underL ? `รวม ${underL.toLocaleString()} ลิตร` : '')}
@@ -1901,7 +1907,7 @@ const formatZeroAsEmpty = (value) => {
                     ${card('manual', 'ต้องตรวจเอง (ถอดหาง กพ.)', count.manual || 0)}
                     ${card('no-rate', 'ตรวจไม่ได้ (ไม่มีอัตรา)', count['no-rate'] || 0)}
                 </div>
-                <p class="text-xs text-gray-400 mb-1">ขาล่อง (ปั๊มไพศาล ที่บันทึกในเที่ยวขาขึ้น): ตรง ${downCount.ok || 0} · เกิน ${downCount.over || 0} · ขาด ${downCount.under || 0} · ไม่ได้บันทึก ${downCount.missing || 0} เที่ยว — เที่ยวขาล่องจากไฟล์ Transport ไม่มีลิตร จึงตรวจได้เท่านี้</p>
+                <p class="text-xs text-gray-400 mb-1">ขาล่องไพศาลที่เขียนไว้ในเที่ยวขาขึ้น: ตรง ${downCount.ok || 0} · เกิน ${downCount.over || 0} · ขาด ${downCount.under || 0} · ไม่ได้บันทึก ${downCount.missing || 0} เที่ยว · ${downTripsTotal ? `เที่ยวขาล่อง (คิวขาล่อง) ที่กรอกการเติม: ตรง ${downTrips.ok || 0} · เกิน ${downTrips.over || 0} · ขาด ${downTrips.under || 0} · ผิดปั๊ม ${downTrips['wrong-pump'] || 0} · ตรวจไม่ได้ ${downTrips['no-rate'] || 0}` : 'เที่ยวขาล่องในคิวขาล่องยังไม่มีลิตร — ตรวจได้เมื่อทีมกรอกช่อง ปั๊มไพศาล'}</p>
                 <p class="text-xs text-gray-400 mb-4">${carryNote}</p>
                 <div class="flex flex-wrap items-center gap-3 mb-3">
                     <input type="text" id="audit-search" value="${esc(as.search)}" placeholder="ค้นหา คนขับ / ทะเบียน / ปลายทาง" class="w-full md:w-80 bg-slate-800 border border-slate-600 rounded-md px-3 py-2 text-white" />
@@ -1994,16 +2000,16 @@ const formatZeroAsEmpty = (value) => {
             };
             const n = (v) => (Number(v) ? Number(v) : '');
             sheet('ผลตรวจ',
-                ['วันที่', 'คนขับ', 'ทะเบียน', 'ประเภทรถ', 'รุ่น', 'ต้นทาง', 'ปลายทาง', 'ผล', 'เติมจริงรวม (ลิตร)', 'ตามอัตรารวม (ลิตร)', 'ต่าง (ลิตร)',
+                ['วันที่', 'ทิศทาง', 'คนขับ', 'ทะเบียน', 'ประเภทรถ', 'รุ่น', 'ต้นทาง', 'ปลายทาง', 'ผล', 'เติมจริงรวม (ลิตร)', 'ตามอัตรารวม (ลิตร)', 'ต่าง (ลิตร)',
                     ...pumps.flatMap(p => [`${pumpName(p)} จริง`, `${pumpName(p)} อัตรา`]), 'เติมเป็นเงิน (บาท)',
                     'ขาล่องไพศาล อัตรา', 'ขาล่องไพศาล บันทึก', 'ขาล่อง ผล', 'ลิตรยกมา', 'ควรเติม (หลังหักยกมา)', 'ลิตรยกไป', 'หมายเหตุ'],
-                all.map(r => [r.trip.date, r.trip.driver, r.trip.plate, r.cls ? AUDIT_CLASSES[r.cls] : '', r.model, r.trip.origin, r.trip.destination,
+                all.map(r => [r.trip.date, r.leg === 'down' ? 'ขาล่อง' : 'ขาขึ้น', r.trip.driver, r.trip.plate, r.cls ? AUDIT_CLASSES[r.cls] : '', r.model, r.trip.origin, r.trip.destination,
                     AUDIT_STATUS[r.status].label, n(r.actualTotal), r.status === 'no-rate' ? '' : n(r.expectedTotal), r.status === 'no-rate' ? '' : r.diff,
                     ...pumps.flatMap(p => [n(r.actual[p]), r.status === 'no-rate' ? '' : n((r.expected || {})[p])]), n(r.bahtTotal),
                     n(r.down), r.downStatus && r.downStatus !== 'missing' ? r.downActual : '', r.downStatus ? DOWN_STATUS[r.downStatus].label : '',
                     carryReady && r.carryIn != null ? r.carryIn : '', carryReady && r.allot != null ? r.allot : '', carryReady && r.carryOut != null ? r.carryOut : '',
                     [r.reason, ...r.flags].filter(Boolean).join(' | ')]),
-                [11, 22, 14, 18, 8, 20, 18, 12, 12, 12, 10, ...pumps.flatMap(() => [12, 12]), 12, 12, 12, 12, 10, 14, 10, 60]);
+                [11, 8, 22, 14, 18, 8, 20, 18, 12, 12, 12, 10, ...pumps.flatMap(() => [12, 12]), 12, 12, 12, 12, 10, 14, 10, 60]);
             sheet('สรุปคนขับ',
                 ['คนขับ', 'เที่ยว', 'ตรวจได้', 'ตรง', 'เกิน (เที่ยว)', 'เกิน (ลิตร)', 'ขาด (เที่ยว)', 'ขาด (ลิตร)', 'ผิดปั๊ม', 'ลิตรค้างยกไป (+ เกิน / − ขาด)'],
                 drivers.map(d => [d.driver, d.n, d.checked, d.ok, d.over, d.overL, d.under, d.underL, d.wrong, d.balance == null ? '' : d.balance]),

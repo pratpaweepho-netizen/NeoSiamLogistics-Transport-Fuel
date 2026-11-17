@@ -2,6 +2,15 @@
 // ("อัตราเติมน้ำมันประจำ ปั๊ม ต่างๆ"). Pure functions (no DOM/Firebase) so they can be tested in Node.
 
 import { parseNum, clean } from './parseUtils.js';
+import { GAS_STATION_FRIENDLY_NAMES } from './constants.js';
+
+const pumpThai = (key) => GAS_STATION_FRIENDLY_NAMES[key] || key;
+// Most common value of `key` among rows (ties: first seen) — used for "the usual downhill liters" of a class.
+const modeOf = (rows, key) => {
+    const c = new Map();
+    rows.forEach(s => c.set(s[key], (c.get(s[key]) || 0) + 1));
+    return [...c.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
+};
 
 export const AUDIT_CLASSES = {
     '10W': 'สิบล้อ',
@@ -133,12 +142,11 @@ export function parseRateSheet(sheets) {
         });
     }
     // Downhill liters that differ from the rest of the same class (e.g. 179 vs 180) — likely a typo.
-    const downByCls = {};
-    for (const s of standards) if (s.down) ((downByCls[s.cls] ||= {})[s.down] = (downByCls[s.cls][s.down] || 0) + 1);
     for (const s of standards) {
-        const counts = downByCls[s.cls] || {};
-        const mode = Object.entries(counts).sort((x, y) => y[1] - x[1])[0];
-        if (mode && s.down && String(s.down) !== mode[0] && counts[s.down] <= 2) s.flags.push(`ขาล่อง ${s.down} ลิตร ต่างจากแถวอื่นของรถกลุ่มนี้ (${mode[0]})`);
+        if (!s.down || s.duplicateOf) continue;
+        const peers = standards.filter(o => o.cls === s.cls && o.down && !o.duplicateOf);
+        const mode = modeOf(peers, 'down');
+        if (mode != null && s.down !== mode && peers.filter(o => o.down === s.down).length <= 2) s.flags.push(`ขาล่อง ${s.down} ลิตร ต่างจากแถวอื่นของรถกลุ่มนี้ (${mode})`);
     }
     standards.forEach((s, n) => { s.id = `r${String(n + 1).padStart(3, '0')}`; });
     if (!standards.length) warnings.push('ไม่พบตารางอัตรา (หาหัวคอลัมน์ "รวมยอดขาขึ้น/ลิตร" ไม่เจอ)');
@@ -185,6 +193,31 @@ function parseTrailerDropSheet(sheet, rows, startRow) {
 
 const DROP_AT_KPP = /(ตัดลูก|ถอดหาง|ตัดหาง)\s*(ที่)?\s*(กพ|กำแพง)/;
 
+// The same downhill fill must not be counted twice: once on the uphill board row and again on the
+// คิวขาล่อง trip. Flag a downhill trip when the same driver's uphill trip in the 5 days before already
+// carries a recorded downhill ไพศาล fill. results must be in trip order. allTrips (optional) = every trip
+// of the same period, including downhill trips with no fill (they are not in results): a downhill trip of
+// that driver in between means the uphill fill belonged to that one, not to this one.
+export function flagDoubleDownhill(results, allTrips = []) {
+    const downTrips = {};
+    for (const t of allTrips) if (clean(t.direction) === 'ขาล่อง' && clean(t.driver)) (downTrips[clean(t.driver)] ||= []).push(t);
+    const lastUp = {};
+    for (const r of results) {
+        const d = clean(r.trip.driver);
+        if (!d) continue;
+        // Only the driver's most recent uphill trip can share its downhill fill with the next downhill trip.
+        if (r.leg !== 'down') { if (r.downhillRecorded) lastUp[d] = r; else delete lastUp[d]; continue; }
+        const up = lastUp[d];
+        const between = up && (downTrips[d] || []).some(t => t !== r.trip && t.id !== r.trip.id && t.date >= up.trip.date && t.date <= r.trip.date);
+        if (up && !between && (Date.parse(r.trip.date) - Date.parse(up.trip.date)) / 86400000 <= 5) {
+            // new arrays, not push: results may be shallow copies of cached ones
+            r.flags = [...r.flags, `อาจบันทึกขาล่องซ้ำ: เที่ยวขาขึ้น ${up.trip.date} บันทึกไพศาลขาล่อง ${up.downActual} ลิตรไว้แล้ว`];
+            up.flags = [...up.flags, `อาจบันทึกขาล่องซ้ำ: เที่ยวขาล่อง ${r.trip.date} มีการเติมไพศาล ${r.actualTotal} ลิตรด้วย`];
+            delete lastUp[d]; // one downhill fill pairs with one downhill trip
+        }
+    }
+}
+
 // Liters carried from trip to trip per driver, like TMS DriverPayService: what a driver filled over (+) or
 // under (−) the rate is set against the next trip that has a rate. results must be in trip order.
 // Adds carryIn / allot / carryOut to each result and returns { [driver]: balance }.
@@ -226,7 +259,8 @@ export function vehicleClassOf(vehicle) {
 // Trips carry "head-trailer" plates ("70-8157-6436"); the vehicle master lists the head ("70-8157").
 // Compare the first two dash-separated parts with spaces removed — never cut by length (plates like
 // "1กข-1234" are 8 characters and must stay distinct).
-const plateKey = (p) => clean(p).replace(/\s+/g, '').split('-').slice(0, 2).join('-');
+const normPlate = (p) => clean(p).replace(/\s+/g, '');
+const plateKey = (p) => normPlate(p).split('-').slice(0, 2).join('-');
 
 // Build lookup tables once per render.
 export function buildAuditContext(standards, vehicles) {
@@ -235,25 +269,108 @@ export function buildAuditContext(standards, vehicles) {
         if (s.cls === DROP_CLASS) { if (s.destination && !s.duplicateOf) drop[s.destination] = s; continue; }
         if (!s.duplicateOf && s.destination) std[standardKey(s)] = s;
     }
-    const veh = {};
-    for (const v of vehicles || []) { const k = plateKey(v.registrationNumber); if (k) veh[k] = v; }
+    // The vehicle master lists a 10-wheel head twice: "70-8901" (10W, running alone) and "70-8901-8158"
+    // (18W = head + trailer). Keep both: exact plate first, then by head.
+    const vehFull = {}, vehHead = {};
+    for (const v of vehicles || []) {
+        const full = normPlate(v.registrationNumber);
+        if (!full) continue;
+        vehFull[full] = v;
+        const h = vehHead[plateKey(full)] ||= { solo: null, pairs: [] };
+        if (full.split('-').length >= 3) h.pairs.push(v); else h.solo = v;
+    }
     const destinations = new Set((standards || []).map(s => s.destination).filter(Boolean));
-    return { std, drop, veh, destinations };
+    // Downhill (ขาล่อง) liters per truck class: the usual value in the sheet (พ่วง 180, สิบล้อ 120…). The victor
+    // figure only counts rows that actually name one ("180 (victor190)").
+    const downDefault = {};
+    for (const cls of new Set((standards || []).map(s => s.cls))) {
+        const rows = (standards || []).filter(s => s.cls === cls && s.down && !s.duplicateOf);
+        if (!rows.length) continue;
+        const down = modeOf(rows, 'down');
+        const victorRows = rows.filter(s => s.downVictor && s.downVictor !== s.down);
+        downDefault[cls] = { down, downVictor: victorRows.length ? modeOf(victorRows, 'downVictor') : down };
+    }
+    return { std, drop, vehFull, vehHead, destinations, downDefault };
 }
 
-// Audit one trip. Returns null when the trip is out of scope (not uphill, partner truck, no fuel at all).
+// Which vehicle-master row describes the truck on this trip. Returns { vehicle, note }.
+export function vehicleForPlate(plate, ctx) {
+    const full = normPlate(plate);
+    const h = ctx.vehHead?.[plateKey(full)];
+    if (ctx.vehFull?.[full]) {
+        const v = ctx.vehFull[full];
+        const soloWithPairs = full.split('-').length < 3 && h?.pairs.length;
+        return { vehicle: v, note: soloWithPairs ? `หัวนี้มีหางพ่วงในหน้าทะเบียนรถ (${h.pairs.map(p => p.registrationNumber).join(', ')}) — ถ้าเที่ยวนี้ลากหาง ให้เขียนเลขหางในกระดานคิว` : '', towOption: soloWithPairs ? h.pairs[0] : null };
+    }
+    if (!h) return { vehicle: null, note: '' };
+    // head-trailer = exactly 3 parts ("70-8901-8158"); anything else unknown is left unmatched
+    const towing = full.split('-').length === 3;
+    if (towing) {
+        if (h.pairs.length) return { vehicle: h.pairs[0], note: `ทะเบียนหาง "${clean(plate)}" ไม่ตรงกับในหน้าทะเบียนรถ — ใช้ประเภทของ ${h.pairs[0].registrationNumber}` };
+        // A rigid truck towing a trailer runs on the trailer rate (as TMS TrailerClass: 10W → พ่วง, 6W → 6ล้อพ่วงตู้).
+        const type = clean(h.solo?.vehicleType);
+        const tow = /^10|สิบล้อ/.test(type) ? 'พ่วง' : /^6|หกล้อ/.test(type) ? '6ล้อพ่วงตู้' : type;
+        return { vehicle: h.solo ? { ...h.solo, vehicleType: tow } : null, note: `ลากหาง ${clean(plate)} แต่ไม่มีคู่หัว-หางนี้ในหน้าทะเบียนรถ — ตรวจแบบ${tow}` };
+    }
+    const vehicle = h.solo || h.pairs[0];
+    const both = h.solo && h.pairs.length;
+    const note = both ? `หัวนี้มีหางพ่วงในหน้าทะเบียนรถ (${h.pairs.map(v => v.registrationNumber).join(', ')}) — ถ้าเที่ยวนี้ลากหาง ให้เขียนเลขหางในกระดานคิว` : '';
+    return { vehicle, note, towOption: both ? h.pairs[0] : null };
+}
+
+// Downhill trip (from the Transport คิวขาล่อง sheet) with liters filled: compare with the class's downhill rate.
+function auditDownhillTrip(trip, ctx, tolerance, actual, actualTotal, vc, baht, bahtTotal, plateNote) {
+    const base = { trip, leg: 'down', cls: vc.cls, model: vc.model || '', origin: clean(trip.origin), destination: clean(trip.destination), actual, actualTotal, baht, bahtTotal, flags: plateNote ? [plateNote] : [], downStatus: '' };
+    if (bahtTotal) base.flags.push(`เติมเป็นเงิน ${bahtTotal.toLocaleString()} บาท (ไม่มีอัตราเป็นเงิน)`);
+    if (!actualTotal) return { ...base, status: 'no-rate', reason: 'เติมเป็นเงินอย่างเดียว ไม่มีลิตรให้เทียบ', diff: 0, expected: {}, expectedTotal: 0 };
+    if (!vc.cls) return { ...base, status: 'no-rate', reason: vc.reason, diff: 0, expected: {}, expectedTotal: 0 };
+    const def = ctx.downDefault?.[vc.cls];
+    if (!def) return { ...base, status: 'no-rate', reason: `ไม่มีอัตราขาล่องของ ${AUDIT_CLASSES[vc.cls]}`, diff: 0, expected: {}, expectedTotal: 0 };
+    const down = vc.model === 'victor' ? def.downVictor : def.down;
+    const expected = { [PAISAN]: down };
+    const perPump = [...new Set([PAISAN, ...Object.keys(actual)])].map(k => ({ key: k, expected: expected[k] || 0, actual: Number(actual[k]) || 0 })).map(p => ({ ...p, diff: p.actual - p.expected }));
+    const off = perPump.filter(p => !p.expected && p.actual);
+    if (off.length) base.flags.push(`เติมปั๊มอื่นแทนไพศาล: ${off.map(p => `${pumpThai(p.key)} ${p.actual} ลิตร`).join(', ')}`);
+    const diff = actualTotal - down;
+    const status = diff > tolerance ? 'over' : diff < -tolerance ? 'under' : perPump.some(p => Math.abs(p.diff) > tolerance) ? 'wrong-pump' : 'ok';
+    return { ...base, status, expected, expectedTotal: down, perPump, diff, down };
+}
+
+// Audit one trip. Returns null when the trip is out of scope (partner truck, no fuel at all).
+// When the board wrote only the head plate of a truck that also runs with a trailer, check both ways:
+// if the fill matches the trailer (พ่วง) rate in total but not the solo rate, the trailer was most likely
+// just left off the board — use the trailer rate and say so.
 export function auditTrip(trip, ctx, tolerance = 0) {
-    if (clean(trip.direction) !== 'ขาขึ้น') return null;
+    const first = auditTripAs(trip, ctx, tolerance, null);
+    const { towOption } = vehicleForPlate(trip.plate, ctx);
+    if (!first || !towOption || first.leg === 'down' || first.status === 'no-rate' || first.status === 'manual') return first;
+    if (Math.abs(first.diff) <= tolerance) return first;
+    const towed = auditTripAs(trip, ctx, tolerance, towOption);
+    if (towed && towed.status !== 'no-rate' && Math.abs(towed.diff) <= tolerance) {
+        towed.flags = [`กระดานคิวเขียนแค่ทะเบียนหัว แต่ลิตรรวมตรงกับอัตรา${AUDIT_CLASSES[towed.cls] || ''}ของ ${towOption.registrationNumber} — ตรวจแบบลากหาง (ควรเขียนเลขหางในกระดาน)`,
+            ...towed.flags.filter(f => !f.startsWith('หัวนี้มีหางพ่วง'))];
+        return towed;
+    }
+    return first;
+}
+
+function auditTripAs(trip, ctx, tolerance, forcedVehicle) {
+    const dir = clean(trip.direction);
+    if (dir !== 'ขาขึ้น' && dir !== 'ขาล่อง') return null;
     const actual = { ...(trip.gasStationsLiters || {}) };
     const baht = { ...(trip.gasStationsBaht || {}) };
     const actualTotal = Object.values(actual).reduce((a, b) => a + (Number(b) || 0), 0);
     const bahtTotal = Object.values(baht).reduce((a, b) => a + (Number(b) || 0), 0);
     if (!actualTotal && !bahtTotal) return null;
-    const vc = vehicleClassOf(ctx.veh[plateKey(trip.plate)]);
+    const found = vehicleForPlate(trip.plate, ctx);
+    const vehicle = forcedVehicle || found.vehicle;
+    const plateNote = forcedVehicle ? '' : found.note;
+    const vc = vehicleClassOf(vehicle);
     if (vc.partner) return null;
+    if (dir === 'ขาล่อง') return auditDownhillTrip(trip, ctx, tolerance, actual, actualTotal, vc, baht, bahtTotal, plateNote);
     const destination = canonDestination(trip.destination);
     const origin = canonOrigin(trip.origin);
-    const base = { trip, cls: vc.cls, model: vc.model || '', origin, destination, actual, actualTotal, baht, bahtTotal, flags: [] };
+    const base = { trip, cls: vc.cls, model: vc.model || '', origin, destination, actual, actualTotal, baht, bahtTotal, flags: plateNote ? [plateNote] : [] };
     if (bahtTotal) base.flags.push(`เติมเป็นเงิน ${bahtTotal.toLocaleString()} บาท (ไม่มีอัตราเป็นเงิน)`);
     const none = (reason) => ({ ...base, status: 'no-rate', reason, diff: 0, expected: {}, expectedTotal: 0, downStatus: '' });
     // Trailer left at Kamphaeng Phet: the special table has total liters only (no pump) → manual check.
@@ -292,7 +409,7 @@ export function auditTrip(trip, ctx, tolerance = 0) {
     const perPump = pumps.map(k => ({ key: k, expected: expected[k] || 0, actual: Number(actual[k]) || 0 }))
         .map(p => ({ ...p, diff: p.actual - p.expected }));
     const offPumps = perPump.filter(p => !p.expected && p.actual);
-    if (offPumps.length) base.flags.push(`เติมปั๊มที่ไม่อยู่ในอัตรา: ${offPumps.map(p => `${p.key} ${p.actual} ลิตร`).join(', ')}`);
+    if (offPumps.length) base.flags.push(`เติมปั๊มที่ไม่อยู่ในอัตรา: ${offPumps.map(p => `${pumpThai(p.key)} ${p.actual} ลิตร`).join(', ')}`);
     const diff = actualTotal - expectedTotal;
     let status;
     if (diff > tolerance) status = 'over';
