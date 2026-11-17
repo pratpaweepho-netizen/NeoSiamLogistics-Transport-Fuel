@@ -8,6 +8,7 @@ import { detectSheetType, parseUphillQueue, parseDownhillQueue, parsePartnerQueu
 import { parseDrivers, parseRateTable, parseVehicles } from "./importerMasters.js";
 import { parseRateSheet, buildAuditContext, auditTrip, applyCarry, flagDoubleDownhill, AUDIT_CLASSES, AUDIT_STATUS, DOWN_STATUS, normalizeOriginExtras, parseDriverAliasSheet, applyDriverAlias, suggestFill, normalizeDestinationList, ratesMissingFrom, makeRateContexts } from "./fuelAudit.js";
 import { calcTripMoney, describeTripMoney, moneySaveProblem, storedAdvance, MONEY_MSG } from "./tripMoney.js";
+import { isUphillPayProposal, parseUphillPayProposal, planUphillPay, applyPayToTrip, makeSameDriver, PAY_FIELDS, PAY_FIELD_LABELS } from "./uphillPay.js";
 import { COLL_STATUS, downhillTripKeys, planDownhillFuel, withDownhillFuel, reconcileColumnL, createAllIfAbsent } from "./downhillFuel.js";
 import { planDateFix, buildDateFixBatches, recheckBatch, prevDay } from "./dateFix.js";
 import { TEMPLATE_SHEET, buildTemplateLists, generateTemplate, findTemplateHeader, parseTemplateRows, planTemplateSave, saveTemplateTrips } from "./tripTemplate.js";
@@ -736,6 +737,9 @@ const formatZeroAsEmpty = (value) => {
                 return;
             }
 
+            // Reviewed uphill-pay proposal file (sheets "A ตรงชัด" / "B ต้องตัดสิน") → money onto existing board trips.
+            if (isUphillPayProposal(importWorkbook.SheetNames)) { handleUphillPayParse(); return; }
+
             // Confirmed driver-name proposal file (ชื่อในกระดานคิว → ชื่อเต็ม) → settings/fuelAudit.driverAliases.
             if (rows.slice(0, 5).some(r => { const h = (r || []).map(c => String(c).trim()); return h.includes('ชื่อในกระดานคิว') && h.includes('ยืนยัน'); })) {
                 const res = parseDriverAliasSheet(rows, appState.drivers.map(d => d.name));
@@ -1399,6 +1403,116 @@ const formatZeroAsEmpty = (value) => {
             if (out) out.innerHTML = failedAt
                 ? `<p class="text-red-400 font-bold">หยุดที่เดือน ${esc(failedAt)} — แก้ไปแล้ว ${done.toLocaleString()} เที่ยว (เดือนที่สำเร็จแก้ครบทั้งเดือน) · กด "ตรวจ" ใหม่แล้วแก้ต่อได้ ระบบจะแก้เฉพาะที่เหลือ</p>`
                 : `<p class="text-green-400 font-bold">✓ แก้วันที่แล้ว ${done.toLocaleString()} เที่ยว${dropped ? ` · ข้าม ${dropped} เที่ยวที่ถูกแก้ระหว่างนั้น` : ''} — กด "ตรวจ" อีกครั้งเพื่อยืนยัน (ควรเหลือ 0)</p>`;
+        };
+
+        // ---- Attach uphill pay (user decision 17 Nov 2026, option ก): proposal file → money onto EXISTING board trips ----
+        // Only trips with no money at all, whose date and truck equal the file row; re-checked against fresh data per
+        // month right before writing; one atomic update per month; backup download required first.
+        let upPay = null; // { plan, errors, months, before, backupDone, running, done, fileName }
+        const handleUphillPayParse = async () => {
+            const preview = document.getElementById('import-preview');
+            if (upPay?.running) return;
+            upPay = null;
+            const fileName = document.getElementById('import-file')?.files?.[0]?.name || ''; // before any await
+            const wb = importWorkbook;
+            preview.innerHTML = '<p class="text-sky-400">กำลังอ่านไฟล์และเที่ยวในระบบของเดือนที่เกี่ยวข้อง...</p>';
+            try {
+                // blankrows:true → index + 1 = the Excel row (row numbers in messages and in payFrom stay right)
+                const sheets = Object.fromEntries(wb.SheetNames.map(n => [n, XLSX.utils.sheet_to_json(wb.Sheets[n], { header: 1, blankrows: true, defval: '' })]));
+                const parsed = parseUphillPayProposal(sheets);
+                const months = [...new Set(parsed.items.filter(i => i.decision === 'attach').map(i => i.date.slice(0, 7)))].sort();
+                const before = Object.fromEntries(await Promise.all(months.map(async ym => [ym, await logisticsService.fetchTripsMonthRaw(ym)])));
+                // board short names → full names (confirmed aliases), as in the audit
+                const sameDriver = makeSameDriver((n) => applyDriverAlias({ driver: n }, appState.auditState.driverAliases).driver);
+                const plan = planUphillPay(parsed.items, before, sameDriver);
+                upPay = { plan, errors: parsed.errors, months, before, sameDriver, backupDone: false, fileName };
+                preview.innerHTML = renderUphillPayPreview(upPay);
+                document.getElementById('uppay-backup-btn')?.addEventListener('click', handleUphillPayBackup);
+                document.getElementById('uppay-apply-btn')?.addEventListener('click', handleUphillPayApply);
+            } catch (err) {
+                console.error('Uphill pay parse failed:', err);
+                preview.innerHTML = `<p class="text-red-400">อ่านไม่สำเร็จ: ${esc(err.message)}</p>`;
+            }
+        };
+        const renderUphillPayPreview = ({ plan, errors }) => {
+            const t = plan.totals;
+            const monthRows = Object.keys(t.byMonth).sort().map(ym => `<tr class="border-b border-slate-700"><td class="p-2">${esc(ym)}</td><td class="p-2 text-right">${t.byMonth[ym].trips.toLocaleString()}</td><td class="p-2 text-right">${thMoney(t.byMonth[ym].net)}</td></tr>`).join('');
+            const skipped = plan.skipped.slice(0, 300).map(s => `<li>${esc(s.item.sheet)} แถว ${s.item.row} · ${esc(s.item.date)} ${esc(s.item.plate)} ${esc(s.item.driver)} — ${esc(s.reason)}</li>`).join('');
+            const blocked = errors.length > 0;
+            return `
+                <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+                    ${importStatCard('จะแนบเงิน (เที่ยว)', t.trips)}
+                    ${importStatCard('ข้าม (ไม่แตะ)', plan.skipped.length)}
+                    ${importStatCard('ชีต B รอทีมยืนยัน', plan.pending)}
+                    ${importStatCard('ทีมเขียนว่า "ไม่ใช่"', plan.excluded)}
+                </div>
+                <p class="mb-2 text-sky-200">รวมที่จะแนบ: ${PAY_FIELDS.map(f => f === 'netTransfer' ? `<b>${PAY_FIELD_LABELS[f]} ${thMoney(t.money[f])} บาท</b>` : `${PAY_FIELD_LABELS[f]} ${thMoney(t.money[f])}`).join(' · ')}</p>
+                <p class="mb-3 text-xs text-gray-400">แนบเฉพาะเที่ยวขาขึ้นในกระดานคิวที่ยังไม่มียอดเงิน และวันที่ + ทะเบียนหัว + คนขับตรงกับไฟล์ · ไม่สร้างเที่ยวใหม่ (ชีต C ไม่ถูกใช้) · ไม่เขียนทับยอดที่มีอยู่ · แต่ละเที่ยวเก็บที่มาไว้ในช่อง payFrom</p>
+                ${blocked ? `<div class="bg-red-900/30 border border-red-700 rounded-lg p-3 mb-3 text-sm text-red-200"><b>แก้ไฟล์ก่อน — ยังบันทึกไม่ได้ (${errors.length} แถว):</b><br>${errors.slice(0, 50).map(esc).join('<br>')}</div>` : ''}
+                <div class="overflow-x-auto rounded-lg border border-slate-700 mb-3"><table class="w-full text-sm"><thead class="bg-slate-800 text-gray-400"><tr><th class="p-2 text-left">เดือน</th><th class="p-2 text-right">เที่ยว</th><th class="p-2 text-right">สุทธิโอน (บาท)</th></tr></thead><tbody>${monthRows}</tbody></table></div>
+                ${skipped ? `<details class="mb-3"><summary class="cursor-pointer text-yellow-300">แถวที่ข้าม ${plan.skipped.length} แถว</summary><ul class="mt-2 space-y-1 text-gray-300 text-sm">${skipped}</ul></details>` : ''}
+                <ol class="list-decimal ml-5 space-y-1 text-gray-300 mb-3">
+                    <li>กด "ดาวน์โหลดสำรองข้อมูล" (บังคับ) — ข้อมูลเที่ยวของเดือนที่เกี่ยวข้องก่อนแนบ</li>
+                    <li>กด "แนบค่าเที่ยว" แล้วยืนยัน · ระหว่างนี้อย่าให้คนอื่นแก้คิวรถเดือนเหล่านี้</li>
+                </ol>
+                <div class="flex flex-wrap gap-3">
+                    <button id="uppay-backup-btn" class="bg-slate-600 hover:bg-slate-500 text-white font-bold py-2 px-4 rounded-lg" ${blocked || !t.trips ? 'disabled' : ''}>ดาวน์โหลดสำรองข้อมูล</button>
+                    <button id="uppay-apply-btn" class="bg-error hover:bg-red-600 text-white font-bold py-2 px-4 rounded-lg opacity-60 cursor-not-allowed" disabled>แนบค่าเที่ยว ${t.trips.toLocaleString()} เที่ยว</button>
+                </div>
+                <div id="uppay-result" class="mt-3"></div>`;
+        };
+        const handleUphillPayBackup = () => {
+            if (!upPay || upPay.errors.length || !upPay.plan.writes.length) return;
+            const blob = new Blob([JSON.stringify({ months: upPay.months, trips: upPay.before })], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url; a.download = `trips-backup-before-uphill-pay-${localDateStr()}.json`;
+            document.body.appendChild(a); a.click(); a.remove();
+            setTimeout(() => URL.revokeObjectURL(url), 2000);
+            upPay.backupDone = true;
+            const btn = document.getElementById('uppay-apply-btn');
+            if (btn) { btn.disabled = false; btn.classList.remove('opacity-60', 'cursor-not-allowed'); }
+        };
+        const handleUphillPayApply = async () => {
+            const cur = upPay;
+            if (!cur || !cur.backupDone || cur.running || cur.done || cur.errors.length) return;
+            const t = cur.plan.totals;
+            if (!confirm(`แนบค่าเที่ยวขาขึ้น ${t.trips.toLocaleString()} เที่ยว · สุทธิโอนรวม ${thMoney(t.net)} บาท?\n\nเขียนเฉพาะเที่ยวที่ยังไม่มียอดเงิน (ไม่ทับยอดเดิม)\nสำรองข้อมูลแล้วใช่ไหม?`)) return;
+            cur.running = true;
+            const btn = document.getElementById('uppay-apply-btn');
+            btn.disabled = true; btn.classList.add('opacity-60', 'cursor-not-allowed');
+            const out = document.getElementById('uppay-result');
+            const at = new Date().toISOString();
+            let done = 0, net = 0, dropped = 0, failedAt = '';
+            // One conditional transaction per trip: written only if the trip still exists, has no money and still matches
+            // the file row (applyPayToTrip) — a trip deleted or paid meanwhile is left alone.
+            const queue = [...cur.plan.writes];
+            const worker = async () => {
+                while (queue.length && !failedAt) {
+                    const w = queue.shift();
+                    try {
+                        const r = await logisticsService.transactTrip(w.ym, w.id, (curTrip) => applyPayToTrip(curTrip, w, at, cur.sameDriver));
+                        if (r.committed && r.exists) { done++; net += w.item.money.netTransfer; } else dropped++;
+                    } catch (err) {
+                        console.error('Uphill pay trip failed:', w.ym, w.id, err);
+                        failedAt = `${w.ym}/${w.id}: ${err.message}`;
+                    }
+                    if (out && (done + dropped) % 25 === 0) out.innerHTML = `<p class="text-sky-400">กำลังแนบ ${(done + dropped).toLocaleString()} / ${t.trips.toLocaleString()} เที่ยว...</p>`;
+                }
+            };
+            await Promise.all(Array.from({ length: 8 }, worker));
+            cur.running = false; cur.done = !failedAt;
+            // The batch record (settings/uphillPayLog); each trip also carries payFrom / payAttachedAt. A failed log is shown.
+            let logNote = '';
+            try {
+                await logisticsService.logUphillPay({ at, file: cur.fileName, planned: t.trips, plannedNet: t.net, written: done, writtenNet: net, dropped, error: failedAt || '' });
+            } catch (err) {
+                console.error('Uphill pay log failed:', err);
+                logNote = `<p class="text-amber-300 mt-1">⚠️ บันทึกประวัติการแนบ (settings/uphillPayLog) ไม่สำเร็จ: ${esc(err.message)} — ยอดเงินที่แนบแล้วยังอยู่ และแต่ละเที่ยวมีช่อง payFrom บอกที่มา · แจ้งผู้ดูแลระบบ</p>`;
+            }
+            if (out) out.innerHTML = logNote + (failedAt
+                ? `<p class="text-red-400 font-bold">หยุดที่ ${esc(failedAt)} — แนบไปแล้ว ${done.toLocaleString()} เที่ยว (${thMoney(net)} บาท) · กด "อ่าน & ตรวจสอบ" ใหม่แล้วแนบต่อได้ ระบบจะแนบเฉพาะที่เหลือ (เที่ยวที่มีเงินแล้วจะถูกข้าม)</p>`
+                : `<p class="text-green-400 font-bold">✓ แนบค่าเที่ยวแล้ว ${done.toLocaleString()} เที่ยว · สุทธิโอน ${thMoney(net)} บาท${dropped ? ` · ข้าม ${dropped} เที่ยวที่ถูกแก้ระหว่างนั้น` : ''} — กด "อ่าน & ตรวจสอบ" อีกครั้งเพื่อยืนยัน (ควรเหลือ 0)</p>`);
         };
 
         // Daily-board / Transport imports overlapping the template period → the same trip may be counted twice.

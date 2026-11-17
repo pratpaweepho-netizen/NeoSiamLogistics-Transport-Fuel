@@ -1117,6 +1117,13 @@ export let appState = {
             fetchTripsMonthRaw: (ym) => database.ref(`trips/${ym}`).once('value').then(s => s.val() || {}),
             applyTripsUpdate: (updates) => database.ref('trips').update(updates),
             logDateFix: (entry) => database.ref('settings/dateFixLog').push(entry),
+            logUphillPay: (entry) => database.ref('settings/uphillPayLog').push(entry),
+            // One trip, conditional: updateFn(current) returns the new trip or undefined (abort). A trip not in the local
+            // cache arrives as null first — returning null then makes Firebase re-run with the stored value (never
+            // creates a trip). Resolves { committed, exists }.
+            transactTrip: (ym, id, updateFn) => database.ref(`trips/${ym}/${id}`)
+                .transaction((cur) => (cur === null ? null : updateFn(cur)), undefined, false)
+                .then(r => ({ committed: r.committed, exists: r.snapshot.exists() })),
             // Column L downhill liters (downhillFuel/{ym}/{tripKey}) — separate from trips, which are never modified.
             fetchDownhillTripsMonth: (ym) => database.ref(`trips/${ym}`).orderByKey().startAt('tdh_').endAt('tdh_\uf8ff').once('value').then(s => s.val() || {}),
             fetchDownhillFuelMonth: (ym) => database.ref(`downhillFuel/${ym}`).once('value').then(s => s.val() || {}),
