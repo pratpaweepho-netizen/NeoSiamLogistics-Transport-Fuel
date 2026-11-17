@@ -2378,7 +2378,7 @@ const formatZeroAsEmpty = (value) => {
                     ${card('over', 'เติมเกิน', count.over || 0, overL ? `รวม +${overL.toLocaleString()} ลิตร` : '')}
                     ${card('under', 'เติมขาด', count.under || 0, underL ? `รวม ${underL.toLocaleString()} ลิตร` : '')}
                     ${card('wrong-pump', 'ลิตรรวมถูก แต่ผิดปั๊ม', count['wrong-pump'] || 0)}
-                    ${card('manual', 'ต้องตรวจเอง (ถอดหาง กพ.)', count.manual || 0)}
+                    ${card('manual', 'ต้องตรวจเอง (ถอดหาง กพ. / เติมเพิ่มขาล่อง)', count.manual || 0)}
                     ${card('no-rate', 'ตรวจไม่ได้ (ไม่มีอัตรา)', count['no-rate'] || 0)}
                 </div>
                 <p class="text-xs text-gray-400 mb-1">ขาล่องไพศาลที่เขียนไว้ในเที่ยวขาขึ้น: ตรง ${downCount.ok || 0} · เกิน ${downCount.over || 0} · ขาด ${downCount.under || 0} · ไม่ได้บันทึก ${downCount.missing || 0} เที่ยว · ${downTripsTotal ? `เที่ยวขาล่อง (คิวขาล่อง) ที่กรอกการเติม: ตรง ${downTrips.ok || 0} · เกิน ${downTrips.over || 0} · ขาด ${downTrips.under || 0} · ผิดปั๊ม ${downTrips['wrong-pump'] || 0} · ตรวจไม่ได้ ${downTrips['no-rate'] || 0}` : 'เที่ยวขาล่องในคิวขาล่องยังไม่มีลิตร — ตรวจได้เมื่อทีมกรอกช่อง ปั๊มไพศาล'}</p>
