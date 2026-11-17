@@ -310,7 +310,48 @@ export const normPlate = (p) => clean(p).replace(/\s+/g, '');
 export const plateKey = (p) => normPlate(p).split('-').slice(0, 2).join('-');
 
 // Build lookup tables once per render.
-export function buildAuditContext(standards, vehicles) {
+// Extra fill by pickup place (configurable in settings/fuelAudit.originExtras). Default from the company's old fuel
+// base (Transport "ฐานคำนวนน้ำมันขาขึ้น": 53 L at เต็กย้ง on สหพัฒน์ / น้ำพริกฉั่วฮะเส็ง pickups, 228 rows) — user
+// decision 17 Nov 2026. Real trips: สหพัฒน์ 111 of 122 and น้ำพริกฉั่วฮะเส็ง 10 of 10 fill it; คอลเกต alone and
+// น้ำปลาฉั่วฮะเส็ง never do, and "สหพัฒน์ ลพ" never does in the base, so they are not included.
+export const DEFAULT_ORIGIN_EXTRAS = [
+    { label: 'รับของชลบุรี', keywords: ['สหพัฒน์', 'น้ำพริกฉั่วฮะเส็ง'], exclude: ['สหพัฒน์ ลพ'], pump: 'tekyong_chonburi', maxLiters: 53 },
+];
+// Clean a rules list coming from settings or the editor: drop rules without keywords / pump / a positive limit.
+// ไพศาล is not allowed as a rule pump: its liters are split between uphill and downhill further down.
+const words = (v) => (Array.isArray(v) ? v : String(v || '').split(',')).map(x => clean(x).replace(/\s+/g, ' ')).filter(Boolean);
+export function normalizeOriginExtras(rules) {
+    if (!Array.isArray(rules)) return [];
+    return rules.map(r => ({
+        label: clean(r?.label),
+        keywords: words(r?.keywords),
+        exclude: words(r?.exclude),
+        pump: clean(r?.pump),
+        maxLiters: Math.max(0, Number(r?.maxLiters) || 0),
+    })).filter(r => r.keywords.length && r.pump && r.pump !== PAISAN && r.maxLiters > 0);
+}
+// Rules whose keyword appears in the trip's origin text (and no exclude word does). Spaces are ignored on both
+// sides, so "สหพัฒน์ลพ" and "สหพัฒน์  ลพ" are caught by the exclude "สหพัฒน์ ลพ".
+export function matchOriginExtras(origin, rules) {
+    const squash = (s) => clean(s).replace(/\s+/g, '');
+    const o = squash(origin);
+    if (!o || !rules?.length) return [];
+    return rules.filter(r => r.keywords.some(k => o.includes(squash(k))) && !r.exclude.some(x => o.includes(squash(x))));
+}
+// Liters allowed on top of the standard at each rule's pump: what was filled there BEYOND the standard for that
+// pump, capped at the rule's limit (so a pump already in the route rate is never counted twice).
+function originAllowances(trip, actual, ctx, standardUp = {}) {
+    if (clean(trip.direction) !== 'ขาขึ้น') return [];
+    const out = [];
+    for (const rule of matchOriginExtras(trip.origin, ctx.originExtras)) {
+        const beyond = Math.max(0, (Number(actual[rule.pump]) || 0) - (Number(standardUp[rule.pump]) || 0));
+        const allow = Math.min(beyond, rule.maxLiters);
+        if (allow > 0) out.push({ rule, allow });
+    }
+    return out;
+}
+
+export function buildAuditContext(standards, vehicles, opts = {}) {
     const std = {}, drop = {};
     for (const s of standards || []) {
         if (s.cls === DROP_CLASS) { if (s.destination && !s.duplicateOf) drop[s.destination] = s; continue; }
@@ -337,7 +378,7 @@ export function buildAuditContext(standards, vehicles) {
         const victorRows = rows.filter(s => s.downVictor && s.downVictor !== s.down);
         downDefault[cls] = { down, downVictor: victorRows.length ? modeOf(victorRows, 'downVictor') : down };
     }
-    return { std, drop, vehFull, vehHead, destinations, downDefault };
+    return { std, drop, vehFull, vehHead, destinations, downDefault, originExtras: normalizeOriginExtras(opts.originExtras) };
 }
 
 // Which vehicle-master row describes the truck on this trip. Returns { vehicle, note }.
@@ -438,10 +479,15 @@ function auditTripAs(trip, ctx, tolerance, forcedVehicle, dropNswIn) {
         // name it so a normal downhill fill is not read as an overfill.
         const paisan = Number(actual[PAISAN]) || 0;
         const paisanNote = paisan ? ` · ในยอดนี้มีปั๊มไพศาล ${paisan} ลิตร ซึ่งอาจเป็นการเติมขาล่อง` : '';
+        // The drop table has no pump split, so the whole fill at a rule's pump (up to the limit) is allowed on top.
+        const extras = originAllowances(trip, actual, ctx);
+        const extra = extras.reduce((a, x) => a + x.allow, 0);
+        const extraNote = extras.map(x => ` · ${x.rule.label || 'เติมเพิ่มตามต้นทาง'}: ${pumpThai(x.rule.pump)} ได้เพิ่ม ${x.allow} ลิตร`).join('');
+        const allowed = d ? d.upTotal + extra : 0;
         const reason = d
-            ? `เที่ยวถอดหางที่กำแพงเพชร — อัตราพิเศษ ${d.parts.map(p => `${p.part}→${p.destination} ${p.liters}`).join(' + ')} = ${d.upTotal} ลิตร (ไม่ระบุปั๊ม ไม่รวมขาล่อง) · เติมจริงรวม ${actualTotal} ลิตร (ต่าง ${actualTotal - d.upTotal > 0 ? '+' : ''}${actualTotal - d.upTotal})${paisanNote}`
-            : `เที่ยวถอดหางที่กำแพงเพชร — ตารางถอดหางไม่มีปลายทาง "${clean(trip.destination) || '-'}" ตรวจกับหัวหน้างาน${paisanNote}`;
-        return { ...base, status: 'manual', reason, diff: d ? actualTotal - d.upTotal : 0, expected: {}, expectedTotal: d ? d.upTotal : 0, downStatus: '' };
+            ? `เที่ยวถอดหางที่กำแพงเพชร — อัตราพิเศษ ${d.parts.map(p => `${p.part}→${p.destination} ${p.liters}`).join(' + ')} = ${d.upTotal} ลิตร (ไม่ระบุปั๊ม ไม่รวมขาล่อง)${extraNote} · เติมจริงรวม ${actualTotal} ลิตร (ต่าง ${actualTotal - allowed > 0 ? '+' : ''}${actualTotal - allowed})${paisanNote}`
+            : `เที่ยวถอดหางที่กำแพงเพชร — ตารางถอดหางไม่มีปลายทาง "${clean(trip.destination) || '-'}" ตรวจกับหัวหน้างาน${extraNote}${paisanNote}`;
+        return { ...base, status: 'manual', reason, diff: d ? actualTotal - allowed : 0, expected: {}, expectedTotal: allowed, downStatus: '' };
     }
     if (!vc.cls) return none(vc.reason);
     if (!origin) return none(`ต้นทาง "${clean(trip.origin)}" เป็นสาขาอื่น (ตารางมีแค่ กรุงเทพ / นครสวรรค์)`);
@@ -474,6 +520,13 @@ function auditTripAs(trip, ctx, tolerance, forcedVehicle, dropNswIn) {
 
     const down = vc.model === 'victor' ? sDown.downVictor : sDown.down;
     const expected = { ...s.up };
+    // Extra fill allowed by pickup place (settings, e.g. "รับของชลบุรี: เต็กย้ง ได้ไม่เกิน 53 ลิตร" from the company's
+    // old fuel base — the official sheet has no ชลบุรี origin). An ALLOWANCE, not a requirement: what was filled at
+    // that pump counts as expected up to the limit, so not filling it is not "under" and an overfill still shows.
+    for (const { rule, allow } of originAllowances(trip, actual, ctx, s.up)) {
+        expected[rule.pump] = (expected[rule.pump] || 0) + allow;
+        base.flags.push(`${rule.label || 'เติมเพิ่มตามต้นทาง'}: ${pumpThai(rule.pump)} ได้เพิ่มไม่เกิน ${rule.maxLiters} ลิตร (นับ ${allow})`);
+    }
     // The downhill ไพศาล fill is often written on the uphill trip, but not always. Assume whichever reading
     // (downhill included or not) is closer to what was filled at ไพศาล, so an uphill overfill there is not
     // mistaken for a downhill fill that came up short.

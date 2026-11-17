@@ -6,7 +6,7 @@ import { ICONS, GAS_STATION_FRIENDLY_NAMES, ROUTE_STATION_COLUMNS } from "./cons
 import { parseFuelBaseRows } from "./importer.js";
 import { detectSheetType, parseUphillQueue, parseDownhillQueue, parsePartnerQueue, parseDailyRows } from "./importerTrips.js";
 import { parseDrivers, parseRateTable, parseVehicles } from "./importerMasters.js";
-import { parseRateSheet, buildAuditContext, auditTrip, applyCarry, flagDoubleDownhill, AUDIT_CLASSES, AUDIT_STATUS, DOWN_STATUS } from "./fuelAudit.js";
+import { parseRateSheet, buildAuditContext, auditTrip, applyCarry, flagDoubleDownhill, AUDIT_CLASSES, AUDIT_STATUS, DOWN_STATUS, normalizeOriginExtras } from "./fuelAudit.js";
 import { COLL_STATUS, downhillTripKeys, planDownhillFuel, withDownhillFuel, reconcileColumnL, createAllIfAbsent } from "./downhillFuel.js";
 import { planDateFix, buildDateFixBatches, recheckBatch, prevDay } from "./dateFix.js";
 import { TEMPLATE_SHEET, buildTemplateLists, generateTemplate, findTemplateHeader, parseTemplateRows, planTemplateSave, saveTemplateTrips } from "./tripTemplate.js";
@@ -1038,7 +1038,7 @@ const formatZeroAsEmpty = (value) => {
                 return;
             }
             importParsedTemplate = { ...res, fileName };
-            preview.innerHTML = renderTemplatePreview(res, buildAuditContext(appState.rateStandards, appState.vehicles));
+            preview.innerHTML = renderTemplatePreview(res, buildAuditContext(appState.rateStandards, appState.vehicles, { originExtras: appState.auditState.originExtras }));
             const nNew = res.rows.filter(p => p.importState === 'new').length;
             const btn = document.getElementById('tpl-save-btn');
             document.querySelectorAll('.tpl-dup-cb').forEach(cb => cb.addEventListener('change', () => {
@@ -2236,8 +2236,9 @@ const formatZeroAsEmpty = (value) => {
             const pastKey = carryReady ? pastMonths.map(m => `${m}:${auditPastTrips[m].length}`).join(',') + `|${auditPastGen}` : 'none';
             loadDownhillFuel([...pastMonths, month]);
             const dfuel = appState.downhillFuel;
-            if (auditCache.trips !== appState.trips || auditCache.std !== appState.rateStandards || auditCache.veh !== appState.vehicles || auditCache.tol !== tol || auditCache.pastKey !== pastKey || auditCache.dfuel !== dfuel) {
-                const ctx = buildAuditContext(appState.rateStandards, appState.vehicles);
+            const ox = as.originExtras;
+            if (auditCache.trips !== appState.trips || auditCache.std !== appState.rateStandards || auditCache.veh !== appState.vehicles || auditCache.tol !== tol || auditCache.pastKey !== pastKey || auditCache.dfuel !== dfuel || auditCache.ox !== ox) {
+                const ctx = buildAuditContext(appState.rateStandards, appState.vehicles, { originExtras: ox });
                 // Downhill trips without their own liters take the column L fill (downhillFuel); the trip itself is untouched.
                 const run = (trips) => (trips || []).map(t => {
                     const r = auditTrip(withDownhillFuel(t, dfuel[t.id]), ctx, tol);
@@ -2248,8 +2249,8 @@ const formatZeroAsEmpty = (value) => {
                 let balances = {};
                 if (carryReady) {
                     // Earlier months do not change with the live month — audit them once per (data, rates, vehicles, tolerance).
-                    if (auditPastResults.key !== pastKey || auditPastResults.std !== appState.rateStandards || auditPastResults.veh !== appState.vehicles || auditPastResults.tol !== tol || auditPastResults.dfuel !== dfuel) {
-                        auditPastResults = { key: pastKey, std: appState.rateStandards, veh: appState.vehicles, tol, dfuel, results: pastMonths.flatMap(m => run(auditPastTrips[m])) };
+                    if (auditPastResults.key !== pastKey || auditPastResults.std !== appState.rateStandards || auditPastResults.veh !== appState.vehicles || auditPastResults.tol !== tol || auditPastResults.dfuel !== dfuel || auditPastResults.ox !== ox) {
+                        auditPastResults = { key: pastKey, std: appState.rateStandards, veh: appState.vehicles, tol, dfuel, ox, results: pastMonths.flatMap(m => run(auditPastTrips[m])) };
                     }
                     const ordered = [...auditPastResults.results.map(r => ({ ...r })), ...all].sort(tripOrder);
                     reconcileColumnL(ordered, new Set([...pastMonths, month]));
@@ -2259,7 +2260,7 @@ const formatZeroAsEmpty = (value) => {
                     reconcileColumnL(all, new Set([month]));
                     flagDoubleDownhill(all, appState.trips);
                 }
-                auditCache = { trips: appState.trips, std: appState.rateStandards, veh: appState.vehicles, tol, pastKey, dfuel, all, balances };
+                auditCache = { trips: appState.trips, std: appState.rateStandards, veh: appState.vehicles, tol, pastKey, dfuel, ox, all, balances };
             }
             const { all, balances } = auditCache;
             const q = (as.search || '').trim().toLowerCase();
@@ -2310,6 +2311,7 @@ const formatZeroAsEmpty = (value) => {
                             ? `อัตรามาตรฐาน: ${esc(meta.fileName)} · ${appState.rateStandards.length} อัตรา · บันทึกเมื่อ ${esc(meta.importedAt)}${meta.flagged ? ` · <span class="text-amber-300">${meta.flagged} แถวในไฟล์อัตรามีข้อสังเกต</span>` : ''}`
                             : '<span class="text-amber-300">⚠️ ยังไม่มีอัตรามาตรฐาน — นำเข้าไฟล์ "อัตราเติมน้ำมันประจำ ปั๊ม ต่างๆ" ที่แท็บ นำเข้า Excel ก่อน</span>'}</p>
                         <div id="audit-content" class="mt-4">${renderAuditContent()}</div>
+                        <div id="audit-ox" class="mt-2">${renderOriginExtrasEditor()}</div>
                     `)}
                 </div>`;
         };
@@ -2419,6 +2421,94 @@ const formatZeroAsEmpty = (value) => {
                 </div>`;
         };
 
+        // Editor for "extra fill by pickup place" rules (settings/fuelAudit.originExtras), shared by every user.
+        // It edits a DRAFT (as.oxDraft, text fields kept as typed): the audit keeps using the saved rules until
+        // "บันทึกกฎ" succeeds, and every keystroke is copied into the draft so a re-render never loses typing.
+        // Lives outside #audit-content so filter/search re-renders do not rebuild it.
+        const OX_PUMPS = Object.keys(GAS_STATION_FRIENDLY_NAMES).filter(k => k !== 'daopaisan_nakhonsawan'); // ไพศาล = downhill logic
+        const oxToDraft = (rules) => (rules || []).map(r => ({ label: r.label || '', keywords: (r.keywords || []).join(', '), exclude: (r.exclude || []).join(', '), pump: r.pump || OX_PUMPS[0], maxLiters: Number(r.maxLiters) || 0 }));
+        const renderOriginExtrasEditor = () => {
+            const as = appState.auditState;
+            const saved = as.originExtras || [];
+            const draft = as.oxDraft || oxToDraft(saved);
+            const dirty = !!as.oxDraft && JSON.stringify(normalizeOriginExtras(as.oxDraft)) !== JSON.stringify(saved);
+            const pumpOpts = (sel) => {
+                const known = OX_PUMPS.map(k => `<option value="${k}" ${k === sel ? 'selected' : ''}>${esc(GAS_STATION_FRIENDLY_NAMES[k])}</option>`).join('');
+                // A saved pump that is no longer in the list stays selected and visible instead of silently changing.
+                return sel && !OX_PUMPS.includes(sel) ? `<option value="${esc(sel)}" selected>(ไม่รู้จัก) ${esc(sel)}</option>${known}` : known;
+            };
+            const field = 'w-full bg-slate-800 border border-slate-600 rounded-md px-2 py-1 text-white';
+            const row = (r, i) => `
+                <div class="grid grid-cols-1 md:grid-cols-12 gap-2 items-end border-b border-slate-700 pb-3" data-ox-row="${i}">
+                    <div class="md:col-span-2"><label class="block text-xs text-gray-400 mb-1">ชื่อกฎ</label><input data-ox="label" value="${esc(r.label)}" class="${field}" /></div>
+                    <div class="md:col-span-3"><label class="block text-xs text-gray-400 mb-1">ต้นทางที่มีคำว่า (คั่นด้วย ,)</label><input data-ox="keywords" value="${esc(r.keywords)}" class="${field}" /></div>
+                    <div class="md:col-span-2"><label class="block text-xs text-gray-400 mb-1">ยกเว้นคำว่า</label><input data-ox="exclude" value="${esc(r.exclude)}" class="${field}" /></div>
+                    <div class="md:col-span-2"><label class="block text-xs text-gray-400 mb-1">ปั๊ม</label><select data-ox="pump" class="${field}">${pumpOpts(r.pump)}</select></div>
+                    <div class="md:col-span-2"><label class="block text-xs text-gray-400 mb-1">ได้เพิ่มไม่เกิน (ลิตร)</label><input data-ox="maxLiters" type="number" min="0" step="1" value="${Number(r.maxLiters) || 0}" class="${field}" /></div>
+                    <div class="md:col-span-1"><button data-ox-del="${i}" class="text-red-400 hover:text-red-300 text-sm">ลบ</button></div>
+                </div>`;
+            return `
+                <button id="audit-toggle-ox" class="text-sky-300 hover:text-sky-200 text-sm font-bold">${as.showOriginExtras ? '▼' : '▶'} กฎเติมเพิ่มตามต้นทาง (${saved.length} กฎ${dirty ? ' · มีการแก้ที่ยังไม่บันทึก' : ''})</button>
+                ${as.showOriginExtras ? `
+                <div class="mt-2 bg-slate-800/60 border border-slate-700 rounded-lg p-3 space-y-3 text-sm">
+                    <p class="text-gray-400">เที่ยวขาขึ้นที่ต้นทางมีคำที่กำหนด เติมปั๊มนี้ได้<b class="text-white">เพิ่มจากอัตรา ไม่เกิน</b> จำนวนลิตรที่ตั้ง (ไม่เติมก็ไม่นับว่าขาด) · ใช้ร่วมกันทุกคน · ผลตรวจเปลี่ยนเมื่อกด "บันทึกกฎ" แล้วเท่านั้น</p>
+                    ${draft.map(row).join('') || '<p class="text-gray-500">ยังไม่มีกฎ</p>'}
+                    <div class="flex flex-wrap gap-2">
+                        <button id="audit-ox-add" class="bg-slate-600 hover:bg-slate-500 text-white font-bold py-1 px-3 rounded-lg">+ เพิ่มกฎ</button>
+                        <button id="audit-ox-save" class="bg-primary hover:bg-secondary text-white font-bold py-1 px-3 rounded-lg">บันทึกกฎ</button>
+                        ${as.oxDraft ? '<button id="audit-ox-cancel" class="bg-slate-700 hover:bg-slate-600 text-white py-1 px-3 rounded-lg">ยกเลิกการแก้</button>' : ''}
+                        <span id="audit-ox-msg" class="self-center">${as.oxMsg || ''}</span>
+                    </div>
+                </div>` : ''}`;
+        };
+        const rerenderOriginExtras = () => {
+            const el = document.getElementById('audit-ox');
+            if (el) { el.innerHTML = renderOriginExtrasEditor(); attachOriginExtrasListeners(); }
+        };
+        const readOriginExtrasForm = () => [...document.querySelectorAll('[data-ox-row]')].map(el => {
+            const v = (f) => el.querySelector(`[data-ox="${f}"]`)?.value ?? '';
+            return { label: v('label'), keywords: v('keywords'), exclude: v('exclude'), pump: v('pump'), maxLiters: Number(v('maxLiters')) || 0 };
+        });
+        const attachOriginExtrasListeners = () => {
+            const as = appState.auditState;
+            document.getElementById('audit-toggle-ox')?.addEventListener('click', () => { as.showOriginExtras = !as.showOriginExtras; rerenderOriginExtras(); });
+            // Copy every edit into the draft at once, so any re-render shows what was typed.
+            document.querySelectorAll('[data-ox-row] [data-ox]').forEach(inp => {
+                const sync = () => { as.oxDraft = readOriginExtrasForm(); as.oxMsg = ''; };
+                inp.addEventListener('input', sync);
+                inp.addEventListener('change', sync);
+            });
+            document.getElementById('audit-ox-add')?.addEventListener('click', () => {
+                as.oxDraft = [...readOriginExtrasForm(), { label: '', keywords: '', exclude: '', pump: 'tekyong_chonburi', maxLiters: 0 }];
+                rerenderOriginExtras();
+            });
+            document.querySelectorAll('[data-ox-del]').forEach(b => b.addEventListener('click', () => {
+                const rows = readOriginExtrasForm();
+                rows.splice(Number(b.dataset.oxDel), 1);
+                as.oxDraft = rows;
+                rerenderOriginExtras();
+            }));
+            document.getElementById('audit-ox-cancel')?.addEventListener('click', () => { as.oxDraft = null; as.oxMsg = ''; rerenderOriginExtras(); });
+            document.getElementById('audit-ox-save')?.addEventListener('click', async () => {
+                const raw = readOriginExtrasForm();
+                const rules = normalizeOriginExtras(raw);
+                if (rules.length !== raw.length && !confirm(`มี ${raw.length - rules.length} กฎที่ไม่ครบ (ต้องมีคำต้นทาง ปั๊ม และลิตรมากกว่า 0) จะถูกตัดออก — บันทึกต่อไหม?`)) return;
+                try {
+                    // Firebase drops an empty array, which would bring the default back — store false for "no rules".
+                    await logisticsService.saveAuditSettings({ originExtras: rules.length ? rules : false });
+                    as.originExtras = rules;
+                    as.oxDraft = null;
+                    as.oxMsg = `<span class="text-green-400">✓ บันทึกกฎแล้ว (${rules.length} กฎ)</span>`;
+                    rerenderOriginExtras();
+                    rerenderAuditContent();
+                } catch (err) {
+                    console.error('Save origin extras failed:', err);
+                    as.oxMsg = `<span class="text-red-400">บันทึกไม่สำเร็จ: ${esc(err.message)}</span>`;
+                    rerenderOriginExtras();
+                }
+            });
+        };
+
         const rerenderAuditContent = () => {
             const el = document.getElementById('audit-content');
             if (el) { el.innerHTML = renderAuditContent(); attachAuditContentListeners(); }
@@ -2456,6 +2546,7 @@ const formatZeroAsEmpty = (value) => {
             });
             document.getElementById('audit-export-btn')?.addEventListener('click', handleAuditExport);
             attachAuditContentListeners();
+            attachOriginExtrasListeners();
         };
 
         const handleAuditExport = () => {

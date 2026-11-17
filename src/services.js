@@ -3,6 +3,7 @@
 import firebase from "firebase/compat/app";
 import "firebase/compat/database";
 import { GAS_STATION_KEYS, GAS_STATION_FRIENDLY_NAMES, firebaseConfig } from "./constants.js";
+import { DEFAULT_ORIGIN_EXTRAS, normalizeOriginExtras } from "./fuelAudit.js";
 
 // UI seam: app.js injects render/hideLoading so the data layer stays free of DOM/render code.
 let ui = { render: () => {}, hideLoading: () => {} };
@@ -26,7 +27,9 @@ export let appState = {
             rateStandards: [],
             rateStandardsMeta: null,
             // tolerance / carryStart are shared settings (Firebase settings/fuelAudit); the rest is per-screen UI state.
-            auditState: { status: '', search: '', tolerance: 0, carryStart: '2026-11', showStandards: false },
+            // originExtras: "extra fill by pickup place" rules — default from the company's old fuel base until saved
+            // in settings/fuelAudit.originExtras (user decision 17 Nov 2026).
+            auditState: { status: '', search: '', tolerance: 0, carryStart: '2026-11', showStandards: false, originExtras: DEFAULT_ORIGIN_EXTRAS, showOriginExtras: false },
             // Excel trip template start month (settings/tripTemplate.startMonth); '' = not set yet → template import blocked.
             templateStartMonth: '',
             // Column L downhill liters by trip key (downhillFuel/{ym}/{key}), only for the months the audit loaded
@@ -1061,6 +1064,12 @@ export let appState = {
                     const s = snapshot.val() || {};
                     if (typeof s.tolerance === 'number') appState.auditState.tolerance = s.tolerance;
                     if (typeof s.carryStart === 'string') appState.auditState.carryStart = s.carryStart;
+                    // Saved rules win (an empty list saved on purpose means "no extras"); never saved → the default.
+                    if (s.originExtras !== undefined) {
+                        const next = normalizeOriginExtras(Object.values(s.originExtras || {}));
+                        // Keep the same array when nothing changed, so the audit caches (keyed by this array) stay valid.
+                        if (JSON.stringify(next) !== JSON.stringify(appState.auditState.originExtras)) appState.auditState.originExtras = next;
+                    }
                     if (appState.view === 'audit') ui.render();
                 }, onListenerError('settings/fuelAudit'));
 

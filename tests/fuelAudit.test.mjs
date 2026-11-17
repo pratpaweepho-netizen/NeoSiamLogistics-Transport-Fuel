@@ -201,5 +201,40 @@ flagDoubleDownhill(seq3, [seq3[0].trip, { id: 'd1', direction: 'ขาล่อ�
 eq('downhill trip without fill in between → no duplicate flag', seq3.map(r => r.flags.length), [0, 0]);
 eq('4-part plate does not inherit the trailer rate', tp('70-8901-8158-X').cls !== '18W' || tp('70-8901-8158-X').flags.some(f => f.startsWith('กระดานคิวเขียนแค่ทะเบียนหัว')), true);
 
+// User decision 17 Nov 2026: pickups in ชลบุรี (สหพัฒน์ / น้ำพริกฉั่วฮะเส็ง) may fill เต็กย้ง up to 53 L (old fuel base).
+const { DEFAULT_ORIGIN_EXTRAS, normalizeOriginExtras, matchOriginExtras } = await import('../src/fuelAudit.js');
+const ctxOx = buildAuditContext(nswStd, [{ registrationNumber: '70-8901-8158', vehicleType: '18W', driveType: 'รถบริษัท' }], { originExtras: DEFAULT_ORIGIN_EXTRAS });
+const ox = (origin, L) => auditTrip({ direction: 'ขาขึ้น', origin, plate: '70-8901-8158', destination: 'กำแพงเพชร', gasStationsLiters: L }, ctxOx);
+eq('สหพัฒน์ + เต็กย้ง 53 → ok', [ox('สหพัฒน์', { jittamas_bangpain: 80, daopaisan_nakhonsawan: 180, tekyong_chonburi: 53 }).status, ox('สหพัฒน์', { jittamas_bangpain: 80, daopaisan_nakhonsawan: 180, tekyong_chonburi: 53 }).expectedTotal], ['ok', 313]);
+eq('สหพัฒน์ without เต็กย้ง → ok (allowance, not required)', ox('สหพัฒน์', { jittamas_bangpain: 80, daopaisan_nakhonsawan: 180 }).status, 'ok');
+eq('เต็กย้ง 553 → over +500', [ox('สหพัฒน์', { jittamas_bangpain: 80, daopaisan_nakhonsawan: 180, tekyong_chonburi: 553 }).status, ox('สหพัฒน์', { jittamas_bangpain: 80, daopaisan_nakhonsawan: 180, tekyong_chonburi: 553 }).diff], ['over', 500]);
+eq('น้ำพริกฉั่วฮะเส็ง + 53 → ok', ox('น้ำพริกฉั่วฮะเส็ง', { jittamas_bangpain: 80, daopaisan_nakhonsawan: 180, tekyong_chonburi: 53 }).status, 'ok');
+eq('คอลเกต alone + เต็กย้ง → over (not in the rule)', ox('คอลเกต', { jittamas_bangpain: 80, daopaisan_nakhonsawan: 180, tekyong_chonburi: 53 }).status, 'over');
+eq('คอลเกต+สหพัฒน์ matches', ox('คอลเกต+สหพัฒน์', { jittamas_bangpain: 80, daopaisan_nakhonsawan: 180, tekyong_chonburi: 53 }).status, 'ok');
+eq('"สหพัฒน์ ลพ" excluded', matchOriginExtras('สหพัฒน์  ลพ', normalizeOriginExtras(DEFAULT_ORIGIN_EXTRAS)).length, 0);
+eq('Bangkok pickup with เต็กย้ง → still over', ox('HiQ', { jittamas_bangpain: 80, daopaisan_nakhonsawan: 180, tekyong_chonburi: 53 }).status, 'over');
+eq('no rules passed → no extras (pure module default is empty)', auditTrip({ direction: 'ขาขึ้น', origin: 'สหพัฒน์', plate: '70-8901-8158', destination: 'กำแพงเพชร', gasStationsLiters: { jittamas_bangpain: 80, daopaisan_nakhonsawan: 180, tekyong_chonburi: 53 } }, ctxNsw).status, 'over');
+// review: a rule on a pump that is already in the route rate allows only liters BEYOND the rate
+const ctxNis = buildAuditContext([{ cls: '18W', origin: 'นครสวรรค์', destination: 'กำแพงเพชร', variant: 'standard', up: { nissan_singburi: 80 }, down: 180, downVictor: 190, flags: [] }],
+    [{ registrationNumber: '70-8901-8158', vehicleType: '18W', driveType: 'รถบริษัท' }], { originExtras: [{ label: 'x', keywords: ['นว'], pump: 'nissan_singburi', maxLiters: 30 }] });
+const nis = (L) => auditTrip({ direction: 'ขาขึ้น', origin: 'นว', plate: '70-8901-8158', destination: 'กำแพงเพชร', gasStationsLiters: L }, ctxNis);
+eq('rule on a pump already in the rate: exact rate fill = ok (not under -30)', [nis({ nissan_singburi: 80, daopaisan_nakhonsawan: 180 }).status, nis({ nissan_singburi: 80, daopaisan_nakhonsawan: 180 }).expectedTotal], ['ok', 260]);
+eq('… rate + 30 extra = ok, rate + 40 = over +10', [nis({ nissan_singburi: 110, daopaisan_nakhonsawan: 180 }).status, nis({ nissan_singburi: 120, daopaisan_nakhonsawan: 180 }).diff], ['ok', 10]);
+// review: ไพศาล cannot be a rule pump (its liters are split uphill/downhill)
+eq('ไพศาล rule is dropped', normalizeOriginExtras([{ keywords: ['ก'], pump: 'daopaisan_nakhonsawan', maxLiters: 50 }]).length, 0);
+// review: spaces ignored in matching
+eq('exclude matches without the space ("สหพัฒน์ลพ")', matchOriginExtras('สหพัฒน์ลพ', normalizeOriginExtras(DEFAULT_ORIGIN_EXTRAS)).length, 0);
+eq('exclude typed with two spaces still works', matchOriginExtras('สหพัฒน์ ลพ', normalizeOriginExtras([{ keywords: ['สหพัฒน์'], exclude: ['สหพัฒน์  ลพ'], pump: 'tekyong_chonburi', maxLiters: 53 }])).length, 0);
+// review: downhill trips never get the allowance
+eq('downhill trip: no origin allowance', auditTrip({ direction: 'ขาล่อง', origin: 'สหพัฒน์', plate: '70-8901-8158', destination: 'กรุงเทพ', gasStationsLiters: { tekyong_chonburi: 53 } }, ctxOx).flags.some(f => f.includes('ได้เพิ่มไม่เกิน')), false);
+// review: KPP drop beyond กพ. (manual) counts the allowance in its diff
+const ctxDropOx = buildAuditContext([...standards, ...dropStd], vehicles, { originExtras: DEFAULT_ORIGIN_EXTRAS });
+const kppOx = auditTrip(trip({ origin: 'สหพัฒน์', destination: 'แม่สอด', jobDetail: 'ตัดลูก กพ', gasStationsLiters: { jittamas_bangpain: 210, tekyong_chonburi: 53 } }), ctxDropOx);
+const kppNo = auditTrip(trip({ origin: 'สหพัฒน์', destination: 'แม่สอด', jobDetail: 'ตัดลูก กพ', gasStationsLiters: { jittamas_bangpain: 210, tekyong_chonburi: 53 } }), ctxDrop);
+eq('KPP drop beyond กพ.: เต็กย้ง allowance taken off the diff', [kppOx.status, kppOx.diff, kppNo.diff - kppOx.diff], ['manual', kppNo.diff - 53, 53]);
+eq('rules from settings (object form, text keywords) are normalised; bad rules dropped',
+    normalizeOriginExtras(Object.values({ 0: { label: 'x', keywords: 'ก, ข', pump: 'nissan_singburi', maxLiters: '20' }, 1: { keywords: [], pump: 'x', maxLiters: 5 }, 2: { keywords: ['ค'], pump: '', maxLiters: 5 } })),
+    [{ label: 'x', keywords: ['ก', 'ข'], exclude: [], pump: 'nissan_singburi', maxLiters: 20 }]);
+
 console.log(fail ? `FAILED ${fail}` : 'ALL PASS');
 process.exit(fail ? 1 : 0);
