@@ -143,7 +143,10 @@ eq('template NSW drop, victor truck filled 180 at ไพศาล (rate 190) →
 const tDrop = { ...ok1.trip, gasStationsLiters: { jittamas_bangpain: 50, daopaisan_nakhonsawan: 190 } };
 eq('template NSW drop, victor 190 downhill → ok', [auditTrip(tDrop, ctx).status, auditTrip(tDrop, ctx).rateCls], ['ok', '10W']);
 eq('"ไม่ตัด" overrides drop text in the job detail', auditTrip({ ...tDrop, trailerDrop: 'ไม่ตัด', jobDetail: 'ตัดลูกนว.', gasStationsLiters: { jittamas_bangpain: 80, daopaisan_nakhonsawan: 190 } }, ctx).rateCls, undefined);
-eq('trailerDrop กำแพงเพชร → manual check', auditTrip({ ...tDrop, trailerDrop: 'กำแพงเพชร' }, ctx).status, 'manual');
+// trailer left at กพ., head goes on beyond กพ. → special drop table → manual check
+eq('trailerDrop กำแพงเพชร, destination beyond กพ. → manual check', auditTrip({ ...tDrop, destination: 'แม่สอด', trailerDrop: 'กำแพงเพชร' }, ctx).status, 'manual');
+// user rule 17 Nov 2026: พ่วง to กพ. = 80 L → trip ending at กพ. is audited at the normal พ่วง rate (victor 80 + 190)
+eq('trailerDrop กำแพงเพชร, destination กพ. itself → normal พ่วง rate', auditTrip({ ...tDrop, trailerDrop: 'กำแพงเพชร', gasStationsLiters: { jittamas_bangpain: 80, daopaisan_nakhonsawan: 190 } }, ctx).status, 'ok');
 
 // --- round trip: real .xlsx built by ExcelJS → SheetJS (cellDates like the app) → parser
 const wb = generateTemplate(ExcelJS, lists);

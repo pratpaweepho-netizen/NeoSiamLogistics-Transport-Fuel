@@ -89,6 +89,12 @@ const nswStd = [
 const ctxNsw = buildAuditContext(nswStd, [{ registrationNumber: '70-8901-8158', vehicleType: '18W', driveType: 'รถบริษัท' }]);
 const nsw = (L, job = 'แม่ กพ /ตัดลูก นว ตัดลูกนว.') => auditTrip({ direction: 'ขาขึ้น', origin: 'สหพัฒน์', plate: '70-8901-8158', destination: 'กำแพงเพชร', jobDetail: job, gasStationsLiters: L }, ctxNsw);
 eq('NSW drop: 10W uphill + towing downhill = ok', [nsw({ jittamas_bangpain: 50, daopaisan_nakhonsawan: 180 }).status, nsw({ jittamas_bangpain: 50, daopaisan_nakhonsawan: 180 }).expectedTotal], ['ok', 230]);
+// User rule 17 Nov 2026: "ถ้าเป็นรถพ่วง ไปสาขากพ. จ่าย 80 ลิตร" — trailer left at กพ. and the trip ends at กพ.
+// = an ordinary พ่วง trip to กำแพงเพชร (real trips: จิตตมาศ 80 + ไพศาล 180 downhill), not a manual check.
+const kpp = (L, o = {}) => auditTrip({ direction: 'ขาขึ้น', origin: 'สหพัฒน์', plate: '70-8901-8158', destination: 'กำแพงเพชร', jobDetail: 'แม่ตรงร้าน วาไรตี้ กพ/ ตัดลูก กพ', gasStationsLiters: L, ...o }, ctxNsw);
+eq('KPP drop ending at กพ. → พ่วง rate 80 + downhill 180 = ok', [kpp({ jittamas_bangpain: 80, daopaisan_nakhonsawan: 180 }).status, kpp({ jittamas_bangpain: 80, daopaisan_nakhonsawan: 180 }).expectedTotal], ['ok', 260]);
+eq('KPP drop ending at กพ. with an extra เต็กย้ง 53 → over +53', [kpp({ jittamas_bangpain: 80, daopaisan_nakhonsawan: 180, tekyong_chonburi: 53 }).status, kpp({ jittamas_bangpain: 80, daopaisan_nakhonsawan: 180, tekyong_chonburi: 53 }).diff], ['over', 53]);
+eq('template trailerDrop กำแพงเพชร ending at กพ. → normal rate too', kpp({ jittamas_bangpain: 80, daopaisan_nakhonsawan: 180 }, { jobDetail: '', trailerDrop: 'กำแพงเพชร' }).status, 'ok');
 eq('NSW drop typo "ตักลูกนว." recognised', nsw({ jittamas_bangpain: 50, daopaisan_nakhonsawan: 180 }, 'ตักลูกนว.').status, 'ok');
 // review fixes for the NSW rule
 const ctxNsw2 = buildAuditContext([...nswStd,

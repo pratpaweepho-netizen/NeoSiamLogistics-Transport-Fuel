@@ -428,7 +428,11 @@ function auditTripAs(trip, ctx, tolerance, forcedVehicle, dropNswIn) {
     if (bahtTotal) base.flags.push(`เติมเป็นเงิน ${bahtTotal.toLocaleString()} บาท (ไม่มีอัตราเป็นเงิน)`);
     const none = (reason) => ({ ...base, status: 'no-rate', reason, diff: 0, expected: {}, expectedTotal: 0, downStatus: '' });
     // Trailer left at Kamphaeng Phet: the special table has total liters only (no pump) → manual check.
-    if (isDropAtKpp(trip)) {
+    // User rule (17 Nov 2026): "ถ้าเป็นรถพ่วง ไปสาขา กพ. จ่าย 80 ลิตร" — when the trip itself ends at กำแพงเพชร
+    // (head delivers to a shop there, trailer left at the branch), it is an ordinary พ่วง trip to กพ.: the normal
+    // rate row applies, so fall through. The special table is for heads that go on beyond กพ.
+    const kppEndsHere = destination === 'กำแพงเพชร';
+    if (isDropAtKpp(trip) && !kppEndsHere) {
         const d = ctx.drop?.[destination];
         // The drop table has no downhill figure, but the ไพศาล downhill fill is often written on this trip —
         // name it so a normal downhill fill is not read as an overfill.
