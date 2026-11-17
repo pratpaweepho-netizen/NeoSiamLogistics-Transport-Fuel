@@ -1,5 +1,5 @@
 // Run: node tests/fuelAudit.test.mjs   (no network, no Excel file needed)
-import { parseRateSheet, buildAuditContext, auditTrip, canonDestination, applyCarry, flagDoubleDownhill } from '../src/fuelAudit.js';
+import { parseRateSheet, buildAuditContext, auditTrip, canonDestination, applyCarry, flagDoubleDownhill, ratesMissingFrom } from '../src/fuelAudit.js';
 
 let fail = 0;
 const eq = (name, a, b) => {
@@ -340,6 +340,73 @@ eq('carry-over: board name and full name become one balance', applyCarry(resA), 
 eq('rules from settings (object form, text keywords) are normalised; bad rules dropped',
     normalizeOriginExtras(Object.values({ 0: { label: 'x', keywords: 'ก, ข', pump: 'nissan_singburi', maxLiters: '20' }, 1: { keywords: [], pump: 'x', maxLiters: 5 }, 2: { keywords: ['ค'], pump: '', maxLiters: 5 } })),
     [{ label: 'x', keywords: ['ก', 'ข'], exclude: [], pump: 'nissan_singburi', maxLiters: 20 }]);
+
+// Sheet layout of the team's update (17 Nov 2026): origin written without "จาก", new places พิจิตร / สุโขทัย,
+// เพชรบูรณ์ split by "(ตีเข้า กทม)" / "(ตีเข้า นครสวรรค์)", and a stray origin cell with no destination.
+const sheetNew = [
+    ['สถานที่', '', 'รายการเติมน้ำมัน (สิบล้อ) ขาขึ้น', '', '', '', 'ขาล่อง'],
+    ['ต้นทาง', 'ปลายทาง', 'ปั๊มจิตตมาศ', 'ปั๊มศรีนครคลองขลุง', 'ปั๊มสยามนิสสัน สิงห์บุรี', 'รวมยอดขาขึ้น/ลิตร', 'ปั๊มไพศาลน.ว', 'เบี้ยขับ', 'ระยะทาง'],
+    ['กรุงเทพ', 'นครสวรรค์', '***', '***', '***', '***', 120, ' - ', ' -500-'],
+    ['กรุงเทพ', 'พิจิตร', 50, '***', '***', 50, 120, ' เบี้ยขับ 400'],
+    ['กรุงเทพ', 'สุโขทัย', 100, '***', '***', 100, 120, ' เบี้ยขับ 500'],
+    ['กรุงเทพ', 'อ.บึงสามพัน จ.เพชรบูรณ์  (ตีเข้า กทม)', 20, '***', '***', 20, 120, ' เบี้ยขับ 500'],
+    ['กรุงเทพ', 'อ.บึงสามพัน จ.เพชรบูรณ์  (ตีเข้า นครสวรรค์)', 50, '***', '***', 50, 120, ' เบี้ยขับ 500'],
+    ['จาก นครสวรรค์', '', '***', '***', '***', '***', 120],
+];
+const pn = parseRateSheet({ 'เหนือล่าง(ใหม่)': sheetNew });
+eq('new layout: origin without "จาก" is read', pn.standards.map(s => `${s.origin}>${s.destination}:${s.variant}`),
+    ['กรุงเทพ>นครสวรรค์:standard', 'กรุงเทพ>พิจิตร:standard', 'กรุงเทพ>สุโขทัย:standard', 'กรุงเทพ>บึงสามพัน:via_bkk', 'กรุงเทพ>บึงสามพัน:via_nsw']);
+eq('new layout: "ตีเข้า" pair is not a conflict', pn.standards.some(s => s.flags.some(f => f.startsWith('ขัดกับ'))), false);
+eq('new layout: origin with no destination → warning, not a rate', pn.warnings.some(w => w.includes('แถว 8') && w.includes('ไม่มีปลายทาง')), true);
+eq('canon พิจิตร / สุโขทัย; multi-drop label keeps its old place', [canonDestination('พิจิตร'), canonDestination('สุโขทัย'), canonDestination('พิจิตร+นครสวรรค์')], ['พิจิตร', 'สุโขทัย', 'นครสวรรค์']);
+const ctxNew = buildAuditContext(pn.standards, [{ registrationNumber: '70-4444', vehicleType: '10W', driveType: 'รถบริษัท' }]);
+const viaTrip = auditTrip({ direction: 'ขาขึ้น', origin: 'HiQ', plate: '70-4444', destination: 'บึงสามพัน เพชรบูรณ์', gasStationsLiters: { jittamas_bangpain: 50, daopaisan_nakhonsawan: 120 } }, ctxNew, 0);
+eq('"ตีเข้า" route: manual check naming both rates, never one picked', [viaTrip.status, /ตีเข้า กทม 20/.test(viaTrip.reason), /ตีเข้า นครสวรรค์ 50/.test(viaTrip.reason)], ['manual', true, true]);
+const pjTrip = auditTrip({ direction: 'ขาขึ้น', origin: 'HiQ', plate: '70-4444', destination: 'พิจิตร', gasStationsLiters: { jittamas_bangpain: 50, daopaisan_nakhonsawan: 120 } }, ctxNew, 0);
+eq('new place พิจิตร is audited', [pjTrip.status, pjTrip.expectedTotal], ['ok', 170]);
+
+// review round (17 Nov 2026)
+const HDR2 = sheetNew[1];
+const pr5 = parseRateSheet({ s: [sheetNew[0], HDR2,
+    ['นครสวรรค์', 'พิจิตร (ตีเข้า นครสวรรค์)', '***', '***', 50, 50, 120, 'เบี้ยขับ 400'],   // r3: place ≠ the "ตีเข้า" town
+    ['', 'พิจิตร (ตีเข้า กทม)', '***', '***', 20, 20, 120, 'เบี้ยขับ 400'],                // r4: merged origin cell
+    ['นครสรรค์', 'สุโขทัย', '***', '***', 50, 50, 120, 'เบี้ยขับ 500'],                    // r5: origin typo
+    ['กรุงเทพ', 'เมืองเพชรบูรณ์ (ตีเข้า นครสรรค์)', 90, '***', '***', 90, 120, 'เบี้ยขับ 500'], // r6: target typo
+    ['กรุงเทพ', 'เมืองเพชรบูรณ์ (ตีเข้า กทม)', 60, '***', '***', 60, 120, 'เบี้ยขับ 500'],
+    ['กรุงเทพ', 'เมืองเพชรบูรณ์ (ตีเข้า กทม)', 70, '***', '***', 70, 120, 'เบี้ยขับ 500 (รถsino)'], // r8: sino via
+    ['กรุงเทพ', 'ตาก (ตีเข้า ลำปาง)', 100, '***', '***', 100, 120, 'เบี้ยขับ 500'],           // r9: unreadable target
+    ['หมายเหตุ', 'ตาก', 10, '***', '***', 10, 120],                                          // r10: unreadable origin
+    ['', '', '', '', '', '', '', '', 'สิ้นเปลือง 70'],                                         // r11: note row
+] });
+const s5 = (row) => pr5.standards.find(s => s.row === row);
+eq('"(ตีเข้า นครสวรรค์)" is stripped before reading the place', [s5(3).destination, s5(3).variant], ['พิจิตร', 'via_nsw']);
+eq('blank origin cell under an origin = merged cell (same origin)', [s5(4)?.origin, s5(4)?.variant], ['นครสวรรค์', 'via_bkk']);
+eq('origin typo "นครสรรค์" is read', s5(5)?.origin, 'นครสวรรค์');
+eq('"ตีเข้า นครสรรค์" (typo) is via_nsw, never the plain rate', s5(6).variant, 'via_nsw');
+eq('sino via row keeps its own key (no false conflict)', [s5(8).variant, pr5.standards.some(s => s.flags.some(f => f.startsWith('ขัดกับ')))], ['via_bkk_sino', false]);
+eq('unreadable "ตีเข้า" target → via_other + flag', [s5(9).variant, s5(9).flags.some(f => f.includes('ตีเข้า'))], ['via_other', true]);
+eq('row with a place and figures but no readable origin → warning, not silently dropped', [!!s5(10), pr5.warnings.some(w => w.includes('แถว 10') && w.includes('ต้นทาง'))], [false, true]);
+eq('note row skipped quietly', pr5.warnings.some(w => w.includes('แถว 11')), false);
+const ctx5 = buildAuditContext(pr5.standards, [{ registrationNumber: '70-5151', vehicleType: '10W', driveType: 'รถบริษัท', model: 'sino' }]);
+const sinoVia = auditTrip({ direction: 'ขาขึ้น', origin: 'HiQ', plate: '70-5151', destination: 'เพชรบูรณ์', gasStationsLiters: { jittamas_bangpain: 70 } }, ctx5, 0);
+eq('sino truck on a "ตีเข้า" route sees the sino figure', [sinoVia.status, /ตีเข้า กทม 70/.test(sinoVia.reason)], ['manual', true]);
+// NSW drop: the head (10W) has no rate, the towing class (18W) has only "ตีเข้า" rows → manual with both, not "no rate"
+const ctxVia18 = buildAuditContext([
+    { cls: '18W', origin: 'กรุงเทพ', destination: 'บึงสามพัน', destinationLabel: 'บึงสามพัน (ตีเข้า กทม)', variant: 'via_bkk', up: { jittamas_bangpain: 20 }, upTotal: 20, down: 180, downVictor: 190, flags: [] },
+    { cls: '18W', origin: 'กรุงเทพ', destination: 'บึงสามพัน', destinationLabel: 'บึงสามพัน (ตีเข้า นครสวรรค์)', variant: 'via_nsw', up: { jittamas_bangpain: 50 }, upTotal: 50, down: 180, downVictor: 190, flags: [] },
+], [{ registrationNumber: '70-8901-8158', vehicleType: '18W', driveType: 'รถบริษัท' }]);
+const viaDrop = auditTrip({ direction: 'ขาขึ้น', origin: 'HiQ', plate: '70-8901-8158', destination: 'บึงสามพัน', trailerDrop: 'นครสวรรค์', gasStationsLiters: { jittamas_bangpain: 50 } }, ctxVia18, 0);
+eq('towing class with only "ตีเข้า" rows → manual, not no-rate', viaDrop.status, 'manual');
+// double downhill: a column-L trip that names an OLDER uphill does not shield the newer uphill from the next downhill
+const u18 = { leg: 'up', downhillRecorded: true, downActual: 180, flags: [], trip: { id: 'a1', date: '2026-10-18', direction: 'ขาขึ้น', driver: 'Q', plate: '70-7777' } };
+const u24 = { leg: 'up', downhillRecorded: true, downActual: 180, flags: [], trip: { id: 'a2', date: '2026-10-24', direction: 'ขาขึ้น', driver: 'Q', plate: '70-7777' } };
+const dL = { leg: 'down', status: 'ok', flags: [], actual: { daopaisan_nakhonsawan: 180 }, trip: { id: 'a3', date: '2026-10-24', direction: 'ขาล่อง', driver: 'Q', plate: '70-7777', fuelFrom: 'colL', fuelRef: { date: '2026-10-18' } } };
+const d26 = { leg: 'down', status: 'ok', flags: [], actual: { daopaisan_nakhonsawan: 180 }, trip: { id: 'a4', date: '2026-10-26', direction: 'ขาล่อง', driver: 'Q', plate: '70-7777' } };
+const seq7 = [u18, u24, dL, d26];
+flagDoubleDownhill(seq7, seq7.map(r => r.trip));
+const lostList = ratesMissingFrom([...standards, { cls: 'EMPTY_TRAILER_KPP', origin: '', destination: '', variant: 'standard', extraLiters: 20 }], standards.filter(s => s.destination !== 'แพร่'));
+eq('import preview names rates the file would drop (incl. the empty-trailer rule)', [lostList.length, lostList.some(x => x.includes('แพร่')), lostList.some(x => x.includes('+20'))], [2, true, true]);
+eq('older-queue column-L trip in between does not hide the next real double', [d26.flags.some(f => f.startsWith('อาจบันทึกขาล่องซ้ำ')), u24.flags.some(f => f.startsWith('อาจบันทึกขาล่องซ้ำ'))], [true, true]);
 
 console.log(fail ? `FAILED ${fail}` : 'ALL PASS');
 process.exit(fail ? 1 : 0);

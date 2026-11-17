@@ -61,7 +61,26 @@ const DEST_CANON = [
     ['แม่สาย', 'แม่สาย'], ['แม่สอด', 'แม่สอด'], ['เชียงราย', 'เชียงราย'], ['เชียงใหม่', 'เชียงใหม่'],
     ['พะเยา', 'พะเยา'], ['ลำพูน', 'ลำพูน'], ['ลำปาง', 'ลำปาง'], ['พิษณุโลก', 'พิษณุโลก'],
     ['กำแพงเพชร', 'กำแพงเพชร'], ['นครสวรรค์', 'นครสวรรค์'], ['นครสรรค์', 'นครสวรรค์'], ['นคสวรรค์', 'นครสวรรค์'],
+    // Added by the team's sheet update of 17 Nov 2026. Last, so multi-drop labels such as "พิจิตร+นครสวรรค์" keep
+    // the place they had before.
+    ['พิจิตร', 'พิจิตร'], ['สุโขทัย', 'สุโขทัย'],
 ];
+// "(ตีเข้า กทม)" / "(ตีเข้า นครสวรรค์)" (sheet update 17 Nov 2026): two rates for one place, by where the truck heads
+// after the drop. Trips do not record it, so the audit never picks one of them (see auditTripAs).
+// Any "ตีเข้า" label is a via variant — an unreadable target becomes via_other, never the plain rate.
+// A sino row of the same place keeps its own key (variant + "_sino").
+const VIA = { via_bkk: 'ตีเข้า กทม', via_nsw: 'ตีเข้า นครสวรรค์', via_other: 'ตีเข้า (อ่านที่หมายไม่ออก)' };
+const VIA_TEXT = /\(?\s*ตีเข้า[^)]*\)?/;
+const viaOf = (label) => {
+    const m = clean(label).match(/ตีเข้า\s*([^)]*)/);
+    if (!m) return '';
+    const t = m[1].replace(/\s+/g, '');
+    return /นครสวรรค์|นครสรรค์|นคสวรรค์|^นว/.test(t) ? 'via_nsw' : /กทม|กรุงเทพ/.test(t) ? 'via_bkk' : 'via_other';
+};
+const viaBase = (variant) => String(variant || '').replace(/_sino$/, '');
+// A data row's first cell: "จาก กรุงเทพ" (older layout) or just "กรุงเทพ" / "นครสวรรค์" (layout of 17 Nov 2026),
+// typos included. A blank first cell under an origin is a merged cell → same origin as the row above.
+const ORIGIN_CELL = /^จาก|^(กรุงเทพ|กทม|นครสวรรค์|นครสรรค์|นคสวรรค์|นว)/;
 const DEST_EXACT = { 'ตาก': 'ตาก', 'แพร่': 'แพร่' };
 export const canonDestination = (text) => {
     const s = clean(text).replace(/\s+/g, '');
@@ -83,7 +102,7 @@ const canonOrigin = (label) => {
 
 // Parse every sheet of the rate workbook. sheets = { [sheetName]: rows[][] } (SheetJS header:1 rows).
 // Returns { standards, warnings, skippedSheets }. Each standard:
-// { id, cls, origin, destination, destinationLabel, variant:'standard'|'sino', up:{station:L}, upTotal,
+// { id, cls, origin, destination, destinationLabel, variant:'standard'|'sino'|'via_bkk'|'via_nsw'|'via_other' (+'_sino'), up:{station:L}, upTotal,
 //   down, downVictor, allowanceText, allowance, distance, sheet, row, flags[] }
 // A sheet value may be rows[][] or { rows, startRow } where startRow is the 0-based Excel row of rows[0]
 // (SheetJS starts at the sheet's used range, which is not always row 1).
@@ -97,10 +116,10 @@ export function parseRateSheet(sheets) {
             if (drop.length) standards.push(...drop); else skippedSheets.push(sheet);
             continue;
         }
-        let cls = null, header = null;
+        let cls = null, header = null, lastOrigin = '';
         rows.forEach((r, i) => {
             const a = clean(r?.[0]);
-            if (a === 'สถานที่') { cls = classOfTitle(r[2]); header = null; return; }
+            if (a === 'สถานที่') { cls = classOfTitle(r[2]); header = null; lastOrigin = ''; return; }
             // Written rule with no data row: "พ่วง ลากหางเปล่า ไปตัดไว้ที่ กำแพง น้ำมันจ่ายเป็นรถสิบล้อ+เพิ่ม 20 ลิตร".
             // Looked for in any cell of the row (merged cells), Thai digits accepted; a rule sentence without a
             // readable number is reported instead of silently dropped.
@@ -113,10 +132,22 @@ export function parseRateSheet(sheets) {
                 else warnings.push(`${sheet} แถว ${startRow + i + 1}: มีกฎลากหางเปล่าแต่อ่านจำนวนลิตรที่เพิ่มไม่ได้`);
                 return;
             }
-            if (a === 'ต้นทาง') { header = (r || []).map(clean); return; }
-            if (!a.startsWith('จาก') || !header || !cls) return;
+            if (a === 'ต้นทาง') { header = (r || []).map(clean); lastOrigin = ''; return; }
+            if (!header || !cls) return;
             const iTotal = header.indexOf(TOTAL_UP_HEADER);
             if (iTotal < 0) return;
+            const rowNo = startRow + i + 1;
+            let originText = a;
+            if (!ORIGIN_CELL.test(a)) {
+                // Not an origin: skip notes / blank rows; a row with a place and figures is never dropped silently.
+                if (!clean(r[1]) || (clean(r[iTotal]) === '' && clean(r[iTotal + 1]) === '')) return;
+                if (!a && lastOrigin) originText = lastOrigin;
+                else { warnings.push(`${sheet} แถว ${rowNo}: อ่านต้นทาง "${a || '(ว่าง)'}" ไม่ออก — ไม่ได้นำเข้าแถวนี้`); return; }
+            } else lastOrigin = a;
+            if (!clean(r[1])) {
+                warnings.push(`${sheet} แถว ${rowNo}: มีต้นทาง "${a}" แต่ไม่มีปลายทาง — ไม่ได้นำเข้าแถวนี้`);
+                return;
+            }
             const up = {};
             for (let c = 2; c < iTotal; c++) {
                 const key = PUMP_HEADERS.find(([frag]) => header[c].includes(frag))?.[1];
@@ -129,9 +160,11 @@ export function parseRateSheet(sheets) {
             const allowanceText = clean(r[iTotal + 2]);
             const iDist = header.indexOf('ระยะทาง');
             const destinationLabel = clean(r[1]);
+            const via = viaOf(destinationLabel), sino = /sino/i.test(allowanceText);
             const std = {
-                cls, origin: canonOrigin(a), destination: canonDestination(destinationLabel), destinationLabel,
-                variant: /sino/i.test(allowanceText) ? 'sino' : 'standard',
+                // "(ตีเข้า นครสวรรค์)" is not the place: strip it before reading the destination.
+                cls, origin: canonOrigin(originText), destination: canonDestination(destinationLabel.replace(VIA_TEXT, ' ')), destinationLabel,
+                variant: via ? (sino ? `${via}_sino` : via) : sino ? 'sino' : 'standard',
                 up, upTotal: Object.values(up).reduce((x, y) => x + y, 0),
                 down, downVictor: victorM ? parseInt(victorM[1], 10) : down,
                 allowanceText, allowance: parseNum((allowanceText.match(/เบี้ยขับ\s*([\d,]+)/) || ['', ''])[1]),
@@ -140,7 +173,8 @@ export function parseRateSheet(sheets) {
             };
             const sheetTotal = cellLiters(r[iTotal]);
             if (sheetTotal !== std.upTotal) std.flags.push(`ผลรวมรายปั๊ม ${std.upTotal} ไม่เท่าช่องรวม ${sheetTotal}`);
-                    if (!std.destination) std.flags.push('อ่านปลายทางไม่ออก');
+            if (!std.destination) std.flags.push('อ่านปลายทางไม่ออก');
+            if (via === 'via_other') std.flags.push('อ่านไม่ออกว่า "ตีเข้า" ที่ไหน (กทม / นครสวรรค์) — ตรวจในไฟล์ เที่ยวปลายทางนี้จะเป็น "ตรวจเอง"');
             if (std.origin === 'นครสวรรค์' && std.up.nissan_singburi) std.flags.push('ต้นทางนครสวรรค์แต่เติมปั๊มนิสสัน (สิงห์บุรี) — ตรวจคอลัมน์ในไฟล์');
             standards.push(std);
         });
@@ -170,6 +204,22 @@ export function parseRateSheet(sheets) {
 }
 
 export const standardKey = (s) => `${s.cls}|${s.origin}|${s.destination}|${s.variant}`;
+
+// Rates now in the system that an incoming file does not have — saving replaces the whole set, so these would be
+// lost (e.g. the team's 17 Nov update overwrote the "ลากหางเปล่า +20 ลิตร" sentence and dropped วิเชียรบุรี).
+// Returns readable labels for the import preview.
+export function ratesMissingFrom(current, incoming) {
+    const have = new Set((incoming || []).filter(s => !s.duplicateOf).map(standardKey));
+    const seen = new Set(), out = [];
+    for (const s of current || []) {
+        const k = standardKey(s);
+        if (s.duplicateOf || have.has(k) || seen.has(k)) continue;
+        seen.add(k);
+        out.push(s.cls === EMPTY_KPP_CLASS ? `กฎ${AUDIT_CLASSES[EMPTY_KPP_CLASS]} +${s.extraLiters} ลิตร`
+            : `${AUDIT_CLASSES[s.cls] || s.cls} ${s.origin ? `${s.origin} → ` : ''}${s.destinationLabel || s.destination}${s.variant === 'sino' ? ' (sino)' : ''}`);
+    }
+    return out;
+}
 
 // Sheet "ถอดหางกำแพงเพชร": the trailer (ลูก) is left at the Kamphaeng Phet branch and the head (แม่) runs on
 // alone. The current table ("แบบปัจจุบัน") has blocks of  ประเภทรถ | ปลายทาง | จำนวน น้ำมัน (ลิตร) | เบี้ยขับ
@@ -271,11 +321,18 @@ export function flagDoubleDownhill(results, allTrips = []) {
             if (r.downhillRecorded) for (const k of ks) lastUp[k] = r;
             continue;
         }
+        // Column L names the uphill queue this downhill belongs to ("(คิว<date>…)"): that exact reference wins over
+        // guessing by "most recent uphill" — reconcileColumnL checks it. Guessing here paired many downhill trips with
+        // the truck's NEXT uphill on the same day (55 false notes Jul–Nov 2026, found in the full check 17 Nov).
+        // A named uphill that cannot be found gets its own note there.
+        if (r.trip.fuelRef?.date) continue;
         const k = ks.find(x => lastUp[x]);
         const up = k && lastUp[k];
-        // Any other downhill trip of this driver OR truck in between means the uphill fill belongs to that one.
+        // Any other downhill trip of this driver OR truck in between means the uphill fill belongs to that one —
+        // except a column-L trip that names an EARLIER uphill (it is the return leg of that older queue).
         const keysBoth = [...new Set([...ks, ...(up ? pairKeys(up.trip) : [])])];
-        const between = up && keysBoth.some(x => (downTrips[x] || []).some(t => t !== r.trip && t.id !== r.trip.id && t.date >= up.trip.date && t.date <= r.trip.date));
+        const between = up && keysBoth.some(x => (downTrips[x] || []).some(t => t !== r.trip && t.id !== r.trip.id && t.date >= up.trip.date && t.date <= r.trip.date
+            && !(t.fuelRef?.date && t.fuelRef.date < up.trip.date)));
         if (!up || between || (Date.parse(r.trip.date) - Date.parse(up.trip.date)) / 86400000 > 5) continue;
         const paisan = Number(r.actual?.[PAISAN]) || 0;
         if (paisan > 0) {
@@ -283,7 +340,7 @@ export function flagDoubleDownhill(results, allTrips = []) {
             // shallow copies of cached ones.
             r.flags = [...r.flags, `อาจบันทึกขาล่องซ้ำ: เที่ยวขาขึ้น ${up.trip.date} บันทึกไพศาลขาล่อง ${up.downActual} ลิตรไว้แล้ว`];
             up.flags = [...up.flags, `อาจบันทึกขาล่องซ้ำ: เที่ยวขาล่อง ${r.trip.date} มีการเติมไพศาล ${paisan} ลิตรด้วย`];
-        } else if (!r.trip.fuelRef?.date) { // column L names its uphill exactly → reconcileColumnL handles it
+        } else {
             // Fill at another pump (นิสสัน, เอกวิทัศน์) after the downhill ไพศาล was already filled on the uphill trip:
             // probably an extra fill. This pairing is a guess (driver OR truck within 5 days), so it is a NOTE only —
             // the status and the carry-over stay as audited (rule: loose matches are hints, never auto-applied).
@@ -550,10 +607,21 @@ function auditTripAs(trip, ctx, tolerance, forcedVehicle, headMode = '', expectO
     // NSW: not when the trip ends at นครสวรรค์ itself (the trailer was towed the whole way).
     const pick = (cls, variant) => ctx.std[`${cls}|${origin}|${destination}|${variant}`];
     const pickV = (cls) => (vc.model === 'sino' && pick(cls, 'sino')) || pick(cls, 'standard');
+    const viaRows = (cls) => Object.keys(VIA).map(v => (vc.model === 'sino' && pick(cls, `${v}_sino`)) || pick(cls, v)).filter(Boolean);
     const dropLabel = mode === 'kpp-empty' ? EMPTY_LABEL : 'ตัดหางที่นครสวรรค์';
     let headDrop = !!mode && (mode !== 'nsw' || destination !== 'นครสวรรค์') && (vc.cls in HEAD_OF || vc.cls in TOW_OF);
     let upCls = headDrop ? (HEAD_OF[vc.cls] || vc.cls) : vc.cls;
     const downCls = headDrop ? (TOW_OF[upCls] || vc.cls) : vc.cls;
+    // Only "ตีเข้า กทม / ตีเข้า นครสวรรค์" rates for this place: the trip does not say which applies → manual check
+    // with both figures (never one picked for the person). Checked for the head class, the towing class after a
+    // fallback, and the towing class used for the downhill.
+    const viaManual = (cls) => {
+        if (pickV(cls) || !viaRows(cls).length) return null;
+        const lbl = (x) => `${VIA[viaBase(x.variant)]} ${x.upTotal} ลิตร (${Object.entries(x.up || {}).map(([k, v]) => `${pumpThai(k)} ${v}`).join(' + ') || '-'})`;
+        return manual(`ตารางแยกอัตรา${AUDIT_CLASSES[cls] || ''} ${origin} → ${destination} ตามการตีรถเข้า: ${viaRows(cls).map(lbl).join(' / ')} — เที่ยวไม่ได้ระบุว่าตีเข้าที่ไหน ตรวจเอง · เติมจริงรวม ${actualTotal} ลิตร`);
+    };
+    const viaUp = viaManual(upCls);
+    if (viaUp) return viaUp;
     if (headDrop && !pickV(upCls)) {
         // Empty trailer: the rule is "สิบล้อ + N" — without a 10-wheel rate there is nothing to apply → manual.
         if (mode === 'kpp-empty') return manual(`${EMPTY_LABEL} แต่ตารางไม่มีอัตรา${AUDIT_CLASSES[upCls]}ไป ${destination} — ตรวจเอง`);
@@ -561,6 +629,8 @@ function auditTripAs(trip, ctx, tolerance, forcedVehicle, headMode = '', expectO
         base.flags.push(`${dropLabel} แต่ตารางไม่มีอัตรา${AUDIT_CLASSES[upCls]}ไป ${destination} — ใช้อัตรา${AUDIT_CLASSES[downCls]}แทน`);
         headDrop = false; upCls = downCls; base.rateCls = downCls;
     }
+    const viaAny = viaManual(upCls) || (upCls !== downCls && viaManual(downCls));
+    if (viaAny) return viaAny;
     const s = pickV(upCls);
     if (!s) return none(`ไม่มีอัตรา ${AUDIT_CLASSES[upCls]} ${origin} → ${destination}`);
     // Downhill comes from the towing class's row for THIS route only — a class-wide default may not match

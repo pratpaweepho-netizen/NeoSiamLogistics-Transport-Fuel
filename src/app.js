@@ -6,7 +6,7 @@ import { ICONS, GAS_STATION_FRIENDLY_NAMES, ROUTE_STATION_COLUMNS } from "./cons
 import { parseFuelBaseRows } from "./importer.js";
 import { detectSheetType, parseUphillQueue, parseDownhillQueue, parsePartnerQueue, parseDailyRows } from "./importerTrips.js";
 import { parseDrivers, parseRateTable, parseVehicles } from "./importerMasters.js";
-import { parseRateSheet, buildAuditContext, auditTrip, applyCarry, flagDoubleDownhill, AUDIT_CLASSES, AUDIT_STATUS, DOWN_STATUS, normalizeOriginExtras, parseDriverAliasSheet, applyDriverAlias, suggestFill, normalizeDestinationList } from "./fuelAudit.js";
+import { parseRateSheet, buildAuditContext, auditTrip, applyCarry, flagDoubleDownhill, AUDIT_CLASSES, AUDIT_STATUS, DOWN_STATUS, normalizeOriginExtras, parseDriverAliasSheet, applyDriverAlias, suggestFill, normalizeDestinationList, ratesMissingFrom } from "./fuelAudit.js";
 import { COLL_STATUS, downhillTripKeys, planDownhillFuel, withDownhillFuel, reconcileColumnL, createAllIfAbsent } from "./downhillFuel.js";
 import { planDateFix, buildDateFixBatches, recheckBatch, prevDay } from "./dateFix.js";
 import { TEMPLATE_SHEET, buildTemplateLists, generateTemplate, findTemplateHeader, parseTemplateRows, planTemplateSave, saveTemplateTrips } from "./tripTemplate.js";
@@ -507,6 +507,7 @@ const formatZeroAsEmpty = (value) => {
 
         const renderRateImportPreview = ({ standards, warnings, skippedSheets, fileName }) => {
             const flagged = standards.filter(s => s.flags.length);
+            const lost = ratesMissingFrom(appState.rateStandards, standards);
             const cur = appState.rateStandardsMeta;
             const rows = standards.map(s => `
                 <tr class="border-b border-slate-700 ${s.flags.length ? 'bg-amber-900/20' : ''}">
@@ -525,6 +526,7 @@ const formatZeroAsEmpty = (value) => {
                     ${importStatCard('อัตราในระบบตอนนี้', appState.rateStandards.length)}
                 </div>
                 ${warnings.length ? `<p class="text-yellow-400 mb-3">⚠️ ${warnings.map(esc).join(', ')}</p>` : ''}
+                ${lost.length ? `<div class="bg-red-900/30 border border-red-700 rounded-lg p-3 mb-3 text-sm text-red-200"><b>⚠️ อัตราในระบบตอนนี้ที่ไฟล์นี้ไม่มี (${lost.length} รายการ) — ถ้าบันทึก รายการเหล่านี้จะหายไป:</b><br>${lost.map(esc).join(' · ')}</div>` : ''}
                 ${skippedSheets.length ? `<p class="text-xs text-gray-400 mb-3">ไม่ได้อ่าน: ${skippedSheets.map(esc).join(', ')} (ไม่มีหัวคอลัมน์ "รวมยอดขาขึ้น/ลิตร")</p>` : ''}
                 ${cur ? `<p class="text-xs text-gray-400 mb-3">ฉบับในระบบตอนนี้: ${esc(cur.fileName)} · บันทึกเมื่อ ${esc(cur.importedAt)}</p>` : ''}
                 <div class="overflow-x-auto rounded-lg border border-slate-700 mb-4 max-h-[28rem]">
@@ -2361,11 +2363,13 @@ const formatZeroAsEmpty = (value) => {
             // carry-over and driver summary treat both spellings as one driver. Stored trips are not changed.
             const dal = as.driverAliases;
             const aliasTrip = (t) => applyDriverAlias(t, dal);
+            // The trip as the audit sees it (alias + column L fill). The double-downhill check needs the column L reference too.
+            const asAudited = (t) => withDownhillFuel(aliasTrip(t), dfuel[t.id]);
             if (auditCache.trips !== appState.trips || auditCache.std !== appState.rateStandards || auditCache.veh !== appState.vehicles || auditCache.tol !== tol || auditCache.pastKey !== pastKey || auditCache.dfuel !== dfuel || auditCache.ox !== ox || auditCache.dal !== dal) {
                 const ctx = buildAuditContext(appState.rateStandards, appState.vehicles, { originExtras: ox });
                 // Downhill trips without their own liters take the column L fill (downhillFuel); the trip itself is untouched.
                 const run = (trips) => (trips || []).map(t => {
-                    const r = auditTrip(withDownhillFuel(aliasTrip(t), dfuel[t.id]), ctx, tol);
+                    const r = auditTrip(asAudited(t), ctx, tol);
                     if (r && r.trip.fuelFrom === 'colL') r.flags = [...r.flags, `ลิตรจากช่อง "คิวรถล่าสุด" ไฟล์ Transport: ${r.trip.fuelText}`];
                     return r;
                 }).filter(Boolean);
@@ -2378,11 +2382,11 @@ const formatZeroAsEmpty = (value) => {
                     }
                     const ordered = [...auditPastResults.results.map(r => ({ ...r })), ...all].sort(tripOrder);
                     reconcileColumnL(ordered, new Set([...pastMonths, month]));
-                    flagDoubleDownhill(ordered, [...pastMonths.flatMap(m => auditPastTrips[m] || []), ...appState.trips].map(aliasTrip));
+                    flagDoubleDownhill(ordered, [...pastMonths.flatMap(m => auditPastTrips[m] || []), ...appState.trips].map(asAudited));
                     balances = applyCarry(ordered);
                 } else {
                     reconcileColumnL(all, new Set([month]));
-                    flagDoubleDownhill(all, appState.trips.map(aliasTrip));
+                    flagDoubleDownhill(all, appState.trips.map(asAudited));
                 }
                 auditCache = { trips: appState.trips, std: appState.rateStandards, veh: appState.vehicles, tol, pastKey, dfuel, ox, dal, all, balances };
             }

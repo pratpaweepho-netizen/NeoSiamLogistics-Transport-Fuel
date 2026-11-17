@@ -134,7 +134,30 @@ reconcileColumnL([upR, x2], new Set(['2026-10']));
 eq('uphill named in column L did not record downhill → audited as is', x2.status, 'wrong-pump');
 const x3 = mk({ daopaisan_nakhonsawan: 180 }, '2026-10-21');
 reconcileColumnL([upR, x3], new Set(['2026-10']));
-eq('ไพศาล on both is left to the double-downhill flag', x3.status, 'wrong-pump');
+eq('ไพศาล on both, column L names that uphill → "may be double" note on both, status unchanged', [x3.status, x3.flags.some(f => f.startsWith('อาจบันทึกขาล่องซ้ำ')), upR.flags.some(f => f.startsWith('อาจบันทึกขาล่องซ้ำ'))], ['wrong-pump', true, true]);
+// full check 17 Nov 2026: column L names an EARLIER uphill; the truck's next uphill is the same day as this downhill
+// → no double note (the old "most recent uphill" guess paired them: 55 false notes)
+const upOld = { leg: 'up', downhillRecorded: true, downActual: 180, flags: [], trip: { id: 'u1', date: '2026-10-20', direction: 'ขาขึ้น', driver: 'K', plate: '70-5555' } };
+const upNew = { leg: 'up', downhillRecorded: true, downActual: 180, flags: [], trip: { id: 'u2', date: '2026-10-24', direction: 'ขาขึ้น', driver: 'K', plate: '70-5555' } };
+const dnRef = { leg: 'down', status: 'ok', flags: [], actualTotal: 180, actual: { daopaisan_nakhonsawan: 180 }, trip: { id: 'd9', date: '2026-10-24', direction: 'ขาล่อง', driver: 'K', plate: '70-5555', fuelFrom: 'colL', fuelRef: { date: '2026-10-18' } } };
+// the uphill named by column L (18 Oct) exists but did not hold the downhill ไพศาล → two separate fills
+const upRef18 = { leg: 'up', downhillRecorded: false, flags: [], trip: { id: 'u0', date: '2026-10-18', direction: 'ขาขึ้น', driver: 'K', plate: '70-5555' } };
+const seqRef = [upRef18, upOld, upNew, dnRef];
+reconcileColumnL(seqRef, new Set(['2026-10']));
+flagDoubleDownhill(seqRef, seqRef.map(r => r.trip));
+eq('column L names another uphill → no false "double" note on the same-day uphill', [dnRef.flags.length, upNew.flags.length], [0, 0]);
+// review 17 Nov 2026: a ไพศาล downhill whose named uphill is missing (other plate on the board) is not silently passed
+const dnLost = { leg: 'down', status: 'ok', flags: [], actualTotal: 180, actual: { daopaisan_nakhonsawan: 180 }, trip: { id: 'd10', date: '2026-10-24', direction: 'ขาล่อง', driver: 'K', plate: '70-6666', fuelFrom: 'colL', fuelRef: { date: '2026-10-20' } } };
+reconcileColumnL([upOld, dnLost], new Set(['2026-10']));
+eq('named uphill under another plate, same driver → "may be double" note on both', [dnLost.flags.some(f => f.startsWith('อาจบันทึกขาล่องซ้ำ') && f.includes('70-5555')), upOld.flags.some(f => f.includes('70-6666'))], [true, true]);
+const dnNoFill = { ...dnLost, flags: [], status: 'ok', actual: { nissan_singburi: 60 }, trip: { ...dnLost.trip, id: 'd12' } };
+reconcileColumnL([{ ...upOld, flags: [] }, dnNoFill], new Set(['2026-10']));
+eq('same driver, other plate, no ไพศาล → no extra-fill verdict (needs the exact truck)', [dnNoFill.status, dnNoFill.flags.length], ['ok', 0]);
+// the named uphill exists but did not hold the downhill ไพศาล → two separate fills, no note
+const upPlain = { leg: 'up', downhillRecorded: false, flags: [], trip: { id: 'u3', date: '2026-10-20', direction: 'ขาขึ้น', driver: 'K', plate: '70-6666' } };
+const dnOk = { ...dnLost, flags: [], trip: { ...dnLost.trip, id: 'd11' } };
+reconcileColumnL([upPlain, dnOk], new Set(['2026-10']));
+eq('named uphill found without downhill ไพศาล → no note', dnOk.flags.length, 0);
 const x4 = mk({ nissan_singburi: 40 }, '2026-09-30');
 reconcileColumnL([upR, x4], new Set(['2026-10']));
 eq('uphill in a month not loaded → note, status unchanged', [x4.status, x4.flags.length], ['wrong-pump', 1]);

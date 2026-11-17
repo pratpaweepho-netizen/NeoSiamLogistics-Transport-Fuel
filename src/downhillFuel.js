@@ -110,25 +110,43 @@ export function withDownhillFuel(trip, rec) {
  * When that uphill trip already holds the downhill ไพศาล fill and column L lists a fill at ANOTHER pump (นิสสัน,
  * เอกวิทัศน์), the column L liters are an extra downhill fill. The rate sheet has no rule for an extra downhill fill,
  * so such trips become 'manual' (checked by a person; carry-over passes them through) instead of a misleading
- * "under / wrong pump" against the full downhill rate. A ไพศาล fill on both is left to flagDoubleDownhill.
+ * "under / wrong pump" against the full downhill rate. A ไพศาล fill on both gets a "may be written twice" note on both.
+ * The named uphill is looked up by date + truck; when the board wrote another plate, by date + the same driver — for
+ * the "written twice" note only (an extra-fill verdict needs the exact truck).
  * results: audit results in trip order (uphill and downhill). loadedMonths: months whose uphill trips are in results.
  * The reference is exact (date + truck written by the team), unlike flagDoubleDownhill's guess, which only adds a note
- * and leaves column-L trips with a reference to this function — so the two can run in either order.
+ * and skips column-L trips with a reference date — so the two can run in either order.
  */
 export function reconcileColumnL(results, loadedMonths) {
     const ups = new Map();
-    for (const r of results) if (r.leg !== 'down' && r.downhillRecorded) ups.set(`${r.trip.date}|${plateKey(r.trip.plate)}`, r);
+    for (const r of results) {
+        if (r.leg === 'down' || !r.downhillRecorded) continue;
+        // two uphill trips of one truck (or driver) on one day: the first that holds the downhill ไพศาล
+        for (const k of [`${r.trip.date}|P:${plateKey(r.trip.plate)}`, clean(r.trip.driver) && `${r.trip.date}|D:${clean(r.trip.driver)}`]) if (k && !ups.has(k)) ups.set(k, r);
+    }
     for (const r of results) {
         const ref = r.trip.fuelRef?.date;
         if (r.leg !== 'down' || r.trip.fuelFrom !== 'colL' || !ref) continue;
+        const paisan = Number(r.actual?.[PAISAN]) || 0;
         // Only a checked figure is replaced: a no-rate result keeps its own reason (unknown plate, no rate…).
-        if (Number(r.actual?.[PAISAN]) > 0 || !CHECKED.includes(r.status)) continue;
+        if (!paisan && !CHECKED.includes(r.status)) continue;
         if (!loadedMonths.has(ref.slice(0, 7))) {
             r.flags = [...r.flags, `ช่องคิวรถล่าสุดอ้างเที่ยวขาขึ้น ${ref} ซึ่งอยู่เดือนที่ไม่ได้โหลด — ระบบยังไม่ได้เทียบว่าไพศาลขาล่องบันทึกไว้ที่ขาขึ้นหรือไม่`];
             continue;
         }
-        const up = ups.get(`${ref}|${plateKey(r.trip.plate)}`);
-        if (up) markExtraDownhill(r, up);
+        // No uphill holding the downhill ไพศาล on that date → two separate fills (or the uphill had no fill), no note.
+        let up = ups.get(`${ref}|P:${plateKey(r.trip.plate)}`), byDriver = false;
+        if (!up && clean(r.trip.driver)) { up = ups.get(`${ref}|D:${clean(r.trip.driver)}`); byDriver = !!up; }
+        if (!up) continue;
+        if (paisan > 0) {
+            // ไพศาล on the downhill AND the named uphill already holds the downhill ไพศาล → maybe the same fill written
+            // twice. A note on both (which record is wrong needs the receipt); status and carry-over unchanged.
+            const other = byDriver ? ` (คนขับเดียวกัน แต่กระดานเขียนทะเบียน ${up.trip.plate})` : '';
+            r.flags = [...r.flags, `อาจบันทึกขาล่องซ้ำ: ช่องคิวรถล่าสุดอ้างเที่ยวขาขึ้น ${up.trip.date}${other} ซึ่งบันทึกไพศาลขาล่อง ${up.downActual} ลิตรไว้แล้ว`];
+            up.flags = [...up.flags, `อาจบันทึกขาล่องซ้ำ: เที่ยวขาล่อง ${r.trip.date} (ช่องคิวรถล่าสุด${byDriver ? ` ทะเบียน ${r.trip.plate}` : ''}) มีการเติมไพศาล ${paisan} ลิตรด้วย`];
+            continue;
+        }
+        if (!byDriver) markExtraDownhill(r, up);
     }
     return results;
 }
