@@ -27,6 +27,8 @@ export let appState = {
             rateStandardsMeta: null,
             // tolerance / carryStart are shared settings (Firebase settings/fuelAudit); the rest is per-screen UI state.
             auditState: { status: '', search: '', tolerance: 0, carryStart: '2026-11', showStandards: false },
+            // Excel trip template start month (settings/tripTemplate.startMonth); '' = not set yet → template import blocked.
+            templateStartMonth: '',
             driverFilter: '',
             payrollMonth: '',
             // Form-specific state
@@ -1052,8 +1054,27 @@ export let appState = {
                     if (typeof s.carryStart === 'string') appState.auditState.carryStart = s.carryStart;
                     if (appState.view === 'audit') ui.render();
                 }, onListenerError('settings/fuelAudit'));
+
+                // Excel trip template: the month from which trips come from the template only (user rule 17 Nov 2026).
+                // No re-render: the import page reads it when used, and re-rendering would wipe an open preview.
+                database.ref('settings/tripTemplate').on('value', (snapshot) => {
+                    const s = snapshot.val() || {};
+                    appState.templateStartMonth = typeof s.startMonth === 'string' ? s.startMonth : '';
+                    const input = typeof document !== 'undefined' && document.getElementById('tpl-start-month');
+                    if (input && document.activeElement !== input) input.value = appState.templateStartMonth;
+                }, onListenerError('settings/tripTemplate'));
             },
             saveAuditSettings: (patch) => database.ref('settings/fuelAudit').update(patch),
+            saveTemplateSettings: (patch) => database.ref('settings/tripTemplate').update(patch),
+            // Database adapter for the Excel trip template (tripTemplate.js).
+            templateTripsDb: {
+                fetchMonth: (ym) => database.ref(`trips/${ym}`).once('value').then(s => s.val()),
+                // Create-only write: the transaction aborts (returns undefined) when the key already holds a trip,
+                // so a concurrent import can never overwrite it. Resolves true when written.
+                createIfAbsent: (ym, key, trip) => database.ref(`trips/${ym}/${key}`)
+                    .transaction(cur => (cur === null ? trip : undefined))
+                    .then(r => !!r.committed),
+            },
             // One-off read of a whole month (no live listener) — used for the liters carried over from earlier months.
             fetchTripsMonth: (ym) => database.ref(`trips/${ym}`).once('value')
                 .then(s => { const v = s.val(); return v ? Object.entries(v).map(([id, t]) => ({ id, ...t })) : []; }),

@@ -197,7 +197,15 @@ const DROP_AT_KPP = /(ตัดลูก|ถอดหาง|ตัดหาง)\
 // "นว" must not run on into another Thai letter ("ลูกนวล" is a name, "ตัดนวม" a word).
 const NSW_WORD = '(?:นว(?![ก-ฮ])|นครสวรรค์|นครสรรค์|นคสวรรค์)';
 const DROP_AT_NSW = new RegExp(`(?:ตัด|ตัก|ถอด)\\s*(?:ลูก|หาง)?\\s*(?:ที่)?\\s*${NSW_WORD}|ลูก\\s*${NSW_WORD}`);
-const isDropAtNsw = (trip) => DROP_AT_NSW.test(tripNoteText(trip));
+// Where the free text says the trailer was dropped ('นครสวรรค์' | 'กำแพงเพชร' | '').
+export const textDropPlace = (trip) => {
+    const text = tripNoteText(trip);
+    return DROP_AT_KPP.test(text) ? 'กำแพงเพชร' : DROP_AT_NSW.test(text) ? 'นครสวรรค์' : '';
+};
+// Trips from the Excel template carry an explicit trailerDrop ('ไม่ตัด' | 'นครสวรรค์' | 'กำแพงเพชร'): it wins over
+// guessing from the text, including 'ไม่ตัด', which turns off a false match in the job text.
+const isDropAtNsw = (trip) => (clean(trip.trailerDrop) ? clean(trip.trailerDrop) === 'นครสวรรค์' : DROP_AT_NSW.test(tripNoteText(trip)));
+const isDropAtKpp = (trip) => (clean(trip.trailerDrop) ? clean(trip.trailerDrop) === 'กำแพงเพชร' : DROP_AT_KPP.test(tripNoteText(trip)));
 const HEAD_OF = { '18W': '10W', '6W_BOX': '6W' }; // towing class → its head running alone
 const TOW_OF = { '10W': '18W', '6W': '6W_BOX' };  // head → towing class
 
@@ -267,8 +275,8 @@ export function vehicleClassOf(vehicle) {
 // Trips carry "head-trailer" plates ("70-8157-6436"); the vehicle master lists the head ("70-8157").
 // Compare the first two dash-separated parts with spaces removed — never cut by length (plates like
 // "1กข-1234" are 8 characters and must stay distinct).
-const normPlate = (p) => clean(p).replace(/\s+/g, '');
-const plateKey = (p) => normPlate(p).split('-').slice(0, 2).join('-');
+export const normPlate = (p) => clean(p).replace(/\s+/g, '');
+export const plateKey = (p) => normPlate(p).split('-').slice(0, 2).join('-');
 
 // Build lookup tables once per render.
 export function buildAuditContext(standards, vehicles) {
@@ -389,7 +397,7 @@ function auditTripAs(trip, ctx, tolerance, forcedVehicle, dropNswIn) {
     if (bahtTotal) base.flags.push(`เติมเป็นเงิน ${bahtTotal.toLocaleString()} บาท (ไม่มีอัตราเป็นเงิน)`);
     const none = (reason) => ({ ...base, status: 'no-rate', reason, diff: 0, expected: {}, expectedTotal: 0, downStatus: '' });
     // Trailer left at Kamphaeng Phet: the special table has total liters only (no pump) → manual check.
-    if (DROP_AT_KPP.test(tripNoteText(trip))) {
+    if (isDropAtKpp(trip)) {
         const d = ctx.drop?.[destination];
         // The drop table has no downhill figure, but the ไพศาล downhill fill is often written on this trip —
         // name it so a normal downhill fill is not read as an overfill.

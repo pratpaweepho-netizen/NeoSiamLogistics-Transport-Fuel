@@ -7,6 +7,7 @@ import { parseFuelBaseRows } from "./importer.js";
 import { detectSheetType, parseUphillQueue, parseDownhillQueue, parsePartnerQueue, parseDailyRows } from "./importerTrips.js";
 import { parseDrivers, parseRateTable, parseVehicles } from "./importerMasters.js";
 import { parseRateSheet, buildAuditContext, auditTrip, applyCarry, flagDoubleDownhill, AUDIT_CLASSES, AUDIT_STATUS, DOWN_STATUS } from "./fuelAudit.js";
+import { TEMPLATE_SHEET, buildTemplateLists, generateTemplate, findTemplateHeader, parseTemplateRows, planTemplateSave, saveTemplateTrips } from "./tripTemplate.js";
 
 const formatZeroAsEmpty = (value) => {
             const num = Number(value);
@@ -484,6 +485,7 @@ const formatZeroAsEmpty = (value) => {
         let importParsedTrips = null;
         let importParsedMaster = null;
         let importParsedStandards = null;
+        let importParsedTemplate = null; // { rows, header, fileName } from the Excel trip template
 
         // Escape text taken from Excel/Firebase before putting it into innerHTML.
         const esc = (v) => String(v ?? '').replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
@@ -548,11 +550,28 @@ const formatZeroAsEmpty = (value) => {
         };
 
         const renderImport = () => {
+            const start = appState.templateStartMonth;
             return `
-                <div class="max-w-5xl mx-auto">
+                <div class="max-w-5xl mx-auto space-y-6">
+                    ${renderCard(`
+                        <h2 class="text-xl font-bold text-white mb-2 flex items-center gap-3">${ICONS.DocumentAdd} แม่แบบนำเข้าเที่ยวรถ (ขาขึ้น / ขาล่อง)</h2>
+                        <p class="text-gray-400 text-sm mb-4">คนจัดรถกรอกทุกวันแทนการกดบันทึกทีละเที่ยว: 1 แถว = 1 เที่ยว → อัปโหลดไฟล์ที่ช่องด้านล่าง → ระบบตรวจและแสดงผลตรวจน้ำมันก่อนบันทึกเสมอ</p>
+                        <div class="flex flex-wrap items-end gap-3">
+                            <button id="tpl-download-btn" class="bg-primary hover:bg-secondary text-white font-bold py-2 px-4 rounded-lg shadow-md flex items-center gap-2">${ICONS.Download} ดาวน์โหลดแม่แบบ</button>
+                            <div>
+                                <label for="tpl-start-month" class="block text-sm text-gray-400 mb-1">ใช้แม่แบบตั้งแต่เดือน</label>
+                                <input type="month" id="tpl-start-month" value="${esc(start)}" class="bg-slate-800 border border-slate-600 rounded-md px-3 py-2 text-white" />
+                            </div>
+                            <button id="tpl-start-save" class="bg-slate-600 hover:bg-slate-500 text-white font-bold py-2 px-4 rounded-lg">บันทึกเดือนเริ่ม</button>
+                        </div>
+                        <p class="text-xs mt-2 ${start ? 'text-gray-500' : 'text-yellow-400'}">${start
+                            ? `ตั้งแต่เดือนนี้ เที่ยวรถมาจากแม่แบบเท่านั้น — ถ้านำเข้ากระดานคิว/ไฟล์ Transport ของเดือนนี้ขึ้นไป ระบบจะเตือนเพราะอาจนับเที่ยวซ้ำ`
+                            : `⚠️ ยังไม่ได้ตั้งเดือนเริ่มใช้แม่แบบ — ต้องตั้งก่อนจึงจะนำเข้าแม่แบบได้`}</p>
+                        <div id="tpl-msg" class="mt-2 text-sm"></div>
+                    `)}
                     ${renderCard(`
                         <h2 class="text-2xl font-bold text-white mb-2 flex items-center gap-3">${ICONS.Download} นำเข้าเส้นทางจาก Excel</h2>
-                        <p class="text-gray-400 mb-6">อัปโหลดไฟล์ Excel แล้วเลือกชีต — ระบบตรวจชนิดให้อัตโนมัติ:<br>• <span class="text-accent">ฐานคำนวนน้ำมันขาขึ้น</span> → เส้นทาง &nbsp;•&nbsp; <span class="text-accent">คิวขาขึ้น/ขาล่อง, คิวรถร่วม</span> → คิวรถ &nbsp;•&nbsp; <span class="text-accent">ทะเบียน, คนขับ, ฐานคำนวน</span> → รถ/คนขับ/เบี้ยเลี้ยง</p>
+                        <p class="text-gray-400 mb-6">อัปโหลดไฟล์ Excel แล้วเลือกชีต — ระบบตรวจชนิดให้อัตโนมัติ:<br>• <span class="text-accent">แม่แบบนำเข้าเที่ยวรถ</span> → คิวรถ (ขาขึ้น/ขาล่อง) &nbsp;•&nbsp; <span class="text-accent">ฐานคำนวนน้ำมันขาขึ้น</span> → เส้นทาง &nbsp;•&nbsp; <span class="text-accent">คิวขาขึ้น/ขาล่อง, คิวรถร่วม</span> → คิวรถ &nbsp;•&nbsp; <span class="text-accent">ทะเบียน, คนขับ, ฐานคำนวน</span> → รถ/คนขับ/เบี้ยเลี้ยง</p>
                         <div class="rounded-lg border-2 border-dashed border-slate-500 p-6 text-center">
                             <input type="file" id="import-file" accept=".xlsx,.xls" class="block w-full text-sm text-gray-300 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-primary file:text-white file:font-bold hover:file:bg-secondary cursor-pointer" />
                         </div>
@@ -622,7 +641,7 @@ const formatZeroAsEmpty = (value) => {
                 importWorkbook = XLSX.read(buf, { type: 'array', cellDates: true });
                 const sel = document.getElementById('import-sheet');
                 sel.innerHTML = importWorkbook.SheetNames.map(n => `<option value="${n}">${n}</option>`).join('');
-                const def = importWorkbook.SheetNames.find(n => n.includes('ฐานคำนวนน้ำมันขาขึ้น')) || importWorkbook.SheetNames.find(n => n.includes('ฐานคำนวน'));
+                const def = importWorkbook.SheetNames.find(n => n === TEMPLATE_SHEET) || importWorkbook.SheetNames.find(n => n.includes('ฐานคำนวนน้ำมันขาขึ้น')) || importWorkbook.SheetNames.find(n => n.includes('ฐานคำนวน'));
                 if (def) sel.value = def;
                 document.getElementById('import-controls').classList.remove('hidden');
                 preview.innerHTML = '<p class="text-gray-400">เลือกชีตแล้วกด "อ่าน &amp; ตรวจสอบ"</p>';
@@ -641,6 +660,13 @@ const formatZeroAsEmpty = (value) => {
             importParsedRoutes = null;
             importParsedTrips = null;
             importParsedStandards = null;
+            importParsedTemplate = null;
+
+            // Excel trip template: read its own data sheet whichever sheet is selected (the help/lists sheets are not data).
+            if (importWorkbook.Sheets[TEMPLATE_SHEET] || findTemplateHeader(rows) >= 0) {
+                handleTemplateParse(importWorkbook.Sheets[TEMPLATE_SHEET] ? TEMPLATE_SHEET : sheetName);
+                return;
+            }
 
             // Official rate file ("อัตราเติมน้ำมันประจำ ปั๊ม ต่างๆ"): when the selected sheet is a rate table, read every
             // sheet of the workbook. blankrows:true + the used-range start keep real Excel row numbers for each rate.
@@ -736,6 +762,7 @@ const formatZeroAsEmpty = (value) => {
                 </div>
                 <p class="text-xs text-gray-500 mb-3">ช่วงวันที่: ${stats.minDate} ถึง ${stats.maxDate} · เก็บแยกตามเดือน (trips/YYYY-MM)</p>
                 ${warnings.length ? `<p class="text-yellow-400 mb-3">⚠️ ${warnings.join(', ')}</p>` : ''}
+                ${templateOverlapNote(trips) ? `<p class="text-red-300 bg-red-900/30 border border-red-700 rounded-lg p-3 mb-3">⚠️ ${esc(templateOverlapNote(trips))}</p>` : ''}
                 <div class="overflow-x-auto rounded-lg border border-slate-700 mb-2">
                     <table class="w-full text-sm"><thead class="bg-slate-800 text-gray-400"><tr>
                         <th class="p-2 text-left">วันที่</th><th class="p-2 text-left">คนขับ</th><th class="p-2 text-left">ทะเบียน</th><th class="p-2 text-left">เส้นทาง</th><th class="p-2 text-right">น้ำมัน</th><th class="p-2 text-right">รายรับ</th><th class="p-2 text-right">สุทธิโอน</th>
@@ -755,9 +782,10 @@ const formatZeroAsEmpty = (value) => {
             if (!importParsedTrips || !importParsedTrips.length) return;
             const n = importParsedTrips.length;
             const msg = mode === 'replace'
-                ? `แทนที่คิวรถทั้งหมดด้วย ${n.toLocaleString()} คิวจาก Excel?\n\n⚠️ คิวรถเดิมทุกเดือนจะถูกลบ (ควรสำรองข้อมูลก่อน)`
+                ? `แทนที่คิวรถทั้งหมดด้วย ${n.toLocaleString()} คิวจาก Excel?\n\n⚠️ คิวรถเดิมทุกเดือนจะถูกลบ (ควรสำรองข้อมูลก่อน)${appState.templateStartMonth ? '\n⚠️ รวมถึงเที่ยวที่คนจัดรถนำเข้าจากแม่แบบด้วย — ถ้าไม่แน่ใจ ให้กด "เพิ่มเข้าไป" แทน' : ''}`
                 : `เพิ่ม ${n.toLocaleString()} คิวเข้าไป (ไม่ลบของเดิม)?`;
-            if (!confirm(msg)) return;
+            const overlap = templateOverlapNote(importParsedTrips);
+            if (!confirm(overlap ? `${msg}\n\n⚠️ ${overlap}` : msg)) return;
             const resultDiv = document.getElementById('import-result');
             const buttons = document.querySelectorAll('#import-trips-replace-btn, #import-trips-merge-btn');
             buttons.forEach(b => { b.disabled = true; b.classList.add('opacity-60', 'cursor-not-allowed'); });
@@ -866,9 +894,205 @@ const formatZeroAsEmpty = (value) => {
             }
         };
 
+        // ---- Excel trip template (แม่แบบนำเข้าเที่ยวรถ) ----
+        const tplMsg = (html) => { const el = document.getElementById('tpl-msg'); if (el) el.innerHTML = html; };
+
+        const handleTemplateDownload = async () => {
+            const btn = document.getElementById('tpl-download-btn');
+            if (btn) btn.disabled = true;
+            tplMsg('<span class="text-sky-400">กำลังสร้างไฟล์แม่แบบ...</span>');
+            try {
+                const mod = await import('exceljs'); // loaded only when needed (large library)
+                const ExcelJS = mod.default || mod;
+                const lists = buildTemplateLists({
+                    drivers: appState.drivers, vehicles: appState.vehicles, rateStandards: appState.rateStandards,
+                    routes: appState.routes, runTypes: logisticsService.getRateTable().map(r => r.runType),
+                });
+                const buf = await generateTemplate(ExcelJS, lists).xlsx.writeBuffer();
+                const url = URL.createObjectURL(new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
+                const a = document.createElement('a');
+                a.href = url; a.download = `แม่แบบนำเข้าเที่ยวรถ_${localDateStr()}.xlsx`;
+                document.body.appendChild(a); a.click(); a.remove();
+                setTimeout(() => URL.revokeObjectURL(url), 1000);
+                tplMsg(`<span class="text-green-400">✓ ดาวน์โหลดแล้ว — รายการให้เลือก: คนขับ ${lists.drivers.length} · ทะเบียนหัว ${lists.heads.length} · หาง ${lists.trailers.length} · ปลายทาง ${lists.destinations.length}</span>`);
+            } catch (err) {
+                console.error('Template download failed:', err);
+                tplMsg(`<span class="text-red-400">สร้างแม่แบบไม่สำเร็จ: ${esc(err.message)}</span>`);
+            } finally { if (btn) btn.disabled = false; }
+        };
+
+        const handleTemplateStartSave = async () => {
+            const v = (document.getElementById('tpl-start-month')?.value || '').trim();
+            if (!/^\d{4}-\d{2}$/.test(v)) { tplMsg('<span class="text-red-400">เลือกเดือนก่อน</span>'); return; }
+            const [y, m] = v.split('-').map(Number);
+            if (!confirm(`ตั้งให้ใช้แม่แบบตั้งแต่เดือน ${m}/${y + 543}?\n\nตั้งแต่เดือนนี้ เที่ยวรถควรมาจากแม่แบบเท่านั้น และแม่แบบจะไม่รับเที่ยวที่ก่อนเดือนนี้`)) return;
+            try {
+                await logisticsService.saveTemplateSettings({ startMonth: v });
+                appState.templateStartMonth = v;
+                tplMsg(`<span class="text-green-400">✓ บันทึกแล้ว: ใช้แม่แบบตั้งแต่เดือน ${m}/${y + 543}</span>`);
+            } catch (err) {
+                tplMsg(`<span class="text-red-400">บันทึกไม่สำเร็จ: ${esc(err.message)}</span>`);
+            }
+        };
+
+        const templateDupSource = (d) => d?.source === 'file' ? `แถว ${d.row} ในไฟล์นี้` : d?.source === 'template' ? 'แม่แบบที่นำเข้าไปแล้ว' : d?.source === 'transport' ? 'ไฟล์ Transport' : d?.source === 'daily' ? 'กระดานคิว' : 'ระบบ';
+        const TH_MONTHS = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'];
+        // '2026-11-17' → '17 พ.ย. 2569' — so a day/month swapped by the PC's date setting is easy to spot.
+        const thaiDate = (d) => { const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(d || ''); return m ? `${+m[3]} ${TH_MONTHS[+m[2] - 1]} ${+m[1] + 543}` : ''; };
+
+        const renderTemplatePreview = ({ rows }, ctx) => {
+            const tol = appState.auditState.tolerance || 0;
+            const count = (f) => rows.filter(f).length;
+            const nErr = count(p => p.status === 'error'), nNew = count(p => p.importState === 'new');
+            const nAlready = count(p => p.importState === 'already'), nChanged = count(p => p.changed), nDup = count(p => p.importState === 'possible-dup');
+            const importCell = (p) => {
+                if (p.status === 'error') return '<span class="text-red-400">ไม่บันทึก</span>';
+                if (p.importState === 'new') return '<span class="text-green-400">ใหม่</span>';
+                if (p.importState === 'already') return `<span class="text-gray-400">นำเข้าแล้ว</span>${p.changed ? '<br><span class="text-amber-300 text-xs">ตัวเลขต่างจากที่บันทึกไว้ — ไม่ทับ (แก้ที่หน้าคิวรถ)</span>' : ''}`;
+                return `<label class="flex items-start gap-2 cursor-pointer"><input type="checkbox" class="tpl-dup-cb w-4 h-4 mt-0.5" data-key="${esc(p.key)}">
+                    <span><span class="text-amber-300">อาจซ้ำ</span> <span class="text-xs text-gray-400">(ติ๊กถ้าเป็นคนละเที่ยว)</span><br><span class="text-xs text-gray-400">มีรถคันนี้ วันเดียวกัน ทิศเดียวกันแล้ว (จาก${esc(templateDupSource(p.dupOf))}${p.dupOf?.destination ? ` → ${esc(p.dupOf.destination)}` : ''})</span></span></label>`;
+            };
+            const auditCell = (p) => {
+                if (p.status === 'error' || !p.trip.totalLiters && !p.trip.totalBaht) return '<span class="text-gray-600">—</span>';
+                const r = auditTrip(p.trip, ctx, tol);
+                if (!r) return '<span class="text-gray-600">—</span>';
+                const why = [r.reason, ...(r.flags || [])].filter(Boolean).join(' · ');
+                const diff = r.status === 'no-rate' ? '' : ` ${r.diff > 0 ? '+' : ''}${r.diff}`;
+                return `<span title="${esc(why)}" class="px-2 py-0.5 rounded text-xs text-white whitespace-nowrap ${AUDIT_STATUS[r.status].cls}">${AUDIT_STATUS[r.status].label}${diff}</span>`;
+            };
+            const body = rows.slice(0, 3000).map(p => {
+                const t = p.trip;
+                const msgs = [...p.errors.map(e => `<div class="text-red-400">✗ ${esc(e)}</div>`), ...p.warnings.map(w => `<div class="text-yellow-300">⚠ ${esc(w)}</div>`)].join('');
+                return `<tr class="border-b border-slate-700 align-top">
+                    <td class="p-2 text-gray-400">${p.excelRow}</td>
+                    <td class="p-2 whitespace-nowrap">${esc(thaiDate(t.date))}</td>
+                    <td class="p-2 whitespace-nowrap">${esc(t.direction)}</td>
+                    <td class="p-2 font-mono whitespace-nowrap">${esc(t.plate)}${t.trailerDrop && t.trailerDrop !== 'ไม่ตัด' ? `<div class="text-xs text-sky-300 font-sans">ตัดหาง ${esc(t.trailerDrop)}</div>` : ''}</td>
+                    <td class="p-2 whitespace-nowrap">${esc(t.driver)}</td>
+                    <td class="p-2">${esc(t.origin)}${t.origin || t.destination ? ' → ' : ''}${esc(t.destination)}</td>
+                    <td class="p-2 text-right whitespace-nowrap text-accent">${t.totalLiters ? t.totalLiters.toLocaleString() + ' L' : ''}${t.totalBaht ? `<div>${t.totalBaht.toLocaleString()} B</div>` : ''}</td>
+                    <td class="p-2">${auditCell(p)}</td>
+                    <td class="p-2">${importCell(p)}</td>
+                    <td class="p-2 text-xs">${msgs}</td>
+                </tr>`;
+            }).join('');
+            return `
+                <div class="mb-3 text-lg font-bold text-white">ไฟล์ประเภท: <span class="text-accent">แม่แบบนำเข้าเที่ยวรถ</span></div>
+                <div class="grid grid-cols-2 md:grid-cols-5 gap-3 mb-4">
+                    ${importStatCard('แถวทั้งหมด', rows.length)}
+                    ${importStatCard('เที่ยวใหม่ (จะบันทึก)', nNew)}
+                    ${importStatCard('นำเข้าแล้ว (ข้าม)', nAlready)}
+                    ${importStatCard('อาจซ้ำ (ข้าม)', nDup)}
+                    ${importStatCard('แถวที่ผิด (ไม่บันทึก)', nErr)}
+                </div>
+                ${nChanged ? `<p class="text-amber-300 text-sm mb-3">⚠️ ${nChanged} แถวเคยนำเข้าแล้วแต่ตัวเลขในไฟล์ต่างจากที่บันทึกไว้ — ระบบไม่ทับข้อมูลเดิม ถ้าต้องแก้ ให้แก้ที่หน้า "คิวรถ"</p>` : ''}
+                <div class="overflow-x-auto rounded-lg border border-slate-700 mb-2 max-h-[32rem] overflow-y-auto">
+                    <table class="w-full text-sm"><thead class="bg-slate-800 text-gray-400 sticky top-0"><tr>
+                        <th class="p-2 text-left">แถว</th><th class="p-2 text-left">วันที่</th><th class="p-2 text-left">ทิศทาง</th><th class="p-2 text-left">ทะเบียน</th><th class="p-2 text-left">คนขับ</th><th class="p-2 text-left">เส้นทาง</th><th class="p-2 text-right">น้ำมัน</th><th class="p-2 text-left">ผลตรวจน้ำมัน</th><th class="p-2 text-left">นำเข้า</th><th class="p-2 text-left">ข้อความ</th>
+                    </tr></thead><tbody>${body}</tbody></table>
+                </div>
+                ${rows.length > 3000 ? `<p class="text-xs text-gray-500 mb-2">แสดง 3,000 แถวแรกจาก ${rows.length.toLocaleString()} แถว — แนะนำใช้ไฟล์ใหม่ทุกเดือน</p>` : ''}
+                <div class="bg-sky-900/30 border border-sky-700 rounded-lg p-3 my-4 text-sm text-sky-200">บันทึกเฉพาะ "เที่ยวใหม่" และแถว "อาจซ้ำ" ที่ติ๊กไว้ · ไม่ลบและไม่ทับข้อมูลเดิม · แถวที่ผิดไม่ถูกบันทึก (ดาวน์โหลดไปแก้แล้วนำเข้าใหม่ได้)</div>
+                <div class="flex flex-wrap gap-3">
+                    <button id="tpl-save-btn" class="bg-success hover:bg-green-600 text-white font-bold py-2 px-5 rounded-lg shadow-md ${nNew ? '' : 'opacity-60 cursor-not-allowed'}" ${nNew ? '' : 'disabled'}>บันทึกเที่ยวใหม่ (<span id="tpl-save-count">${nNew}</span>)</button>
+                    ${nErr ? `<button id="tpl-errors-btn" class="bg-slate-600 hover:bg-slate-500 text-white font-bold py-2 px-5 rounded-lg">ดาวน์โหลดแถวที่ผิด (${nErr})</button>` : ''}
+                </div>
+                <div id="import-result" class="mt-4"></div>`;
+        };
+
+        const handleTemplateParse = async (sheetName) => {
+            const preview = document.getElementById('import-preview');
+            const start = appState.templateStartMonth;
+            if (!start) {
+                preview.innerHTML = '<p class="text-red-400">ยังไม่ได้ตั้ง "ใช้แม่แบบตั้งแต่เดือน" (ด้านบน) — ตั้งก่อนแล้วกด "อ่าน &amp; ตรวจสอบ" อีกครั้ง</p>';
+                return;
+            }
+            const ws = importWorkbook.Sheets[sheetName];
+            const rows = XLSX.utils.sheet_to_json(ws, { header: 1, blankrows: true, defval: '' });
+            const firstRow = ws['!ref'] ? XLSX.utils.decode_range(ws['!ref']).s.r + 1 : 1;
+            const fileName = document.getElementById('import-file')?.files?.[0]?.name || '';
+            const res = parseTemplateRows(rows, { startMonth: start, vehicles: appState.vehicles, drivers: appState.drivers, fileName, today: localDateStr() }, firstRow);
+            if (res.error) { preview.innerHTML = `<p class="text-red-400">${esc(res.error)}</p>`; return; }
+            if (!res.rows.length) { preview.innerHTML = '<p class="text-yellow-400">แม่แบบยังไม่มีข้อมูล — กรอกเที่ยวรถในชีต "นำเข้าเที่ยวรถ" ก่อน</p>'; return; }
+            preview.innerHTML = '<p class="text-sky-400">กำลังเทียบกับข้อมูลในระบบ...</p>';
+            try {
+                const months = [...new Set(res.rows.filter(p => p.status !== 'error').map(p => p.trip.yearMonth))];
+                const existing = {};
+                for (const ym of months) existing[ym] = (await logisticsService.templateTripsDb.fetchMonth(ym)) || {};
+                planTemplateSave(res.rows, existing);
+            } catch (err) {
+                console.error('Template compare failed:', err);
+                preview.innerHTML = `<p class="text-red-400">อ่านข้อมูลเดิมในระบบไม่สำเร็จ จึงยังบันทึกไม่ได้: ${esc(err.message)}</p>`;
+                return;
+            }
+            importParsedTemplate = { ...res, fileName };
+            preview.innerHTML = renderTemplatePreview(res, buildAuditContext(appState.rateStandards, appState.vehicles));
+            const nNew = res.rows.filter(p => p.importState === 'new').length;
+            const btn = document.getElementById('tpl-save-btn');
+            document.querySelectorAll('.tpl-dup-cb').forEach(cb => cb.addEventListener('change', () => {
+                const n = nNew + document.querySelectorAll('.tpl-dup-cb:checked').length;
+                document.getElementById('tpl-save-count').textContent = n;
+                btn.disabled = !n; btn.classList.toggle('opacity-60', !n); btn.classList.toggle('cursor-not-allowed', !n);
+            }));
+            btn?.addEventListener('click', handleTemplateSave);
+            document.getElementById('tpl-errors-btn')?.addEventListener('click', handleTemplateErrorsDownload);
+        };
+
+        const handleTemplateSave = async () => {
+            if (!importParsedTemplate || importParsedTemplate.saved) return;
+            const includeKeys = [...document.querySelectorAll('.tpl-dup-cb:checked')].map(cb => cb.dataset.key);
+            const n = importParsedTemplate.rows.filter(p => p.importState === 'new').length + includeKeys.length;
+            if (!n || !confirm(`บันทึก ${n.toLocaleString()} เที่ยวจาก "${importParsedTemplate.fileName}"?${includeKeys.length ? `\n(รวมแถว "อาจซ้ำ" ที่ติ๊กไว้ ${includeKeys.length} แถว)` : ''}\n\nไม่ลบและไม่ทับข้อมูลเดิม`)) return;
+            const btn = document.getElementById('tpl-save-btn');
+            const resultDiv = document.getElementById('import-result');
+            btn.disabled = true; btn.classList.add('opacity-60', 'cursor-not-allowed');
+            document.querySelectorAll('.tpl-dup-cb').forEach(cb => { cb.disabled = true; });
+            resultDiv.innerHTML = '<p class="text-sky-400">กำลังบันทึก...</p>';
+            try {
+                const { added, skipped, failed, error } = await saveTemplateTrips(logisticsService.templateTripsDb, importParsedTemplate.rows, { includeKeys });
+                // One save per preview (read the file again before another save); the error-rows download stays usable.
+                importParsedTemplate.saved = true;
+                const skippedText = skipped ? ` · ข้าม ${skipped} เที่ยวที่มีคนบันทึกไปก่อนหน้านี้` : '';
+                if (failed) {
+                    console.error('Template save failed for some trips:', error);
+                    resultDiv.innerHTML = `<p class="text-red-400 font-bold">บันทึกได้ ${added.toLocaleString()} เที่ยว แต่ไม่สำเร็จ ${failed} เที่ยว${skippedText} (${esc(error?.message || error)}) — กด "อ่าน &amp; ตรวจสอบ" แล้วบันทึกไฟล์เดิมอีกครั้ง ระบบจะเติมเฉพาะที่ยังขาด ไม่สร้างซ้ำ</p>`;
+                } else {
+                    resultDiv.innerHTML = `<p class="text-green-400 font-bold">✓ บันทึกแล้ว ${added.toLocaleString()} เที่ยว${skippedText} — ดูผลที่หน้า "ตรวจการเติม" / "คิวรถ"</p>`;
+                }
+            } catch (err) {
+                document.querySelectorAll('.tpl-dup-cb').forEach(cb => { cb.disabled = false; });
+                console.error('Template save failed:', err);
+                resultDiv.innerHTML = `<p class="text-red-400">บันทึกไม่สำเร็จ: ${esc(err.message)} — นำเข้าไฟล์เดิมอีกครั้งได้ ระบบไม่สร้างเที่ยวซ้ำ</p>`;
+                btn.disabled = false; btn.classList.remove('opacity-60', 'cursor-not-allowed');
+            }
+        };
+
+        // Rows with errors, in the file's own column order plus the reason — fix and import again.
+        const handleTemplateErrorsDownload = () => {
+            if (!importParsedTemplate) return;
+            const { header, rows } = importParsedTemplate;
+            const bad = rows.filter(p => p.status === 'error');
+            const aoa = [[...header, 'แถวในไฟล์เดิม', 'สิ่งที่ต้องแก้'], ...bad.map(p => [...header.map((_, i) => p.raw[i] ?? ''), p.excelRow, p.errors.join(' / ')])];
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa, { cellDates: true, dateNF: 'dd/mm/yyyy' }), TEMPLATE_SHEET);
+            XLSX.writeFile(wb, `แถวที่ผิด_${(importParsedTemplate.fileName || 'แม่แบบ').replace(/\.xlsx?$/i, '')}.xlsx`);
+        };
+
+        // Daily-board / Transport imports overlapping the template period → the same trip may be counted twice.
+        const templateOverlapNote = (trips) => {
+            const start = appState.templateStartMonth;
+            if (!start) return '';
+            const months = [...new Set((trips || []).map(t => t.yearMonth).filter(ym => ym && ym >= start))].sort();
+            if (!months.length) return '';
+            const [y, m] = start.split('-').map(Number);
+            return `เดือน ${months.join(', ')} อยู่ในช่วงที่ใช้แม่แบบแล้ว (ตั้งแต่ ${m}/${y + 543}) — นำเข้าไฟล์นี้อาจนับเที่ยวซ้ำกับที่คนจัดรถกรอก`;
+        };
+
         const attachImportListeners = () => {
             document.getElementById('import-file')?.addEventListener('change', handleImportFile);
             document.getElementById('import-parse-btn')?.addEventListener('click', handleImportParse);
+            document.getElementById('tpl-download-btn')?.addEventListener('click', handleTemplateDownload);
+            document.getElementById('tpl-start-save')?.addEventListener('click', handleTemplateStartSave);
         };
 
         // --- View: Queue / Dispatch (คิวรถ) — loads one month at a time ---
@@ -1163,10 +1387,14 @@ const formatZeroAsEmpty = (value) => {
             };
             try {
                 if (id) {
+                    // Keep the fields this form does not edit (source, importedFrom, sourceRow, crossing/waiting fees,
+                    // and the template's trailerDrop / trailerPlate, which the fuel audit relies on).
+                    const { id: _omit, ...existing } = appState.trips.find(t => t.id === id) || {};
+                    Object.assign(trip, { ...existing, ...trip });
                     if (originalMonth && originalMonth !== trip.yearMonth) {
-                        // Moving to another month: add to the new month FIRST, then remove the old
-                        // one. If the add fails we throw before deleting, so the trip is never lost.
-                        await logisticsService.addTrip(trip.yearMonth, trip);
+                        // Moving to another month: write to the new month FIRST (keeping its key), then remove
+                        // the old one. If the write fails we throw before deleting, so the trip is never lost.
+                        await logisticsService.updateTrip(trip.yearMonth, id, trip);
                         await logisticsService.deleteTrip(originalMonth, id);
                     } else {
                         await logisticsService.updateTrip(trip.yearMonth, id, trip);
