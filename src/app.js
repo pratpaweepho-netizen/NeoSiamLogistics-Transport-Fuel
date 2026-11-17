@@ -7,6 +7,7 @@ import { parseFuelBaseRows } from "./importer.js";
 import { detectSheetType, parseUphillQueue, parseDownhillQueue, parsePartnerQueue, parseDailyRows } from "./importerTrips.js";
 import { parseDrivers, parseRateTable, parseVehicles } from "./importerMasters.js";
 import { parseRateSheet, buildAuditContext, auditTrip, applyCarry, flagDoubleDownhill, AUDIT_CLASSES, AUDIT_STATUS, DOWN_STATUS, normalizeOriginExtras, parseDriverAliasSheet, applyDriverAlias, suggestFill, normalizeDestinationList, ratesMissingFrom, makeRateContexts } from "./fuelAudit.js";
+import { calcTripMoney, describeTripMoney, moneySaveProblem, storedAdvance, MONEY_MSG } from "./tripMoney.js";
 import { COLL_STATUS, downhillTripKeys, planDownhillFuel, withDownhillFuel, reconcileColumnL, createAllIfAbsent } from "./downhillFuel.js";
 import { planDateFix, buildDateFixBatches, recheckBatch, prevDay } from "./dateFix.js";
 import { TEMPLATE_SHEET, buildTemplateLists, generateTemplate, findTemplateHeader, parseTemplateRows, planTemplateSave, saveTemplateTrips } from "./tripTemplate.js";
@@ -234,8 +235,10 @@ const formatZeroAsEmpty = (value) => {
                                     ${money2('form-allowance', 'เบี้ยขับ / ค่าเดินทาง')}
                                     ${money2('form-deduction', 'หักเงิน')}
                                     ${money2('form-distance', 'ระยะทาง (กม.)')}
+                                    ${money2('form-advance', 'สำรองค่าลง / ตั้งเบิกเพิ่ม (บาท)')}
                                 </div>
                                 <button type="button" data-action="calc-allowance-form" class="text-sm bg-sky-700 hover:bg-sky-600 text-white py-1.5 px-3 rounded-lg">🧮 คำนวณ เบี้ยเลี้ยง / หัก / สุทธิโอน จากตารางเบี้ยเลี้ยง</button>
+                                <p class="text-xs text-gray-500">เบี้ยขับ = เบี้ยตามตาราง + ค่าน้ำมัน/แก๊ส + สำรองค่าลง/ตั้งเบิกเพิ่ม · สุทธิโอน = เบี้ยขับ − หัก · รถ NGV คิวหนักล่อง ต้องกรอกช่อง "สำรองค่าลง / ตั้งเบิกเพิ่ม" ก่อน (ไม่มีใส่ 0)</p>
 
                                 <div><label class="block text-sm font-medium text-gray-400 mb-1">หมายเหตุ</label>
                                     <textarea id="form-notes" rows="2" class="w-full bg-slate-800 border border-slate-600 rounded-md px-3 py-2 text-white"></textarea></div>
@@ -1579,8 +1582,11 @@ const formatZeroAsEmpty = (value) => {
                         ${money('driverAllowance', 'เบี้ยขับ / ค่าเดินทาง', trip?.driverAllowance)}
                         ${money('deduction', 'หักเงิน', trip?.deduction)}
                         ${money('distance', 'ระยะทาง (กม.)', trip?.distance)}
+                        <div><label class="block text-xs text-gray-400 mb-1">สำรองค่าลง / ตั้งเบิกเพิ่ม (บาท)</label>
+                            <input type="number" name="unloadAdvance" value="${trip && trip.unloadAdvance != null && trip.unloadAdvance !== '' ? Number(trip.unloadAdvance) : ''}" class="w-full bg-slate-800 border border-slate-600 rounded-md px-3 py-2 text-white" /></div>
                     </div>
                     <button type="button" data-action="calc-allowance" class="text-sm bg-sky-700 hover:bg-sky-600 text-white py-1.5 px-3 rounded-lg">🧮 คำนวณ เบี้ยเลี้ยง / หัก / สุทธิโอน จากตารางเบี้ยเลี้ยง (ตาม ประเภทคิว + ประเภทรถ)</button>
+                    <p class="text-xs text-gray-500">เบี้ยขับ = เบี้ยตามตาราง + ค่าน้ำมัน/แก๊ส + สำรองค่าลง/ตั้งเบิกเพิ่ม · สุทธิโอน = เบี้ยขับ − หัก · รถ NGV คิวหนักล่อง ต้องกรอก "สำรองค่าลง / ตั้งเบิกเพิ่ม" ก่อน (ไม่มีใส่ 0)</p>
                     <div><label class="block text-xs text-gray-400 mb-1">หมายเหตุ</label>
                         <input type="text" name="notes" value="${trip?.notes || ''}" class="w-full bg-slate-800 border border-slate-600 rounded-md px-3 py-2 text-white" /></div>
 
@@ -1616,43 +1622,54 @@ const formatZeroAsEmpty = (value) => {
         };
 
         // Auto-fill เบี้ยเลี้ยง/หัก/สุทธิโอน from the imported rate table (ตารางเบี้ยเลี้ยง). silent = no alert.
-        // Allowance from the เบี้ยเลี้ยง table (rateTable). Money already typed/saved is never overwritten silently:
-        // the automatic run (queue/vehicle type changed) only fills EMPTY money fields and otherwise leaves a note; the
-        // button asks before replacing non-zero amounts. Net = allowance − deduction ONLY (no fuel cost / gas) — the user
-        // has not confirmed a formula including fuelCost yet (full check 17 Nov 2026), so the note says so when fuelCost > 0.
-        const applyAllowanceRate = ({ queueType, vehicleType, fields, note }, silent) => {
+        // Formula (user decision 17 Nov 2026, option ก — how accounting paid 214 real gas/fuel trips, src/tripMoney.js):
+        // เบี้ยขับ = ตาราง + ค่าน้ำมัน/แก๊ส + สำรองค่าลง/ตั้งเบิกเพิ่ม, สุทธิโอน = เบี้ยขับ − หัก; NGV หนักล่อง must state the
+        // advance (0 = none) first. Money already typed/saved is never overwritten silently: the automatic run (queue /
+        // vehicle type / fuel / advance changed) only replaces the calc's own amounts and otherwise leaves a note; the
+        // button asks before replacing other non-zero amounts.
+        const applyAllowanceRate = ({ queueType, vehicleType, direction, fields, note }, silent) => {
             const rate = logisticsService.findRate(queueType, vehicleType);
             const cur = { a: Number(fields.allowance.value) || 0, d: Number(fields.deduction.value) || 0, n: Number(fields.net.value) || 0 };
-            const fuelCost = Number(fields.fuelCost?.value) || 0;
-            const fuelNote = fuelCost ? ` · เที่ยวนี้มีค่าน้ำมัน ${fuelCost.toLocaleString()} บาท ซึ่งสูตรนี้ไม่ได้รวม ตรวจยอดสุทธิโอนเอง` : '';
-            if (!rate) {
-                const msg = `ไม่พบอัตราในตารางเบี้ยเลี้ยงสำหรับ ประเภทคิว "${queueType || '(ว่าง)'}" + ประเภทรถ "${vehicleType || '(ว่าง)'}" — ยอดเงินไม่ถูกเปลี่ยน`;
-                if (silent) note(cur.a || cur.d || cur.n ? msg : ''); else alert(msg);
-                return;
-            }
-            const next = { a: rate.allowance, d: rate.deduction, n: rate.allowance - rate.deduction };
-            const hasMoney = cur.a || cur.d || cur.n;
-            const same = cur.a === next.a && cur.d === next.d && cur.n === next.n;
-            // Money this calc filled itself (and nobody edited since) is not "typed money": it may be replaced.
+            const m = calcTripMoney(rate, { fuelCost: fields.fuelCost?.value ?? '', advance: fields.advance?.value ?? '', queueType, vehicleType, direction });
             const auto = fields.net.dataset.autoMoney ? JSON.parse(fields.net.dataset.autoMoney) : null;
             const ownFill = auto && auto.a === cur.a && auto.d === cur.d && auto.n === cur.n;
+            const hasMoney = cur.a || cur.d || cur.n;
+            if (!m.ok) {
+                const msg = m.reason === 'no-rate'
+                    ? `ไม่พบอัตราในตารางเบี้ยเลี้ยงสำหรับ ประเภทคิว "${queueType || '(ว่าง)'}" + ประเภทรถ "${vehicleType || '(ว่าง)'}"${ownFill ? ' — ล้างยอดที่ระบบคำนวณไว้แล้ว กรอกยอดเอง' : ' — ยอดเงินไม่ถูกเปลี่ยน'}`
+                    : MONEY_MSG[m.reason];
+                // The calc's own old amounts no longer match the inputs → clear them rather than leave a stale total.
+                if (ownFill) {
+                    fields.allowance.value = ''; fields.deduction.value = ''; fields.net.value = '';
+                    delete fields.net.dataset.autoMoney;
+                }
+                if (silent) note(m.reason === 'no-rate' && !(cur.a || cur.d || cur.n) ? '' : msg); else alert(msg);
+                return;
+            }
+            const next = { a: m.a, d: m.d, n: m.n };
+            const same = cur.a === next.a && cur.d === next.d && cur.n === next.n;
             if (hasMoney && !same && !ownFill) {
-                if (silent) { note(`ยอดเงินเดิมไม่ถูกเปลี่ยน — ตามตารางเบี้ยเลี้ยงจะเป็น เบี้ยขับ ${next.a.toLocaleString()} หัก ${next.d.toLocaleString()} สุทธิ ${next.n.toLocaleString()} (กดปุ่มคำนวณถ้าต้องการใช้)${fuelNote}`); return; }
-                if (!confirm(`แทนยอดเงินเดิมด้วยตารางเบี้ยเลี้ยง?\n\nเดิม: เบี้ยขับ ${cur.a.toLocaleString()} · หัก ${cur.d.toLocaleString()} · สุทธิโอน ${cur.n.toLocaleString()}\nใหม่: เบี้ยขับ ${next.a.toLocaleString()} · หัก ${next.d.toLocaleString()} · สุทธิโอน ${next.n.toLocaleString()}${fuelCost ? `\n\n⚠️ เที่ยวนี้มีค่าน้ำมัน ${fuelCost.toLocaleString()} บาท ซึ่งสูตรนี้ไม่ได้รวม` : ''}`)) return;
+                if (silent) { note(`ยอดเงินเดิมไม่ถูกเปลี่ยน — ตามตารางจะเป็น ${describeTripMoney(m)} (กดปุ่มคำนวณถ้าต้องการใช้)`); return; }
+                if (!confirm(`แทนยอดเงินเดิมด้วยการคำนวณ?\n\nเดิม: เบี้ยขับ ${cur.a.toLocaleString()} · หัก ${cur.d.toLocaleString()} · สุทธิโอน ${cur.n.toLocaleString()}\nใหม่: ${describeTripMoney(m)}`)) return;
             }
             fields.allowance.value = next.a;
             fields.deduction.value = next.d;
-            fields.net.value = next.n; // สุทธิโอน = เบี้ยเลี้ยง − หัก
-            fields.net.dataset.autoMoney = JSON.stringify(next); // cleared as soon as someone edits a money field
-            note(fuelNote ? `คำนวณจากตารางเบี้ยเลี้ยงแล้ว${fuelNote}` : '');
+            fields.net.value = next.n;
+            // what the calc filled AND the inputs it used; cleared as soon as someone edits a money field
+            fields.net.dataset.autoMoney = JSON.stringify({ ...next, key: m.key });
+            note(m.f || m.v ? describeTripMoney(m) : '');
         };
         // Typing in a money field makes it the user's own value (no longer the calc's).
         const watchMoneyEdits = (fields) => {
             for (const el of [fields.allowance, fields.deduction, fields.net]) el?.addEventListener('input', () => { if (fields.net) delete fields.net.dataset.autoMoney; });
         };
-        // Saving is blocked while the net transfer is the calc's own value AND the trip has a fuel cost: that formula
-        // (net = allowance − deduction) leaves the fuel cost out and has not been confirmed (rule: unsure money blocks saving).
-        const unconfirmedNet = (netInput, fuelCostInput) => !!netInput?.dataset.autoMoney && (Number(fuelCostInput?.value) || 0) > 0;
+        // Before saving: unsure money blocks the save (moneySaveProblem — stale calc, NGV หนักล่อง without the advance,
+        // negative amounts). get(name) reads a field of the form being saved.
+        const moneyProblem = (get, netInput) => moneySaveProblem({
+            auto: netInput?.dataset.autoMoney ? JSON.parse(netInput.dataset.autoMoney) : null,
+            queueType: get('queueType'), vehicleType: get('vehicleType'), direction: get('direction'),
+            fuelCost: get('fuelCost'), advance: get('advance'), allowance: get('allowance'), net: get('net'),
+        });
         // A small note under the net-transfer field (created on demand).
         const allowanceNote = (netInput) => (text) => {
             if (!netInput) return;
@@ -1664,9 +1681,9 @@ const formatZeroAsEmpty = (value) => {
             form = form?.closest ? form.closest('#trip-form') : form;
             if (!form) return;
             const q = (n) => form.querySelector(`[name="${n}"]`);
-            const fields = { allowance: q('driverAllowance'), deduction: q('deduction'), net: q('netTransfer'), fuelCost: q('fuelCost') };
+            const fields = { allowance: q('driverAllowance'), deduction: q('deduction'), net: q('netTransfer'), fuelCost: q('fuelCost'), advance: q('unloadAdvance') };
             if (!fields.net.dataset.watch) { watchMoneyEdits(fields); fields.net.dataset.watch = '1'; }
-            applyAllowanceRate({ queueType: q('queueType').value, vehicleType: q('vehicleType').value, fields, note: allowanceNote(q('netTransfer')) }, silent);
+            applyAllowanceRate({ queueType: q('queueType').value, vehicleType: q('vehicleType').value, direction: q('direction')?.value || '', fields, note: allowanceNote(q('netTransfer')) }, silent);
         };
 
         const attachTripFormExtras = () => {
@@ -1677,11 +1694,17 @@ const formatZeroAsEmpty = (value) => {
             const plateInput = form.querySelector('[name="plate"]');
             plateInput?.addEventListener('change', () => {
                 const v = logisticsService.getVehicles().find(x => (x.registrationNumber || '').trim() === plateInput.value.trim());
-                if (v && v.vehicleType) form.querySelector('[name="vehicleType"]').value = v.vehicleType;
+                const typeEl = form.querySelector('[name="vehicleType"]');
+                // the money depends on the vehicle type: fire change so the calc (and its save check) follow
+                if (v && v.vehicleType && typeEl && typeEl.value !== v.vehicleType) { typeEl.value = v.vehicleType; typeEl.dispatchEvent(new Event('change', { bubbles: true })); }
             });
             // Auto-calc allowance when ประเภทคิว or ประเภทรถ changes (silent).
             form.querySelector('[name="queueType"]')?.addEventListener('change', () => handleCalcAllowance(form, true));
             form.querySelector('[name="vehicleType"]')?.addEventListener('change', () => handleCalcAllowance(form, true));
+            // fuel / gas and the advance are part of the sum: the calc's own amounts follow them
+            form.querySelector('[name="fuelCost"]')?.addEventListener('change', () => handleCalcAllowance(form, true));
+            form.querySelector('[name="unloadAdvance"]')?.addEventListener('change', () => handleCalcAllowance(form, true));
+            form.querySelector('[name="direction"]')?.addEventListener('change', () => handleCalcAllowance(form, true));
         };
         const handleAddTrip = () => { openModal('เพิ่มคิวรถ', renderTripFormContent()); attachTripFormExtras(); };
         const handleEditTrip = (id) => {
@@ -1708,7 +1731,11 @@ const formatZeroAsEmpty = (value) => {
         const handleTripFormSubmit = async (e) => {
             e.preventDefault();
             const form = e.target;
-            if (unconfirmedNet(form.querySelector('[name="netTransfer"]'), form.querySelector('[name="fuelCost"]'))) { alert('ยอดสุทธิโอนมาจากตารางเบี้ยเลี้ยง (เบี้ยขับ − หัก) ซึ่งยังไม่รวมค่าน้ำมันของเที่ยวนี้ — กรอกยอดสุทธิโอนที่ถูกต้องเองก่อนบันทึก'); return; }
+            {
+                const names = { queueType: 'queueType', vehicleType: 'vehicleType', direction: 'direction', fuelCost: 'fuelCost', advance: 'unloadAdvance', allowance: 'driverAllowance', net: 'netTransfer' };
+                const problem = moneyProblem((k) => form.querySelector(`[name="${names[k]}"]`)?.value ?? '', form.querySelector('[name="netTransfer"]'));
+                if (problem) { alert(problem); return; }
+            }
             const fd = new FormData(form);
             const id = fd.get('id');
             const originalMonth = fd.get('originalMonth');
@@ -1741,6 +1768,7 @@ const formatZeroAsEmpty = (value) => {
                 driverAllowance: Number(fd.get('driverAllowance')) || 0,
                 deduction: Number(fd.get('deduction')) || 0,
                 distance: Number(fd.get('distance')) || 0,
+                unloadAdvance: storedAdvance(fd.get('unloadAdvance')), // blank = not stated (null), never "0 = none"
             };
             try {
                 if (id) {
@@ -3216,7 +3244,7 @@ const formatZeroAsEmpty = (value) => {
                 if(input) input.addEventListener('change', updateVlookupCard);
             });
             // Auto-calc เบี้ยเลี้ยง/หัก/สุทธิโอน when ประเภทคิว or ประเภทรถ changes (silent, no popup).
-            ['form-queue-type', 'form-vehicle-type'].forEach(id => {
+            ['form-queue-type', 'form-vehicle-type', 'form-direction', 'form-fuelcost', 'form-advance'].forEach(id => {
                 document.getElementById(id)?.addEventListener('change', () => handleCalcAllowanceForm(true));
             });
 
@@ -3229,7 +3257,10 @@ const formatZeroAsEmpty = (value) => {
                     const vehicle = logisticsService.getVehicles().find(v => (v.registrationNumber || '').trim() === reg);
                     const typeInput = document.getElementById('form-vehicle-type');
                     if (vehicle && vehicle.vehicleType && typeInput) {
+                        const changed = typeInput.value !== vehicle.vehicleType;
                         typeInput.value = vehicle.vehicleType;
+                        // the money depends on the vehicle type: recalc the calc's own amounts (typed money is kept)
+                        if (changed) handleCalcAllowanceForm(true);
                         updateVlookupCard();
                     }
                 });
@@ -3611,16 +3642,20 @@ const formatZeroAsEmpty = (value) => {
         const handleCalcAllowanceForm = (silent = false) => {
             const g = (id) => document.getElementById(id);
             if (!g('form-allowance') || !g('form-deduction') || !g('form-net')) return;
-            const fields = { allowance: g('form-allowance'), deduction: g('form-deduction'), net: g('form-net'), fuelCost: g('form-fuelcost') };
+            const fields = { allowance: g('form-allowance'), deduction: g('form-deduction'), net: g('form-net'), fuelCost: g('form-fuelcost'), advance: g('form-advance') };
             if (!fields.net.dataset.watch) { watchMoneyEdits(fields); fields.net.dataset.watch = '1'; }
-            applyAllowanceRate({ queueType: g('form-queue-type')?.value || '', vehicleType: g('form-vehicle-type')?.value || '', fields, note: allowanceNote(g('form-net')) }, silent);
+            applyAllowanceRate({ queueType: g('form-queue-type')?.value || '', vehicleType: g('form-vehicle-type')?.value || '', direction: g('form-direction')?.value || '', fields, note: allowanceNote(g('form-net')) }, silent);
         };
 
         // Save the page trip-entry form → a trip (trips/{month}).
         const handleTripEntrySubmit = async (e) => {
             e.preventDefault();
             const statusDiv = document.getElementById('form-status');
-            if (unconfirmedNet(document.getElementById('form-net'), document.getElementById('form-fuelcost'))) { if (statusDiv) statusDiv.innerHTML = '<p class="text-red-400">ยอดสุทธิโอนมาจากตารางเบี้ยเลี้ยง (เบี้ยขับ − หัก) ซึ่งยังไม่รวมค่าน้ำมันของเที่ยวนี้ — กรอกยอดสุทธิโอนที่ถูกต้องเองก่อนบันทึก</p>'; return; }
+            {
+                const ids = { queueType: 'form-queue-type', vehicleType: 'form-vehicle-type', direction: 'form-direction', fuelCost: 'form-fuelcost', advance: 'form-advance', allowance: 'form-allowance', net: 'form-net' };
+                const problem = moneyProblem((k) => document.getElementById(ids[k])?.value ?? '', document.getElementById('form-net'));
+                if (problem) { if (statusDiv) { statusDiv.innerHTML = '<p class="text-red-400"></p>'; statusDiv.firstChild.textContent = problem; } return; }
+            }
             const getDist = (unit) => {
                 const container = document.getElementById(`distribution-list-${unit}`);
                 const data = {};
@@ -3648,6 +3683,7 @@ const formatZeroAsEmpty = (value) => {
                 totalBaht: Object.values(gasStationsBaht).reduce((a, b) => a + b, 0),
                 revenue: num('form-revenue'), netTransfer: num('form-net'), fuelCost: num('form-fuelcost'),
                 driverAllowance: num('form-allowance'), deduction: num('form-deduction'), distance: num('form-distance'),
+                unloadAdvance: storedAdvance(val('form-advance')), // blank = not stated (null), never "0 = none"
             };
             const submitBtn = e.target.querySelector('button[type="submit"]');
             const orig = submitBtn ? submitBtn.textContent : '';
