@@ -6,7 +6,7 @@ import { ICONS, GAS_STATION_FRIENDLY_NAMES, ROUTE_STATION_COLUMNS } from "./cons
 import { parseFuelBaseRows } from "./importer.js";
 import { detectSheetType, parseUphillQueue, parseDownhillQueue, parsePartnerQueue, parseDailyRows } from "./importerTrips.js";
 import { parseDrivers, parseRateTable, parseVehicles } from "./importerMasters.js";
-import { parseRateSheet, buildAuditContext, auditTrip, applyCarry, flagDoubleDownhill, AUDIT_CLASSES, AUDIT_STATUS, DOWN_STATUS, normalizeOriginExtras } from "./fuelAudit.js";
+import { parseRateSheet, buildAuditContext, auditTrip, applyCarry, flagDoubleDownhill, AUDIT_CLASSES, AUDIT_STATUS, DOWN_STATUS, normalizeOriginExtras, parseDriverAliasSheet, applyDriverAlias } from "./fuelAudit.js";
 import { COLL_STATUS, downhillTripKeys, planDownhillFuel, withDownhillFuel, reconcileColumnL, createAllIfAbsent } from "./downhillFuel.js";
 import { planDateFix, buildDateFixBatches, recheckBatch, prevDay } from "./dateFix.js";
 import { TEMPLATE_SHEET, buildTemplateLists, generateTemplate, findTemplateHeader, parseTemplateRows, planTemplateSave, saveTemplateTrips } from "./tripTemplate.js";
@@ -488,6 +488,7 @@ const formatZeroAsEmpty = (value) => {
         let importParsedMaster = null;
         let importParsedStandards = null;
         let importParsedTemplate = null; // { rows, header, fileName } from the Excel trip template
+        let importParsedAliases = null;  // { aliases, skipped, unknown } from the confirmed driver-name file
 
         // Escape text taken from Excel/Firebase before putting it into innerHTML.
         const esc = (v) => String(v ?? '').replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
@@ -674,10 +675,20 @@ const formatZeroAsEmpty = (value) => {
             importParsedTrips = null;
             importParsedStandards = null;
             importParsedTemplate = null;
+            importParsedAliases = null;
 
             // Excel trip template: read its own data sheet whichever sheet is selected (the help/lists sheets are not data).
             if (importWorkbook.Sheets[TEMPLATE_SHEET] || findTemplateHeader(rows) >= 0) {
                 handleTemplateParse(importWorkbook.Sheets[TEMPLATE_SHEET] ? TEMPLATE_SHEET : sheetName);
+                return;
+            }
+
+            // Confirmed driver-name proposal file (ชื่อในกระดานคิว → ชื่อเต็ม) → settings/fuelAudit.driverAliases.
+            if (rows.slice(0, 5).some(r => { const h = (r || []).map(c => String(c).trim()); return h.includes('ชื่อในกระดานคิว') && h.includes('ยืนยัน'); })) {
+                const res = parseDriverAliasSheet(rows, appState.drivers.map(d => d.name));
+                importParsedAliases = res.error ? null : res;
+                preview.innerHTML = renderDriverAliasPreview(res);
+                document.getElementById('alias-save-btn')?.addEventListener('click', handleDriverAliasSave);
                 return;
             }
 
@@ -905,6 +916,46 @@ const formatZeroAsEmpty = (value) => {
                 console.error('Import master failed:', err);
                 resultDiv.innerHTML = `<p class="text-red-400">นำเข้าไม่สำเร็จ: ${err.message}</p>`;
                 buttons.forEach(b => { b.disabled = false; b.classList.remove('opacity-60', 'cursor-not-allowed'); });
+            }
+        };
+
+        // ---- Driver name aliases (confirmed proposal file) ----
+        const renderDriverAliasPreview = (res) => {
+            if (res.error) return `<p class="text-red-400">${esc(res.error)}</p>`;
+            const cur = Object.keys(appState.auditState.driverAliases || {}).length;
+            const rows = res.aliases.map(a => `<tr class="border-b border-slate-700"><td class="p-2">${esc(a.from)}</td><td class="p-2">→</td><td class="p-2">${esc(a.to)}</td></tr>`).join('');
+            return `
+                <div class="mb-3 text-lg font-bold text-white">ไฟล์ประเภท: <span class="text-accent">จับคู่ชื่อคนขับ (ชื่อในกระดานคิว → ชื่อเต็ม)</span></div>
+                <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+                    ${importStatCard('จับคู่ที่ยืนยันแล้ว', res.aliases.length)}
+                    ${importStatCard('ไม่ได้ยืนยัน (ข้าม)', res.skipped.length)}
+                    ${importStatCard('ต้องแก้ในไฟล์ (ไม่บันทึก)', res.conflicts.length)}
+                    ${importStatCard('ที่ใช้อยู่ในระบบตอนนี้', cur)}
+                </div>
+                ${res.conflicts.length ? `<div class="text-yellow-300 text-sm mb-3">⚠️ ไม่บันทึก ${res.conflicts.length} รายการ — แก้ในไฟล์แล้วนำเข้าใหม่:<ul class="mt-1 ml-4 list-disc">${res.conflicts.map(c => `<li>${esc(c.from)} → ${esc(c.to)} · ${esc(c.reason)}</li>`).join('')}</ul></div>` : ''}
+                <div class="bg-sky-900/30 border border-sky-700 rounded-lg p-3 mb-4 text-sm text-sky-200">ใช้ตอนตรวจการเติมเท่านั้น: รวมยอดยกลิตรและสรุปรายคนขับของชื่อในกระดานคิวกับชื่อเต็มเป็นคนเดียวกัน · <b class="text-white">ไม่แก้ชื่อในเที่ยวรถเดิม</b> · บันทึกแล้วแทนชุดเดิมทั้งชุด</div>
+                <div class="overflow-x-auto max-h-80 overflow-y-auto rounded-lg border border-slate-700 mb-4"><table class="w-full text-sm"><tbody>${rows}</tbody></table></div>
+                ${res.aliases.length || cur
+                    ? `<button id="alias-save-btn" class="${res.aliases.length ? 'bg-primary hover:bg-secondary' : 'bg-error hover:bg-red-600'} text-white font-bold py-2 px-5 rounded-lg shadow-md">${res.aliases.length ? `บันทึกการจับคู่ชื่อ (${res.aliases.length})` : `ล้างการจับคู่ชื่อที่ใช้อยู่ (${cur})`}</button>`
+                    : '<p class="text-gray-400">ยังไม่มีชื่อที่ยืนยันในไฟล์</p>'}
+                <div id="import-result" class="mt-4"></div>`;
+        };
+        const handleDriverAliasSave = async () => {
+            const res = importParsedAliases;
+            if (!res) return;
+            const n = res.aliases.length;
+            if (!confirm(n ? `บันทึกการจับคู่ชื่อคนขับ ${n} ชื่อ?\n\nใช้ตอนตรวจการเติมเท่านั้น ไม่แก้ชื่อในเที่ยวรถเดิม · แทนชุดเดิมทั้งชุด` : 'ล้างการจับคู่ชื่อคนขับทั้งหมด?\n\nหน้าตรวจการเติมจะแยกชื่อในกระดานกับชื่อเต็มเหมือนเดิม')) return;
+            const btn = document.getElementById('alias-save-btn');
+            const out = document.getElementById('import-result');
+            btn.disabled = true; btn.classList.add('opacity-60', 'cursor-not-allowed');
+            try {
+                // false = none (Firebase drops an empty array). The settings listener updates appState.
+                await logisticsService.saveAuditSettings({ driverAliases: n ? res.aliases : false });
+                out.innerHTML = n ? `<p class="text-green-400 font-bold">✓ บันทึกการจับคู่ชื่อแล้ว ${n} ชื่อ — ดูผลที่หน้า "ตรวจการเติม"</p>` : '<p class="text-green-400 font-bold">✓ ล้างการจับคู่ชื่อแล้ว</p>';
+            } catch (err) {
+                console.error('Save driver aliases failed:', err);
+                out.innerHTML = `<p class="text-red-400">บันทึกไม่สำเร็จ: ${esc(err.message)}</p>`;
+                btn.disabled = false; btn.classList.remove('opacity-60', 'cursor-not-allowed');
             }
         };
 
@@ -2239,11 +2290,15 @@ const formatZeroAsEmpty = (value) => {
             loadDownhillFuel([...pastMonths, month]);
             const dfuel = appState.downhillFuel;
             const ox = as.originExtras;
-            if (auditCache.trips !== appState.trips || auditCache.std !== appState.rateStandards || auditCache.veh !== appState.vehicles || auditCache.tol !== tol || auditCache.pastKey !== pastKey || auditCache.dfuel !== dfuel || auditCache.ox !== ox) {
+            // Board short names → full names (settings/fuelAudit.driverAliases, confirmed by the user): the audit,
+            // carry-over and driver summary treat both spellings as one driver. Stored trips are not changed.
+            const dal = as.driverAliases;
+            const aliasTrip = (t) => applyDriverAlias(t, dal);
+            if (auditCache.trips !== appState.trips || auditCache.std !== appState.rateStandards || auditCache.veh !== appState.vehicles || auditCache.tol !== tol || auditCache.pastKey !== pastKey || auditCache.dfuel !== dfuel || auditCache.ox !== ox || auditCache.dal !== dal) {
                 const ctx = buildAuditContext(appState.rateStandards, appState.vehicles, { originExtras: ox });
                 // Downhill trips without their own liters take the column L fill (downhillFuel); the trip itself is untouched.
                 const run = (trips) => (trips || []).map(t => {
-                    const r = auditTrip(withDownhillFuel(t, dfuel[t.id]), ctx, tol);
+                    const r = auditTrip(withDownhillFuel(aliasTrip(t), dfuel[t.id]), ctx, tol);
                     if (r && r.trip.fuelFrom === 'colL') r.flags = [...r.flags, `ลิตรจากช่อง "คิวรถล่าสุด" ไฟล์ Transport: ${r.trip.fuelText}`];
                     return r;
                 }).filter(Boolean);
@@ -2251,23 +2306,23 @@ const formatZeroAsEmpty = (value) => {
                 let balances = {};
                 if (carryReady) {
                     // Earlier months do not change with the live month — audit them once per (data, rates, vehicles, tolerance).
-                    if (auditPastResults.key !== pastKey || auditPastResults.std !== appState.rateStandards || auditPastResults.veh !== appState.vehicles || auditPastResults.tol !== tol || auditPastResults.dfuel !== dfuel || auditPastResults.ox !== ox) {
-                        auditPastResults = { key: pastKey, std: appState.rateStandards, veh: appState.vehicles, tol, dfuel, ox, results: pastMonths.flatMap(m => run(auditPastTrips[m])) };
+                    if (auditPastResults.key !== pastKey || auditPastResults.std !== appState.rateStandards || auditPastResults.veh !== appState.vehicles || auditPastResults.tol !== tol || auditPastResults.dfuel !== dfuel || auditPastResults.ox !== ox || auditPastResults.dal !== dal) {
+                        auditPastResults = { key: pastKey, std: appState.rateStandards, veh: appState.vehicles, tol, dfuel, ox, dal, results: pastMonths.flatMap(m => run(auditPastTrips[m])) };
                     }
                     const ordered = [...auditPastResults.results.map(r => ({ ...r })), ...all].sort(tripOrder);
                     reconcileColumnL(ordered, new Set([...pastMonths, month]));
-                    flagDoubleDownhill(ordered, [...pastMonths.flatMap(m => auditPastTrips[m] || []), ...appState.trips]);
+                    flagDoubleDownhill(ordered, [...pastMonths.flatMap(m => auditPastTrips[m] || []), ...appState.trips].map(aliasTrip));
                     balances = applyCarry(ordered);
                 } else {
                     reconcileColumnL(all, new Set([month]));
-                    flagDoubleDownhill(all, appState.trips);
+                    flagDoubleDownhill(all, appState.trips.map(aliasTrip));
                 }
-                auditCache = { trips: appState.trips, std: appState.rateStandards, veh: appState.vehicles, tol, pastKey, dfuel, ox, all, balances };
+                auditCache = { trips: appState.trips, std: appState.rateStandards, veh: appState.vehicles, tol, pastKey, dfuel, ox, dal, all, balances };
             }
             const { all, balances } = auditCache;
             const q = (as.search || '').trim().toLowerCase();
             const shown = all.filter(r => (!as.status || r.status === as.status) &&
-                (!q || `${r.trip.driver} ${r.trip.plate} ${r.trip.destination} ${r.trip.origin}`.toLowerCase().includes(q)));
+                (!q || `${r.trip.driver} ${r.trip.driverBoard || ""} ${r.trip.plate} ${r.trip.destination} ${r.trip.origin}`.toLowerCase().includes(q)));
             const count = {}; all.forEach(r => { count[r.status] = (count[r.status] || 0) + 1; });
             const downCount = {}; all.forEach(r => { if (r.downStatus) downCount[r.downStatus] = (downCount[r.downStatus] || 0) + 1; });
             const downTrips = {}; all.forEach(r => { if (r.leg === 'down') downTrips[r.status] = (downTrips[r.status] || 0) + 1; });
@@ -2346,9 +2401,9 @@ const formatZeroAsEmpty = (value) => {
             const rows = shown.slice(0, LIMIT).map(r => `
                 <tr class="border-b border-slate-700 align-top">
                     <td class="p-2 whitespace-nowrap">${esc(r.trip.date)}</td>
-                    <td class="p-2 whitespace-nowrap">${esc(r.trip.driver)}</td>
+                    <td class="p-2 whitespace-nowrap">${esc(r.trip.driver)}${r.trip.driverBoard ? `<div class="text-xs text-gray-500">กระดาน: ${esc(r.trip.driverBoard)}</div>` : ""}</td>
                     <td class="p-2 whitespace-nowrap font-mono text-xs">${esc(r.trip.plate)}</td>
-                    <td class="p-2 whitespace-nowrap">${r.cls ? esc(AUDIT_CLASSES[r.cls]) : '-'}${r.rateCls && r.rateCls !== r.cls ? `<div class="text-xs text-sky-300">ตัดหาง นว. → คิด${esc(AUDIT_CLASSES[r.rateCls])}</div>` : ''}${r.model ? ` <span class="text-xs text-indigo-300">${esc(r.model)}</span>` : ''}</td>
+                    <td class="p-2 whitespace-nowrap">${r.cls ? esc(AUDIT_CLASSES[r.cls]) : '-'}${r.rateCls && r.rateCls !== r.cls ? `<div class="text-xs text-sky-300">ตัดหาง → คิด${esc(AUDIT_CLASSES[r.rateCls])}</div>` : ''}${r.model ? ` <span class="text-xs text-indigo-300">${esc(r.model)}</span>` : ''}</td>
                     <td class="p-2">${r.leg === 'down' ? '<span class="px-1.5 py-0.5 rounded text-xs bg-teal-700 text-white">ขาล่อง</span> ' : ''}${esc(r.trip.origin)} → ${esc(r.trip.destination)}</td>
                     <td class="p-2">${fmtPumps(r.actual)}</td>
                     <td class="p-2">${r.status === 'no-rate' ? '-' : r.status === 'manual' ? (r.expectedTotal ? `รวม ${r.expectedTotal.toLocaleString()}` : '-') : fmtPumps(r.expected)}</td>
@@ -2567,10 +2622,10 @@ const formatZeroAsEmpty = (value) => {
             };
             const n = (v) => (Number(v) ? Number(v) : '');
             sheet('ผลตรวจ',
-                ['วันที่', 'ทิศทาง', 'คนขับ', 'ทะเบียน', 'ประเภทรถ', 'รุ่น', 'ต้นทาง', 'ปลายทาง', 'ผล', 'เติมจริงรวม (ลิตร)', 'ตามอัตรารวม (ลิตร)', 'ต่าง (ลิตร)',
+                ['วันที่', 'ทิศทาง', 'คนขับ', 'ชื่อในกระดานคิว', 'ทะเบียน', 'ประเภทรถ', 'รุ่น', 'ต้นทาง', 'ปลายทาง', 'ผล', 'เติมจริงรวม (ลิตร)', 'ตามอัตรารวม (ลิตร)', 'ต่าง (ลิตร)',
                     ...pumps.flatMap(p => [`${pumpName(p)} จริง`, `${pumpName(p)} อัตรา`]), 'เติมเป็นเงิน (บาท)',
                     'ขาล่องไพศาล อัตรา', 'ขาล่องไพศาล บันทึก', 'ขาล่อง ผล', 'ลิตรยกมา', 'ควรเติม (หลังหักยกมา)', 'ลิตรยกไป', 'หมายเหตุ'],
-                all.map(r => [r.trip.date, r.leg === 'down' ? 'ขาล่อง' : 'ขาขึ้น', r.trip.driver, r.trip.plate, r.cls ? AUDIT_CLASSES[r.cls] + (r.rateCls && r.rateCls !== r.cls ? ` (ตัดหาง นว. คิด${AUDIT_CLASSES[r.rateCls]})` : '') : '', r.model, r.trip.origin, r.trip.destination,
+                all.map(r => [r.trip.date, r.leg === 'down' ? 'ขาล่อง' : 'ขาขึ้น', r.trip.driver, r.trip.driverBoard || '', r.trip.plate, r.cls ? AUDIT_CLASSES[r.cls] + (r.rateCls && r.rateCls !== r.cls ? ` (ตัดหาง คิด${AUDIT_CLASSES[r.rateCls]})` : '') : '', r.model, r.trip.origin, r.trip.destination,
                     AUDIT_STATUS[r.status].label, n(r.actualTotal), r.status === 'no-rate' ? '' : n(r.expectedTotal), r.status === 'no-rate' ? '' : r.diff,
                     ...pumps.flatMap(p => [n(r.actual[p]), r.status === 'no-rate' ? '' : n((r.expected || {})[p])]), n(r.bahtTotal),
                     n(r.down), r.downStatus && r.downStatus !== 'missing' ? r.downActual : '', r.downStatus ? DOWN_STATUS[r.downStatus].label : '',

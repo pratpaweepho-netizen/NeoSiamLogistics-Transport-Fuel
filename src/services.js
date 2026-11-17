@@ -3,7 +3,7 @@
 import firebase from "firebase/compat/app";
 import "firebase/compat/database";
 import { GAS_STATION_KEYS, GAS_STATION_FRIENDLY_NAMES, firebaseConfig } from "./constants.js";
-import { DEFAULT_ORIGIN_EXTRAS, normalizeOriginExtras } from "./fuelAudit.js";
+import { DEFAULT_ORIGIN_EXTRAS, normalizeOriginExtras, normalizeDriverAliases } from "./fuelAudit.js";
 
 // UI seam: app.js injects render/hideLoading so the data layer stays free of DOM/render code.
 let ui = { render: () => {}, hideLoading: () => {} };
@@ -29,7 +29,7 @@ export let appState = {
             // tolerance / carryStart are shared settings (Firebase settings/fuelAudit); the rest is per-screen UI state.
             // originExtras: "extra fill by pickup place" rules — default from the company's old fuel base until saved
             // in settings/fuelAudit.originExtras (user decision 17 Nov 2026).
-            auditState: { status: '', search: '', tolerance: 0, carryStart: '2026-11', showStandards: false, originExtras: DEFAULT_ORIGIN_EXTRAS, showOriginExtras: false },
+            auditState: { status: '', search: '', tolerance: 0, carryStart: '2026-11', showStandards: false, originExtras: DEFAULT_ORIGIN_EXTRAS, showOriginExtras: false, driverAliases: {} },
             // Excel trip template start month (settings/tripTemplate.startMonth); '' = not set yet → template import blocked.
             templateStartMonth: '',
             // Column L downhill liters by trip key (downhillFuel/{ym}/{key}), only for the months the audit loaded
@@ -1064,6 +1064,12 @@ export let appState = {
                     const s = snapshot.val() || {};
                     if (typeof s.tolerance === 'number') appState.auditState.tolerance = s.tolerance;
                     if (typeof s.carryStart === 'string') appState.auditState.carryStart = s.carryStart;
+                    // Driver name aliases (board short name → full name); false / missing = none. Same object kept when
+                    // unchanged so the audit caches (keyed by this object) stay valid.
+                    {
+                        const nextAliases = normalizeDriverAliases(s.driverAliases);
+                        if (JSON.stringify(nextAliases) !== JSON.stringify(appState.auditState.driverAliases)) appState.auditState.driverAliases = nextAliases;
+                    }
                     // Saved rules win (an empty list saved on purpose means "no extras"); never saved → the default.
                     if (s.originExtras !== undefined) {
                         const next = normalizeOriginExtras(Object.values(s.originExtras || {}));

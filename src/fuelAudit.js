@@ -638,3 +638,65 @@ export const AUDIT_STATUS = {
     'manual': { label: 'ต้องตรวจเอง', cls: 'bg-sky-700' },
     'no-rate': { label: 'ไม่มีอัตรา', cls: 'bg-slate-600' },
 };
+
+// ---- Driver name aliases (board short names → full names), confirmed by the user (17 Nov 2026) ----
+// Stored in settings/fuelAudit.driverAliases as [{ from, to }] (false = none); used only when auditing — the stored
+// trips keep their board names.
+export function normalizeDriverAliases(list) {
+    const map = {};
+    for (const a of Object.values(list || {})) {
+        const from = clean(a?.from), to = clean(a?.to);
+        if (from && to && from !== to) map[from] = to;
+    }
+    return map;
+}
+// The trip as the audit sees it: board name replaced by the confirmed full name (board name kept in driverBoard).
+export function applyDriverAlias(trip, map) {
+    const key = clean(trip?.driver);
+    // Own keys only: a driver named like an Object property ("constructor", "toString") must not match.
+    const full = map && Object.prototype.hasOwnProperty.call(map, key) ? map[key] : '';
+    return full ? { ...trip, driver: full, driverBoard: trip.driver } : trip;
+}
+
+/**
+ * The confirmed proposal file (sheet "จับคู่ชื่อ": ชื่อในกระดานคิว | … | ชื่อเต็มที่เสนอ | … | ยืนยัน) → aliases.
+ * "ยืนยัน" = ใช่ / ถูก / yes / ✓ → the proposed full name; ไม่ / ไม่ใช่ / ผิด / no / ✗ or blank → not used; any other
+ * text = the full name the user typed instead. Nothing ambiguous is saved: a full name missing from the drivers
+ * master, a board name confirmed to two different people, a board name that is itself another driver's full name,
+ * or a chain (a target that is also a board name) goes to `conflicts` for the user to fix in the file.
+ */
+export function parseDriverAliasSheet(rows, masterNames = []) {
+    const hi = (rows || []).slice(0, 5).findIndex(r => { const h = (r || []).map(clean); return h.includes('ชื่อในกระดานคิว') && h.includes('ยืนยัน'); });
+    const H = hi >= 0 ? rows[hi].map(clean) : [];
+    const iS = H.indexOf('ชื่อในกระดานคิว'), iP = H.indexOf('ชื่อเต็มที่เสนอ'), iY = H.indexOf('ยืนยัน');
+    const empty = { aliases: [], skipped: [], conflicts: [] };
+    if (iS < 0 || iP < 0 || iY < 0) return { ...empty, error: 'ไม่ใช่ไฟล์จับคู่ชื่อคนขับ (ต้องมีช่อง ชื่อในกระดานคิว / ชื่อเต็มที่เสนอ / ยืนยัน)' };
+    const master = new Set(masterNames.map(clean).filter(Boolean));
+    if (!master.size) return { ...empty, error: 'ยังไม่มีรายชื่อคนขับในระบบ (หน้า "คนขับ") — ตรวจชื่อเต็มไม่ได้ ลองใหม่อีกครั้ง' };
+    const YES = /^(ใช่|ถูก|ถูกต้อง|ยืนยัน|yes|y|ok|✓|✔|1|true)$/i;
+    const NO = /^(ไม่|ไม่ใช่|ผิด|ไม่ถูก|ไม่ยืนยัน|no|n|x|✗|✘|0|false|-)$/i;
+    const picked = [], skipped = [], conflicts = [];
+    for (const r of rows.slice(hi + 1)) {
+        const from = clean(r?.[iS]);
+        if (!from) continue;
+        const said = clean(r?.[iY]);
+        if (!said || NO.test(said)) { skipped.push(from); continue; }
+        const to = YES.test(said) ? clean(r?.[iP]) : said;
+        if (!to) { skipped.push(from); continue; }
+        if (!master.has(to)) { conflicts.push({ from, to, reason: 'ชื่อเต็มไม่อยู่ในหน้า "คนขับ"' }); continue; }
+        if (from !== to) picked.push({ from, to });
+    }
+    // Ambiguity checks over the whole file.
+    const targets = {}; for (const a of picked) (targets[a.from] ||= new Set()).add(a.to);
+    const froms = new Set(picked.map(a => a.from));
+    const aliases = [], seen = new Set();
+    for (const a of picked) {
+        if (targets[a.from].size > 1) { conflicts.push({ ...a, reason: `ชื่อในกระดานนี้ถูกยืนยันเป็นหลายคน (${[...targets[a.from]].join(' / ')})` }); continue; }
+        if (master.has(a.from)) { conflicts.push({ ...a, reason: 'ชื่อในกระดานตรงกับชื่อเต็มของคนขับอีกคน' }); continue; }
+        if (froms.has(a.to)) { conflicts.push({ ...a, reason: 'ชื่อเต็มนี้ถูกจับคู่ต่ออีกทอด' }); continue; }
+        if (seen.has(a.from)) continue; // same pair listed twice
+        seen.add(a.from);
+        aliases.push(a);
+    }
+    return { aliases, skipped, conflicts, error: '' };
+}

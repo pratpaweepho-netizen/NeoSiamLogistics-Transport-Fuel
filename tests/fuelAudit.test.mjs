@@ -276,6 +276,37 @@ eq('rule without a number → warning, no rule', [pr3.standards.some(s => s.cls 
 // review: two rule rows with different extras → reported as a conflict, not "same"
 const pr4 = parseRateSheet({ a: ruleSheet, b: [ruleSheet[0], ruleSheet[1], ['พ่วง ลากหางเปล่า ไปตัดไว้ที่ กำแพง +30 ลิตร']] });
 eq('two empty-trailer rules with different extras → conflict flag', pr4.standards.filter(s => s.cls === EMPTY_KPP_CLASS).some(s => s.flags.some(f => f.startsWith('ขัดกับแถว'))), true);
+// Driver aliases (user-confirmed file, 17 Nov 2026)
+const { parseDriverAliasSheet, normalizeDriverAliases, applyDriverAlias } = await import('../src/fuelAudit.js');
+const AH = ['ชื่อในกระดานคิว', 'จำนวนเที่ยว', 'ชื่อเต็มที่เสนอ', 'หลักฐาน', 'ความมั่นใจ', 'ยืนยัน'];
+const MASTER = ['สกล แปลกชัยภูมิ', 'สุชาติ เรืองศิริ', 'วรวุฒิ รุ่งน้อย', 'สมชาย ใจดี', 'สมชาย มีสุข', 'วิชัย', 'วิชัย ทองดี'];
+const aliasRows = [AH,
+    ['สกล', 253, 'สกล แปลกชัยภูมิ', '', 'สูง', 'ใช่'],
+    ['สุชาตื', 2, '', '', 'ไม่พบ', 'สุชาติ เรืองศิริ'],   // user typed the right name
+    ['XX', 10, '', '', 'ไม่พบ', ''],                        // not confirmed
+    ['วรวุฒิ', 5, 'วรวุฒิ รุ่งน้อย', '', 'กลาง', '✓'],
+    ['ใคร', 1, 'ไม่มีในระบบ', '', 'ต่ำ', 'ใช่'],              // full name not in the master
+    ['ปิยะ', 1, 'สกล แปลกชัยภูมิ', '', 'ต่ำ', 'ไม่ใช่'],       // rejected
+];
+const ar = parseDriverAliasSheet(aliasRows, MASTER);
+eq('alias file: confirmed / typed name / skipped (blank + rejected) / conflicts', [ar.aliases, ar.skipped, ar.conflicts.map(c => c.from)],
+    [[{ from: 'สกล', to: 'สกล แปลกชัยภูมิ' }, { from: 'สุชาตื', to: 'สุชาติ เรืองศิริ' }, { from: 'วรวุฒิ', to: 'วรวุฒิ รุ่งน้อย' }], ['XX', 'ปิยะ'], ['ใคร']]);
+eq('not an alias file → error', !!parseDriverAliasSheet([['a', 'b']], MASTER).error, true);
+eq('drivers master not loaded → error, nothing saved', [!!parseDriverAliasSheet(aliasRows, []).error, parseDriverAliasSheet(aliasRows, []).aliases.length], [true, 0]);
+const amb = parseDriverAliasSheet([AH, ['สมชาย', 3, 'สมชาย ใจดี', '', 'สูง', 'ใช่'], ['สมชาย', 2, 'สมชาย มีสุข', '', 'สูง', 'ใช่']], MASTER);
+eq('one board name confirmed as two people → conflict, not saved', [amb.aliases.length, amb.conflicts.length], [0, 2]);
+eq('board name that is another driver\'s full name → conflict', parseDriverAliasSheet([AH, ['วิชัย', 3, 'วิชัย ทองดี', '', 'สูง', 'ใช่']], MASTER).conflicts.length, 1);
+const chain = parseDriverAliasSheet([AH, ['ก', 1, 'สกล แปลกชัยภูมิ', '', '', 'ใช่'], ['สกล แปลกชัยภูมิ', 1, 'สุชาติ เรืองศิริ', '', '', 'ใช่']], MASTER);
+eq('chain (a target is also a board name) → conflict', chain.conflicts.some(c => c.reason.includes('อีกทอด')), true);
+eq('header below a title row is found', parseDriverAliasSheet([['จับคู่ชื่อคนขับ 17/11'], ...aliasRows], MASTER).aliases.length, 3);
+eq('aliases from settings (object form; false = none) → map', [normalizeDriverAliases({ 0: { from: ' สกล ', to: 'สกล แปลกชัยภูมิ' }, 1: { from: 'x', to: 'x' }, 2: { from: '', to: 'y' } }), normalizeDriverAliases(false)], [{ 'สกล': 'สกล แปลกชัยภูมิ' }, {}]);
+// the real alias function + carry-over + double-downhill pairing
+const amap = normalizeDriverAliases(ar.aliases);
+const tA = applyDriverAlias({ id: 'a', driver: ' สกล ', plate: '70-1' }, amap);
+eq('applyDriverAlias: full name, board name kept, untouched trip returned as is', [tA.driver, tA.driverBoard, applyDriverAlias({ driver: 'อื่น' }, amap).driver], ['สกล แปลกชัยภูมิ', ' สกล ', 'อื่น']);
+const resA = [{ status: 'over', actualTotal: 90, expectedTotal: 80, trip: applyDriverAlias({ driver: 'สกล' }, amap) }, { status: 'ok', actualTotal: 80, expectedTotal: 80, trip: { driver: 'สกล แปลกชัยภูมิ' } }];
+eq('driver named like an Object property is not aliased', [applyDriverAlias({ driver: 'constructor' }, amap).driver, applyDriverAlias({ driver: 'toString' }, {}).driver], ['constructor', 'toString']);
+eq('carry-over: board name and full name become one balance', applyCarry(resA), { 'สกล แปลกชัยภูมิ': 10 });
 eq('rules from settings (object form, text keywords) are normalised; bad rules dropped',
     normalizeOriginExtras(Object.values({ 0: { label: 'x', keywords: 'ก, ข', pump: 'nissan_singburi', maxLiters: '20' }, 1: { keywords: [], pump: 'x', maxLiters: 5 }, 2: { keywords: ['ค'], pump: '', maxLiters: 5 } })),
     [{ label: 'x', keywords: ['ก', 'ข'], exclude: [], pump: 'nissan_singburi', maxLiters: 20 }]);
