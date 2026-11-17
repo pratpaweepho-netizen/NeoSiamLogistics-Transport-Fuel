@@ -207,6 +207,14 @@ const STATION_NAME_MAP = [
     ['เครือสห', 'caltex_sahapat'],
     ['สหพัฒน', 'caltex_sahapat'],
     ['รุ่งพัฒน', 'rungpattana_wangnoi'],
+    // Typos seen on the daily board, mapping confirmed by the user (9 Nov 2026).
+    ['จิตมาศ', 'jittamas_bangpain'],
+    ['บางปะอิน', 'jittamas_bangpain'],
+    ['ไพศา', 'daopaisan_nakhonsawan'],
+    ['อุไร', 'daourai_sai3'],
+    ['เต็ก', 'tekyong_chonburi'],
+    ['เต้กย', 'tekyong_chonburi'],
+    ['ต็กย', 'tekyong_chonburi'],
 ];
 const mapPumpName = (name) => { for (const [frag, key] of STATION_NAME_MAP) if (name.includes(frag)) return key; return null; };
 
@@ -245,12 +253,21 @@ export function parseDailyRows(sheetName, rows) {
         iOr = H.indexOf('ขึ้นที่'), iJob = H.indexOf('รายการ'), iNote = H.indexOf('หมายเหตุ'),
         iDest = H.indexOf('ลงที่'), iFuel = H.indexOf('ปั๊มน้ำมัน');
     const trips = []; let skipped = 0;
-    for (const r of rows.slice(hi + 1)) {
+    for (let i = hi + 1; i < rows.length; i++) {
+        const r = rows[i];
         if (!r || r.every(c => c === '' || c == null)) continue;
         const plate = clean(r[iPl]), driver = iDr >= 0 ? clean(r[iDr]) : '';
-        if (!plate && !driver) { skipped++; continue; }
         const { liters, baht } = parsePumpText(r[iFuel]);
+        const hasFuel = Object.keys(liters).length > 0 || Object.keys(baht).length > 0;
+        // Not a trip: the "ทะเบียน" header repeated for a second block, or a spare driver line with
+        // no plate and no fuel. A plate-less row that carries fuel is kept so no fuel is lost.
+        if (plate === 'ทะเบียน' || (!plate && !hasFuel)) { skipped++; continue; }
         trips.push({
+            // Row position used in import keys (daily_<sheet>_r<sourceRow>). SheetJS sets no __rowNum__ with
+            // header:1, so this is the 1-based position among the sheet's NON-blank rows, not the Excel row number.
+            // It does not depend on which rows the parser skips, but it shifts if blank rows are added/removed
+            // above a trip — the Jul–Nov 2026 keys already in Firebase use this numbering, so keep it.
+            sourceRow: (r.__rowNum__ ?? i) + 1,
             date, yearMonth: ym, direction: 'ขาขึ้น', source: 'daily',
             queueType: iQ >= 0 ? clean(r[iQ]) : '', driver, plate, vehicleType: '',
             crossingFee: '', waitingFee: '',

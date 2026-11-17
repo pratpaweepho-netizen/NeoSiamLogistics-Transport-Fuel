@@ -22,6 +22,10 @@ export let appState = {
             // Master data (Phase 3)
             drivers: [],
             rateTable: [],
+            // Fuel audit (ตรวจการเติม): official rate sheet rows + the audit page's UI state
+            rateStandards: [],
+            rateStandardsMeta: null,
+            auditState: { status: '', search: '', tolerance: 0, showStandards: false },
             driverFilter: '',
             payrollMonth: '',
             // Form-specific state
@@ -1012,7 +1016,7 @@ export let appState = {
                 vehiclesRef.on('value', (snapshot) => {
                     const data = snapshot.val();
                     appState.vehicles = data ? Object.entries(data).map(([id, value]) => ({ id, ...value })) : [];
-                    if(['vehicles', 'form'].includes(appState.view)) ui.render();
+                    if(['vehicles', 'form', 'audit'].includes(appState.view)) ui.render();
                 }, onListenerError('vehicles'));
 
                 driversRef.on('value', (snapshot) => {
@@ -1030,6 +1034,23 @@ export let appState = {
                     // 'form' uses rate runTypes for the ประเภทคิว autocomplete.
                     if (appState.view === 'form') ui.render();
                 }, onListenerError('rateTable'));
+
+                database.ref('fuelRateStandards').on('value', (snapshot) => {
+                    const data = snapshot.val() || {};
+                    appState.rateStandards = data.rows
+                        ? Object.entries(data.rows).map(([id, v]) => ({ id, ...v, up: v.up || {}, flags: v.flags || [] })).sort((a, b) => a.id.localeCompare(b.id))
+                        : [];
+                    appState.rateStandardsMeta = data.meta || null;
+                    // Not 'import': re-rendering there would wipe the preview and the "saved" message right after saving.
+                    if (appState.view === 'audit') ui.render();
+                }, onListenerError('fuelRateStandards'));
+            },
+            getRateStandards: () => [...appState.rateStandards],
+            // Replace the whole rate master with a freshly parsed sheet (the sheet is the source of truth).
+            replaceRateStandards: (standards, meta) => {
+                const rows = {};
+                standards.forEach(s => { const { id, ...rest } = s; rows[id] = rest; });
+                return database.ref('fuelRateStandards').set({ meta, rows });
             },
 
             addRoute: (routeData) => database.ref('routes').push(routeData),
@@ -1058,7 +1079,7 @@ export let appState = {
                     appState.trips = data
                         ? Object.entries(data).map(([id, v]) => ({ id, ...v })).sort((a, b) => (a.date || '').localeCompare(b.date || ''))
                         : [];
-                    if (['queue', 'payroll', 'reports', 'dashboard'].includes(appState.view)) ui.render();
+                    if (['queue', 'payroll', 'reports', 'dashboard', 'audit'].includes(appState.view)) ui.render();
                 }, (err) => {
                     console.error(`Firebase listener "trips/${ym}" failed:`, err);
                 });

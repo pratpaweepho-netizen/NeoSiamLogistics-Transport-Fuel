@@ -6,6 +6,7 @@ import { ICONS, GAS_STATION_FRIENDLY_NAMES, ROUTE_STATION_COLUMNS } from "./cons
 import { parseFuelBaseRows } from "./importer.js";
 import { detectSheetType, parseUphillQueue, parseDownhillQueue, parsePartnerQueue, parseDailyRows } from "./importerTrips.js";
 import { parseDrivers, parseRateTable, parseVehicles } from "./importerMasters.js";
+import { parseRateSheet, buildAuditContext, auditTrip, AUDIT_CLASSES, AUDIT_STATUS } from "./fuelAudit.js";
 
 const formatZeroAsEmpty = (value) => {
             const num = Number(value);
@@ -101,6 +102,7 @@ const formatZeroAsEmpty = (value) => {
             if (appState.view === 'drivers') viewHtml = renderDrivers();
             if (appState.view === 'payroll') viewHtml = renderPayroll();
             if (appState.view === 'reports') viewHtml = renderReports();
+            if (appState.view === 'audit') viewHtml = renderAudit();
 
             appContainer.innerHTML = `
                 ${renderHeader()}
@@ -133,19 +135,20 @@ const formatZeroAsEmpty = (value) => {
 
             return `
                 <header class="bg-neutral shadow-lg sticky top-0 z-30">
-                    <nav class="container mx-auto px-6 py-3 flex justify-between items-center">
+                    <nav class="container mx-auto px-4 sm:px-6 py-3 flex flex-wrap justify-between items-center gap-3">
                         <div class="flex items-center gap-3">
                             <div class="bg-gray-200 p-2 rounded-full">
                                <svg xmlns="http://www.w3.org/2000/svg" class="w-8 h-8" viewBox="0 0 24 24" fill="#0369a1"><path d="M12 22a7 7 0 0 0 7-7c0-2-1-3.9-3-5.5s-3.5-4-4-6.5c-.5 2.5-2 4.9-4 6.5C6 11.1 5 13 5 15a7 7 0 0 0 7 7z"></path></svg>
                             </div>
                             <h1 class="text-xl sm:text-2xl font-bold text-white tracking-wider">NeoSiamLogistics & Transport Fuel</h1>
                         </div>
-                        <div class="flex items-center gap-2 sm:gap-4">
+                        <div class="flex flex-wrap items-center gap-2">
                             ${navButton('form', ICONS.Truck, 'บันทึกน้ำมัน')}
                             ${navButton('dashboard', ICONS.ChartBar, 'แดชบอร์ด')}
                             ${navButton('queue', ICONS.Truck, 'คิวรถ')}
                             ${navButton('payroll', ICONS.ChartBar, 'การเงิน')}
                             ${navButton('reports', ICONS.ChartBar, 'รายงาน')}
+                            ${navButton('audit', ICONS.Truck, 'ตรวจการเติม')}
                             ${navButton('drivers', ICONS.IdCard, 'คนขับ')}
                             ${navButton('vehicles', ICONS.IdCard, 'จัดการทะเบียนรถ')}
                             ${navButton('data', ICONS.Database, 'จัดการเส้นทาง')}
@@ -345,14 +348,15 @@ const formatZeroAsEmpty = (value) => {
             `;
         };
 
-        const renderDataManagementContent = () => {
+        // Routes as shown on the จัดการเส้นทาง page (search filter + sort) — shared by the table and the Excel export.
+        const getVisibleRoutes = () => {
             const filter = appState.dataManagementFilter.toLowerCase();
             const routes = logisticsService.getRoutes();
-            const filteredRoutes = filter ? routes.filter(r => 
+            const filteredRoutes = filter ? routes.filter(r =>
                 (r.vehicleType || '').toLowerCase().includes(filter) ||
                 (r.origin || '').toLowerCase().includes(filter) ||
                 (r.destination || '').toLowerCase().includes(filter)
-            ) : routes;
+            ) : routes; // getRoutes() already returns a copy, so the in-place sort below is safe
 
             // Sort routes for consistent display
             filteredRoutes.sort((a, b) => {
@@ -364,7 +368,11 @@ const formatZeroAsEmpty = (value) => {
 
                 return (a.destination || '').localeCompare(b.destination || '', 'th');
             });
+            return filteredRoutes;
+        };
 
+        const renderDataManagementContent = () => {
+            const filteredRoutes = getVisibleRoutes();
             const stationCols = ROUTE_STATION_COLUMNS;
 
             const tableRows = filteredRoutes.map(route => {
@@ -446,13 +454,16 @@ const formatZeroAsEmpty = (value) => {
                     ${renderCard(`
                         <div class="flex flex-wrap justify-between items-center gap-4">
                             <h2 class="text-2xl font-bold text-white flex items-center gap-3">${ICONS.Database}จัดการข้อมูลเส้นทาง</h2>
-                            <div class="flex items-center gap-4">
+                            <div class="flex flex-wrap items-center gap-4">
                                 <input type="text" id="data-management-filter" value="${appState.dataManagementFilter}" placeholder="ค้นหา..." class="w-full md:w-64 bg-slate-800 border border-slate-600 rounded-md px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent" />
                                 <button id="refresh-routes-btn" title="รีเฟรชข้อมูล" class="bg-sky-600 hover:bg-sky-700 text-white font-bold p-2 rounded-lg shadow-md transition-transform transform hover:scale-105">
                                     ${ICONS.Refresh}
                                 </button>
                                 <button id="backup-data-btn" title="สำรองข้อมูลทั้งหมด (เส้นทาง + บันทึกน้ำมัน + ทะเบียนรถ) เป็นไฟล์ JSON" class="flex items-center gap-2 bg-success hover:bg-green-600 text-white font-bold py-2 px-4 rounded-lg shadow-md transition-transform transform hover:scale-105">
                                     ${ICONS.Download} สำรองข้อมูล
+                                </button>
+                                <button id="routes-export-btn" title="Export เส้นทางที่แสดงอยู่ (ตามคำค้นหา) เป็นไฟล์ Excel" class="flex items-center gap-2 bg-emerald-700 hover:bg-emerald-800 text-white font-bold py-2 px-4 rounded-lg shadow-md transition-transform transform hover:scale-105 whitespace-nowrap">
+                                    ${ICONS.Download} Export Excel
                                 </button>
                                 <button id="add-new-route-btn" class="flex items-center gap-2 bg-primary hover:bg-secondary text-white font-bold py-2 px-4 rounded-lg shadow-md transition-transform transform hover:scale-105">
                                     ${ICONS.Plus} เพิ่มเส้นทางใหม่
@@ -472,6 +483,65 @@ const formatZeroAsEmpty = (value) => {
         let importParsedRoutes = null;
         let importParsedTrips = null;
         let importParsedMaster = null;
+        let importParsedStandards = null;
+
+        // Escape text taken from Excel/Firebase before putting it into innerHTML.
+        const esc = (v) => String(v ?? '').replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+        const pumpName = (key) => GAS_STATION_FRIENDLY_NAMES[key] || key;
+        const fmtPumps = (obj) => Object.entries(obj || {}).filter(([, v]) => Number(v)).map(([k, v]) => `${esc(pumpName(k))} ${Number(v).toLocaleString()}`).join(' + ') || '-';
+
+        const renderRateImportPreview = ({ standards, warnings, skippedSheets, fileName }) => {
+            const flagged = standards.filter(s => s.flags.length);
+            const cur = appState.rateStandardsMeta;
+            const rows = standards.map(s => `
+                <tr class="border-b border-slate-700 ${s.flags.length ? 'bg-amber-900/20' : ''}">
+                    <td class="p-2 whitespace-nowrap">${esc(s.sheet)} · ${s.row}</td>
+                    <td class="p-2 whitespace-nowrap">${esc(AUDIT_CLASSES[s.cls])}${s.variant === 'sino' ? ' (sino)' : ''}</td>
+                    <td class="p-2 whitespace-nowrap">${esc(s.origin)} → ${esc(s.destinationLabel)}</td>
+                    <td class="p-2">${fmtPumps(s.up)}</td>
+                    <td class="p-2 text-right">${s.down || '-'}${s.downVictor !== s.down ? ` <span class="text-xs text-gray-400">(victor ${s.downVictor})</span>` : ''}</td>
+                    <td class="p-2 text-xs text-amber-300">${s.flags.map(esc).join('<br>')}</td>
+                </tr>`).join('');
+            return `
+                <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+                    ${importStatCard('อัตราที่อ่านได้', standards.length)}
+                    ${importStatCard('แถวที่ควรตรวจในไฟล์', flagged.length)}
+                    ${importStatCard('ชีตที่ไม่ใช่ตารางอัตรา', skippedSheets.length)}
+                    ${importStatCard('อัตราในระบบตอนนี้', appState.rateStandards.length)}
+                </div>
+                ${warnings.length ? `<p class="text-yellow-400 mb-3">⚠️ ${warnings.map(esc).join(', ')}</p>` : ''}
+                ${skippedSheets.length ? `<p class="text-xs text-gray-400 mb-3">ไม่ได้อ่าน: ${skippedSheets.map(esc).join(', ')} (ไม่มีหัวคอลัมน์ "รวมยอดขาขึ้น/ลิตร")</p>` : ''}
+                ${cur ? `<p class="text-xs text-gray-400 mb-3">ฉบับในระบบตอนนี้: ${esc(cur.fileName)} · บันทึกเมื่อ ${esc(cur.importedAt)}</p>` : ''}
+                <div class="overflow-x-auto rounded-lg border border-slate-700 mb-4 max-h-[28rem]">
+                    <table class="w-full text-sm">
+                        <thead class="bg-slate-800 text-gray-400 sticky top-0"><tr>
+                            <th class="p-2 text-left">ชีต · แถว</th><th class="p-2 text-left">ประเภทรถ</th><th class="p-2 text-left">เส้นทาง</th><th class="p-2 text-left">ขาขึ้น (ลิตร)</th><th class="p-2 text-right">ขาล่องไพศาล</th><th class="p-2 text-left">ข้อสังเกต</th>
+                        </tr></thead>
+                        <tbody>${rows}</tbody>
+                    </table>
+                </div>
+                <div class="bg-sky-900/30 border border-sky-700 rounded-lg p-3 mb-4 text-sm text-sky-200">ไฟล์นี้จะเป็น <b>อัตรามาตรฐาน</b> ที่หน้า "ตรวจการเติม" ใช้เทียบ — บันทึกแล้วจะแทนอัตราฉบับเดิมทั้งชุด (ไม่กระทบคิวรถหรือเส้นทาง)</div>
+                <button id="import-rates-save-btn" class="bg-primary hover:bg-secondary text-white font-bold py-2 px-5 rounded-lg shadow-md">บันทึกเป็นอัตรามาตรฐาน (${standards.length} อัตรา)</button>
+                <div id="import-result" class="mt-4"></div>`;
+        };
+
+        const handleImportRatesCommit = async () => {
+            if (!importParsedStandards?.standards?.length) return;
+            const { standards, fileName } = importParsedStandards;
+            if (!confirm(`บันทึก ${standards.length} อัตราจาก "${fileName}" เป็นอัตรามาตรฐาน?\n\nอัตราฉบับเดิมในระบบจะถูกแทนที่ทั้งชุด`)) return;
+            const btn = document.getElementById('import-rates-save-btn');
+            const resultDiv = document.getElementById('import-result');
+            btn.disabled = true; btn.classList.add('opacity-60', 'cursor-not-allowed');
+            try {
+                const meta = { fileName, importedAt: new Date().toLocaleString('th-TH'), count: standards.length, flagged: standards.filter(s => s.flags.length).length };
+                await logisticsService.replaceRateStandards(standards, meta);
+                resultDiv.innerHTML = `<p class="text-green-400 font-bold">✓ บันทึกอัตรามาตรฐาน ${standards.length} อัตราแล้ว — ไปที่แท็บ "ตรวจการเติม" เพื่อดูผลตรวจ</p>`;
+            } catch (err) {
+                console.error('Save rate standards failed:', err);
+                resultDiv.innerHTML = `<p class="text-red-400">บันทึกไม่สำเร็จ: ${esc(err.message)}</p>`;
+                btn.disabled = false; btn.classList.remove('opacity-60', 'cursor-not-allowed');
+            }
+        };
 
         const renderImport = () => {
             return `
@@ -564,10 +634,25 @@ const formatZeroAsEmpty = (value) => {
             const sheetName = document.getElementById('import-sheet').value;
             const ws = importWorkbook.Sheets[sheetName];
             const rows = XLSX.utils.sheet_to_json(ws, { header: 1, blankrows: false, defval: '' });
-            const kind = detectSheetType(rows);
             importParsedRoutes = null;
             importParsedTrips = null;
+            importParsedStandards = null;
 
+            // Official rate file ("อัตราเติมน้ำมันประจำ ปั๊ม ต่างๆ"): when the selected sheet is a rate table, read every
+            // sheet of the workbook. blankrows:true + the used-range start keep real Excel row numbers for each rate.
+            const isRateSheet = rows.some(r => (r || []).some(c => String(c).trim() === 'รวมยอดขาขึ้น/ลิตร'));
+            const rate = isRateSheet ? parseRateSheet(Object.fromEntries(importWorkbook.SheetNames.map(n => {
+                const s = importWorkbook.Sheets[n];
+                return [n, { rows: XLSX.utils.sheet_to_json(s, { header: 1, blankrows: true, defval: '' }), startRow: s['!ref'] ? XLSX.utils.decode_range(s['!ref']).s.r : 0 }];
+            }))) : { standards: [] };
+            if (rate.standards.length) {
+                importParsedStandards = { ...rate, fileName: document.getElementById('import-file')?.files?.[0]?.name || '' };
+                preview.innerHTML = renderRateImportPreview(importParsedStandards);
+                document.getElementById('import-rates-save-btn')?.addEventListener('click', handleImportRatesCommit);
+                return;
+            }
+
+            const kind = detectSheetType(rows);
             if (kind === 'fuelbase') {
                 const result = parseFuelBaseRows(rows);
                 importParsedRoutes = result.routes;
@@ -756,8 +841,16 @@ const formatZeroAsEmpty = (value) => {
                     if (mode === 'replace') await logisticsService.replaceAllDrivers(items);
                     else await logisticsService.addDriversBatch(items);
                 } else if (kind === 'vehicles') {
-                    if (mode === 'replace') await logisticsService.replaceAllVehicles(items);
-                    else await logisticsService.addVehiclesBatch(items);
+                    // The Excel ทะเบียน sheet has no รุ่นรถ column — keep the sino/victor set in the app so a re-import
+                    // does not silently switch those trucks back to the general fuel rate.
+                    const modelOf = {};
+                    logisticsService.getVehicles().forEach(v => { if (v.model) modelOf[String(v.registrationNumber || '').replace(/\s+/g, '')] = v.model; });
+                    const withModel = items.map(v => {
+                        const m = modelOf[String(v.registrationNumber || '').replace(/\s+/g, '')];
+                        return m && !v.model ? { ...v, model: m } : v;
+                    });
+                    if (mode === 'replace') await logisticsService.replaceAllVehicles(withModel);
+                    else await logisticsService.addVehiclesBatch(withModel);
                 } else {
                     await logisticsService.replaceAllRates(items); // rate table is always replace
                 }
@@ -1631,6 +1724,213 @@ const formatZeroAsEmpty = (value) => {
             document.getElementById('cmp-load')?.addEventListener('click', handleReportsCompare);
         };
 
+        // --- View: Fuel audit (ตรวจการเติม) — actual fills vs the official rate sheet ---
+        // Audit results only change when trips, rates, vehicles or tolerance change — not on every search keystroke.
+        let auditCache = { key: null, all: [] };
+        const computeAudit = () => {
+            const as = appState.auditState;
+            const tol = Math.max(0, Number(as.tolerance) || 0);
+            if (auditCache.trips !== appState.trips || auditCache.std !== appState.rateStandards || auditCache.veh !== appState.vehicles || auditCache.tol !== tol) {
+                const ctx = buildAuditContext(appState.rateStandards, appState.vehicles);
+                auditCache = {
+                    trips: appState.trips, std: appState.rateStandards, veh: appState.vehicles, tol,
+                    all: appState.trips.map(t => auditTrip(t, ctx, tol)).filter(Boolean).sort((a, b) => (a.trip.date || '').localeCompare(b.trip.date || '')),
+                };
+            }
+            const all = auditCache.all;
+            const q = (as.search || '').trim().toLowerCase();
+            const shown = all.filter(r => (!as.status || r.status === as.status) &&
+                (!q || `${r.trip.driver} ${r.trip.plate} ${r.trip.destination} ${r.trip.origin}`.toLowerCase().includes(q)));
+            const count = {}; all.forEach(r => { count[r.status] = (count[r.status] || 0) + 1; });
+            const sumDiff = (st) => all.filter(r => r.status === st).reduce((a, r) => a + r.diff, 0);
+            const byDriver = {};
+            for (const r of all) {
+                const d = byDriver[r.trip.driver || '(ไม่ระบุ)'] ||= { driver: r.trip.driver || '(ไม่ระบุ)', n: 0, checked: 0, ok: 0, over: 0, overL: 0, under: 0, underL: 0, wrong: 0 };
+                d.n++;
+                if (r.status !== 'no-rate') d.checked++;
+                if (r.status === 'ok') d.ok++;
+                if (r.status === 'over') { d.over++; d.overL += r.diff; }
+                if (r.status === 'under') { d.under++; d.underL += r.diff; }
+                if (r.status === 'wrong-pump') d.wrong++;
+            }
+            const drivers = Object.values(byDriver).sort((a, b) => b.overL - a.overL || b.over - a.over);
+            return { all, shown, count, overL: sumDiff('over'), underL: sumDiff('under'), drivers, tol };
+        };
+
+        const renderAudit = () => {
+            const month = appState.tripsMonth || localDateStr().slice(0, 7);
+            const meta = appState.rateStandardsMeta;
+            return `
+                <div class="space-y-6">
+                    ${renderCard(`
+                        <div class="flex flex-wrap justify-between items-end gap-4 mb-2">
+                            <h2 class="text-2xl font-bold text-white flex items-center gap-3">${ICONS.Truck} ตรวจการเติมน้ำมัน</h2>
+                            <div class="flex flex-wrap items-end gap-3">
+                                <div><label class="block text-xs text-gray-400 mb-1">เดือน</label>
+                                    <input type="month" id="audit-month" value="${month}" class="bg-slate-800 border border-slate-600 rounded-md px-3 py-2 text-white" /></div>
+                                <div><label class="block text-xs text-gray-400 mb-1">ยอมให้คลาดเคลื่อน (ลิตร)</label>
+                                    <input type="number" min="0" step="1" id="audit-tolerance" value="${appState.auditState.tolerance}" class="w-28 bg-slate-800 border border-slate-600 rounded-md px-3 py-2 text-white" /></div>
+                                <button id="audit-export-btn" class="flex items-center gap-2 bg-emerald-700 hover:bg-emerald-800 text-white font-bold py-2 px-4 rounded-lg shadow-md whitespace-nowrap">${ICONS.Download} Export Excel</button>
+                            </div>
+                        </div>
+                        <p class="text-xs text-gray-400">${meta
+                            ? `อัตรามาตรฐาน: ${esc(meta.fileName)} · ${appState.rateStandards.length} อัตรา · บันทึกเมื่อ ${esc(meta.importedAt)}${meta.flagged ? ` · <span class="text-amber-300">${meta.flagged} แถวในไฟล์อัตรามีข้อสังเกต</span>` : ''}`
+                            : '<span class="text-amber-300">⚠️ ยังไม่มีอัตรามาตรฐาน — นำเข้าไฟล์ "อัตราเติมน้ำมันประจำ ปั๊ม ต่างๆ" ที่แท็บ นำเข้า Excel ก่อน</span>'}</p>
+                        <div id="audit-content" class="mt-4">${renderAuditContent()}</div>
+                    `)}
+                </div>`;
+        };
+
+        const renderAuditContent = () => {
+            if (!appState.rateStandards.length) return '';
+            if (!logisticsService.getTrips().length) return `<p class="text-center py-8 text-gray-500">ไม่มีคิวรถในเดือนนี้ — เลือกเดือนอื่น</p>`;
+            const as = appState.auditState;
+            const { all, shown, count, overL, underL, drivers, tol } = computeAudit();
+            const card = (status, label, value, sub = '') => `
+                <button data-audit-status="${status}" class="text-left rounded-lg p-3 border ${as.status === status ? 'border-accent bg-slate-700' : 'border-slate-700 bg-slate-800 hover:bg-slate-700'}">
+                    <div class="text-xs text-gray-400">${label}</div>
+                    <div class="text-2xl font-bold text-white">${Number(value).toLocaleString()}</div>
+                    ${sub ? `<div class="text-xs text-gray-400">${sub}</div>` : ''}
+                </button>`;
+            const badge = (st) => `<span class="px-2 py-0.5 rounded text-xs text-white whitespace-nowrap ${AUDIT_STATUS[st].cls}">${AUDIT_STATUS[st].label}</span>`;
+            const LIMIT = 500;
+            const rows = shown.slice(0, LIMIT).map(r => `
+                <tr class="border-b border-slate-700 align-top">
+                    <td class="p-2 whitespace-nowrap">${esc(r.trip.date)}</td>
+                    <td class="p-2 whitespace-nowrap">${esc(r.trip.driver)}</td>
+                    <td class="p-2 whitespace-nowrap font-mono text-xs">${esc(r.trip.plate)}</td>
+                    <td class="p-2 whitespace-nowrap">${r.cls ? esc(AUDIT_CLASSES[r.cls]) : '-'}${r.model ? ` <span class="text-xs text-indigo-300">${esc(r.model)}</span>` : ''}</td>
+                    <td class="p-2">${esc(r.trip.origin)} → ${esc(r.trip.destination)}</td>
+                    <td class="p-2">${fmtPumps(r.actual)}</td>
+                    <td class="p-2">${r.status === 'no-rate' ? '-' : fmtPumps(r.expected)}</td>
+                    <td class="p-2 text-right font-bold ${r.diff > 0 ? 'text-red-400' : r.diff < 0 ? 'text-amber-300' : 'text-gray-400'}">${r.status === 'no-rate' ? '' : (r.diff > 0 ? '+' : '') + r.diff.toLocaleString()}</td>
+                    <td class="p-2">${badge(r.status)}</td>
+                    <td class="p-2 text-xs text-gray-300">${[r.reason, ...r.flags].filter(Boolean).map(esc).join('<br>')}</td>
+                </tr>`).join('');
+            const driverRows = drivers.map(d => `
+                <tr class="border-b border-slate-700">
+                    <td class="p-2">${esc(d.driver)}</td><td class="p-2 text-right">${d.n}</td><td class="p-2 text-right">${d.checked}</td><td class="p-2 text-right">${d.ok}</td>
+                    <td class="p-2 text-right text-red-400">${d.over}</td><td class="p-2 text-right text-red-400 font-bold">${d.overL ? '+' + d.overL.toLocaleString() : ''}</td>
+                    <td class="p-2 text-right text-amber-300">${d.under}</td><td class="p-2 text-right text-amber-300">${d.underL ? d.underL.toLocaleString() : ''}</td>
+                    <td class="p-2 text-right text-purple-300">${d.wrong}</td>
+                </tr>`).join('');
+            const stdRows = appState.rateStandards.map(s => `
+                <tr class="border-b border-slate-700 ${s.flags.length ? 'bg-amber-900/20' : ''}">
+                    <td class="p-2 whitespace-nowrap">${esc(AUDIT_CLASSES[s.cls])}${s.variant === 'sino' ? ' (sino)' : ''}</td>
+                    <td class="p-2 whitespace-nowrap">${esc(s.origin)} → ${esc(s.destinationLabel)}</td>
+                    <td class="p-2">${fmtPumps(s.up)}</td>
+                    <td class="p-2 text-right">${s.down || '-'}${s.downVictor !== s.down ? ` (victor ${s.downVictor})` : ''}</td>
+                    <td class="p-2 text-xs">${esc(s.allowanceText)}</td>
+                    <td class="p-2 text-xs text-amber-300">${(s.flags || []).map(esc).join('<br>')}${s.duplicateOf ? '<br>(ไม่ใช้ตรวจ — ใช้แถวแรก)' : ''}</td>
+                </tr>`).join('');
+            return `
+                <div class="grid grid-cols-2 md:grid-cols-6 gap-3 mb-4">
+                    ${card('', 'ทั้งหมด (ขาขึ้นที่มีการเติม)', all.length)}
+                    ${card('ok', 'ตรงตามอัตรา', count.ok || 0)}
+                    ${card('over', 'เติมเกิน', count.over || 0, overL ? `รวม +${overL.toLocaleString()} ลิตร` : '')}
+                    ${card('under', 'เติมขาด', count.under || 0, underL ? `รวม ${underL.toLocaleString()} ลิตร` : '')}
+                    ${card('wrong-pump', 'ลิตรรวมถูก แต่ผิดปั๊ม', count['wrong-pump'] || 0)}
+                    ${card('no-rate', 'ตรวจไม่ได้ (ไม่มีอัตรา)', count['no-rate'] || 0)}
+                </div>
+                <div class="flex flex-wrap items-center gap-3 mb-3">
+                    <input type="text" id="audit-search" value="${esc(as.search)}" placeholder="ค้นหา คนขับ / ทะเบียน / ปลายทาง" class="w-full md:w-80 bg-slate-800 border border-slate-600 rounded-md px-3 py-2 text-white" />
+                    <span class="text-xs text-gray-400">แสดง ${Math.min(shown.length, LIMIT).toLocaleString()} จาก ${shown.length.toLocaleString()} เที่ยว${shown.length > LIMIT ? ' (Export Excel เพื่อดูครบ)' : ''} · คลาดเคลื่อนได้ ${tol} ลิตร · ไม่รวมรถร่วม</span>
+                </div>
+                <div class="overflow-x-auto rounded-lg border border-slate-700">
+                    <table class="w-full text-sm text-left">
+                        <thead class="bg-slate-800 text-gray-400 sticky top-0"><tr>
+                            <th class="p-2">วันที่</th><th class="p-2">คนขับ</th><th class="p-2">ทะเบียน</th><th class="p-2">ประเภทรถ</th><th class="p-2">ต้นทาง → ปลายทาง</th>
+                            <th class="p-2">เติมจริง (ลิตร)</th><th class="p-2">ตามอัตรา (ลิตร)</th><th class="p-2 text-right">ต่าง</th><th class="p-2">ผล</th><th class="p-2">หมายเหตุ</th>
+                        </tr></thead>
+                        <tbody>${rows}</tbody>
+                    </table>
+                    ${shown.length === 0 ? '<p class="text-center py-6 text-gray-500">ไม่มีรายการตามเงื่อนไข</p>' : ''}
+                </div>
+                <h3 class="font-bold text-white mt-6 mb-2">สรุปตามคนขับ</h3>
+                <div class="overflow-x-auto rounded-lg border border-slate-700">
+                    <table class="w-full text-sm">
+                        <thead class="bg-slate-800 text-gray-400"><tr>
+                            <th class="p-2 text-left">คนขับ</th><th class="p-2 text-right">เที่ยว</th><th class="p-2 text-right">ตรวจได้</th><th class="p-2 text-right">ตรง</th>
+                            <th class="p-2 text-right">เกิน (เที่ยว)</th><th class="p-2 text-right">เกิน (ลิตร)</th><th class="p-2 text-right">ขาด (เที่ยว)</th><th class="p-2 text-right">ขาด (ลิตร)</th><th class="p-2 text-right">ผิดปั๊ม</th>
+                        </tr></thead>
+                        <tbody>${driverRows}</tbody>
+                    </table>
+                </div>
+                <div class="mt-6">
+                    <button id="audit-toggle-standards" class="text-sky-300 hover:text-sky-200 text-sm font-bold">${as.showStandards ? '▼' : '▶'} ตารางอัตรามาตรฐาน (${appState.rateStandards.length} อัตรา)</button>
+                    ${as.showStandards ? `
+                    <div class="overflow-x-auto rounded-lg border border-slate-700 mt-2">
+                        <table class="w-full text-sm text-left">
+                            <thead class="bg-slate-800 text-gray-400"><tr><th class="p-2">ประเภทรถ</th><th class="p-2">เส้นทาง</th><th class="p-2">ขาขึ้น (ลิตร)</th><th class="p-2 text-right">ขาล่องไพศาล</th><th class="p-2">เบี้ยขับ</th><th class="p-2">ข้อสังเกต</th></tr></thead>
+                            <tbody>${stdRows}</tbody>
+                        </table>
+                    </div>` : ''}
+                </div>`;
+        };
+
+        const rerenderAuditContent = () => {
+            const el = document.getElementById('audit-content');
+            if (el) { el.innerHTML = renderAuditContent(); attachAuditContentListeners(); }
+        };
+        const attachAuditContentListeners = () => {
+            const as = appState.auditState;
+            document.querySelectorAll('[data-audit-status]').forEach(b => b.addEventListener('click', () => { as.status = b.dataset.auditStatus; rerenderAuditContent(); }));
+            const search = document.getElementById('audit-search');
+            search?.addEventListener('input', (e) => {
+                as.search = e.target.value;
+                const pos = e.target.selectionStart;
+                rerenderAuditContent();
+                const again = document.getElementById('audit-search');
+                if (again) { again.focus(); again.setSelectionRange(pos, pos); }
+            });
+            document.getElementById('audit-toggle-standards')?.addEventListener('click', () => { as.showStandards = !as.showStandards; rerenderAuditContent(); });
+        };
+        const attachAuditListeners = () => {
+            const monthInput = document.getElementById('audit-month');
+            const target = appState.tripsMonth || (monthInput ? monthInput.value : '');
+            if (target && appState.tripsMonth !== target) logisticsService.loadTripsForMonth(target);
+            monthInput?.addEventListener('change', (e) => logisticsService.loadTripsForMonth(e.target.value));
+            document.getElementById('audit-tolerance')?.addEventListener('change', (e) => {
+                appState.auditState.tolerance = Math.max(0, Number(e.target.value) || 0);
+                rerenderAuditContent();
+            });
+            document.getElementById('audit-export-btn')?.addEventListener('click', handleAuditExport);
+            attachAuditContentListeners();
+        };
+
+        const handleAuditExport = () => {
+            if (!appState.rateStandards.length) { alert('ยังไม่มีอัตรามาตรฐาน'); return; }
+            const { all, drivers, tol } = computeAudit();
+            if (!all.length) { alert('ไม่มีเที่ยวให้ export ในเดือนนี้'); return; }
+            const pumps = [...new Set(all.flatMap(r => [...Object.keys(r.actual), ...Object.keys(r.expected || {})]))];
+            const wb = XLSX.utils.book_new();
+            const sheet = (name, headers, data, widths) => {
+                const ws = XLSX.utils.aoa_to_sheet([headers, ...data]);
+                ws['!cols'] = widths.map(w => ({ wch: w }));
+                ws['!autofilter'] = { ref: XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: data.length, c: headers.length - 1 } }) };
+                XLSX.utils.book_append_sheet(wb, ws, name);
+            };
+            const n = (v) => (Number(v) ? Number(v) : '');
+            sheet('ผลตรวจ',
+                ['วันที่', 'คนขับ', 'ทะเบียน', 'ประเภทรถ', 'รุ่น', 'ต้นทาง', 'ปลายทาง', 'ผล', 'เติมจริงรวม (ลิตร)', 'ตามอัตรารวม (ลิตร)', 'ต่าง (ลิตร)',
+                    ...pumps.flatMap(p => [`${pumpName(p)} จริง`, `${pumpName(p)} อัตรา`]), 'เติมเป็นเงิน (บาท)', 'หมายเหตุ'],
+                all.map(r => [r.trip.date, r.trip.driver, r.trip.plate, r.cls ? AUDIT_CLASSES[r.cls] : '', r.model, r.trip.origin, r.trip.destination,
+                    AUDIT_STATUS[r.status].label, n(r.actualTotal), r.status === 'no-rate' ? '' : r.expectedTotal, r.status === 'no-rate' ? '' : r.diff,
+                    ...pumps.flatMap(p => [n(r.actual[p]), r.status === 'no-rate' ? '' : n((r.expected || {})[p])]), n(r.bahtTotal),
+                    [r.reason, ...r.flags].filter(Boolean).join(' | ')]),
+                [11, 22, 14, 18, 8, 20, 18, 12, 12, 12, 10, ...pumps.flatMap(() => [12, 12]), 12, 60]);
+            sheet('สรุปคนขับ',
+                ['คนขับ', 'เที่ยว', 'ตรวจได้', 'ตรง', 'เกิน (เที่ยว)', 'เกิน (ลิตร)', 'ขาด (เที่ยว)', 'ขาด (ลิตร)', 'ผิดปั๊ม'],
+                drivers.map(d => [d.driver, d.n, d.checked, d.ok, d.over, d.overL, d.under, d.underL, d.wrong]),
+                [24, 8, 8, 8, 10, 10, 10, 10, 8]);
+            sheet('อัตรามาตรฐาน',
+                ['ชีต', 'แถว', 'ประเภทรถ', 'รุ่น', 'ต้นทาง', 'ปลายทาง', 'ขาขึ้น (ลิตร)', 'รวมขาขึ้น', 'ขาล่องไพศาล', 'ขาล่อง victor', 'เบี้ยขับ', 'ข้อสังเกต'],
+                appState.rateStandards.map(s => [s.sheet, s.row, AUDIT_CLASSES[s.cls], s.variant === 'sino' ? 'sino' : '', s.origin, s.destinationLabel,
+                    Object.entries(s.up).map(([k, v]) => `${pumpName(k)} ${v}`).join(' + '), s.upTotal, n(s.down), n(s.downVictor), s.allowanceText, (s.flags || []).join(' | ')]),
+                [14, 6, 18, 8, 12, 24, 40, 10, 12, 12, 30, 50]);
+            XLSX.writeFile(wb, `ตรวจการเติมน้ำมัน_${appState.tripsMonth || localDateStr().slice(0, 7)}_คลาดเคลื่อน${tol}ลิตร.xlsx`);
+        };
+
         const attachReportsListeners = () => {
             const monthInput = document.getElementById('reports-month');
             const target = appState.tripsMonth || (monthInput ? monthInput.value : '');
@@ -1655,7 +1955,7 @@ const formatZeroAsEmpty = (value) => {
                 return `
                 <tr key="${vehicle.id}" class="border-b border-slate-600 hover:bg-slate-700/20">
                     <td class="p-3 font-mono">${vehicle.registrationNumber}</td>
-                    <td class="p-3">${vehicle.vehicleType || ''}</td>
+                    <td class="p-3">${vehicle.vehicleType || ''}${vehicle.model ? ` <span class="ml-1 px-2 py-0.5 rounded text-xs bg-indigo-700 text-white">${vehicle.model}</span>` : ''}</td>
                     <td class="p-3 text-center">${vehicle.driveType ? `<span class="px-2 py-0.5 rounded text-xs ${isPartner ? 'bg-amber-700' : 'bg-sky-700'} text-white">${vehicle.driveType}</span>` : ''}</td>
                     <td class="p-3">${vehicle.company || ''}</td>
                     <td class="p-3 text-center">
@@ -1857,6 +2157,14 @@ const formatZeroAsEmpty = (value) => {
                             <input type="text" name="company" value="${vehicle?.company || ''}" placeholder="เช่น, นีโอสยาม" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent" />
                         </div>
                     </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-400 mb-1">รุ่นรถ (ใช้เลือกอัตราเติมน้ำมัน)</label>
+                        <select name="model" class="w-full bg-slate-800 border border-slate-600 rounded-md shadow-sm px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-accent">
+                            <option value="" ${!vehicle?.model ? 'selected' : ''}>ทั่วไป</option>
+                            <option value="sino" ${vehicle?.model === 'sino' ? 'selected' : ''}>Sino (อัตรา "รถ sino")</option>
+                            <option value="victor" ${vehicle?.model === 'victor' ? 'selected' : ''}>Victor (ขาล่องไพศาล 190 ลิตร)</option>
+                        </select>
+                    </div>
                     <footer class="flex justify-end gap-4 pt-4">
                         <button type="button" data-action="close-modal" class="bg-slate-600 hover:bg-slate-500 text-white font-bold py-2 px-4 rounded-lg transition">ยกเลิก</button>
                         <button type="submit" class="bg-primary hover:bg-secondary text-white font-bold py-2 px-6 rounded-lg transition">บันทึกข้อมูล</button>
@@ -1962,6 +2270,8 @@ const formatZeroAsEmpty = (value) => {
                 attachPayrollListeners();
             } else if (appState.view === 'reports') {
                 attachReportsListeners();
+            } else if (appState.view === 'audit') {
+                attachAuditListeners();
             }
         };
 
@@ -1975,7 +2285,7 @@ const formatZeroAsEmpty = (value) => {
             // --- Global Actions ---
             if (target.classList.contains('nav-button')) {
                 const view = target.dataset.view;
-                if (['data', 'vehicles', 'import', 'queue', 'drivers', 'payroll', 'reports'].includes(view) && !appState.isAuthenticated) {
+                if (['data', 'vehicles', 'import', 'queue', 'drivers', 'payroll', 'reports', 'audit'].includes(view) && !appState.isAuthenticated) {
                     openAuthModal();
                     // Store the intended view to navigate to after successful authentication
                     appState.pendingView = view; 
@@ -2151,6 +2461,44 @@ const formatZeroAsEmpty = (value) => {
             if(backupBtn) {
                 backupBtn.addEventListener('click', handleBackupData);
             }
+            document.getElementById('routes-export-btn')?.addEventListener('click', handleRoutesExport);
+        };
+
+        // Export the route table exactly as shown (same search filter, sort and pump columns).
+        const handleRoutesExport = () => {
+            const routes = getVisibleRoutes();
+            if (!routes.length) { alert('ไม่มีเส้นทางให้ export'); return; }
+            const label = (key, unit) => `${GAS_STATION_FRIENDLY_NAMES[key] || key} (${unit === 'Liters' ? 'ลิตร' : 'บาท'})`;
+            const cols = ROUTE_STATION_COLUMNS.flatMap(col => col.units.map(unit => ({ key: col.key, unit, label: label(col.key, unit) })));
+            // A route can hold a pump/unit pair the on-screen table has no column for (the edit form allows any
+            // pump in either unit) — add those as extra columns so no amount is dropped from the file.
+            const seen = new Set(cols.map(c => `${c.unit}|${c.key}`));
+            for (const r of routes) {
+                for (const [unit, obj] of [['Liters', r.gasStationsLiters], ['Baht', r.gasStationsBaht]]) {
+                    for (const [key, v] of Object.entries(obj || {})) {
+                        if (v !== '' && v != null && !seen.has(`${unit}|${key}`)) { seen.add(`${unit}|${key}`); cols.push({ key, unit, label: label(key, unit) }); }
+                    }
+                }
+            }
+            const num = (v) => { const n = Number(v); return v === '' || v == null || !isFinite(n) || n === 0 ? '' : n; };
+            // ค่าข้าม/ค่าค้าง hold text ("ไม่ข้าม") or an amount — keep amounts numeric so Excel can sum them.
+            const textOrNum = (v) => { const s = String(v ?? '').trim(); return s !== '' && isFinite(Number(s)) ? Number(s) : s; };
+            const headers = ['ประเภทรถ', 'ต้นทาง', 'ปลายทาง', 'ทิศทาง', 'ค่าข้าม', 'ค่าค้าง', 'รวมน้ำมัน (ลิตร)', 'รวมน้ำมัน (บาท)', ...cols.map(c => c.label)];
+            const data = routes.map(r => [
+                r.vehicleType || '', r.origin || '', r.destination || '', r.direction || '',
+                textOrNum(r.crossingFee), textOrNum(r.waitingFee), num(r.totalLiters), num(r.totalBaht),
+                ...cols.map(c => num(c.unit === 'Liters' ? r.gasStationsLiters?.[c.key] : r.gasStationsBaht?.[c.key])),
+            ]);
+            const ws = XLSX.utils.aoa_to_sheet([headers, ...data]);
+            ws['!cols'] = headers.map((h, i) => ({ wch: i < 3 ? 22 : Math.max(10, Math.min(h.length + 2, 26)) }));
+            ws['!autofilter'] = { ref: XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: data.length, c: headers.length - 1 } }) };
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, 'เส้นทาง');
+            // Any search (even spaces) filters the rows, so mark the file name; keep it file-name safe and short.
+            const search = appState.dataManagementFilter;
+            const safe = search.replace(/[\\/:*?"<>|]/g, '').trim().slice(0, 30);
+            const suffix = search ? `_ค้นหา-${safe || 'กรองแล้ว'}` : '';
+            XLSX.writeFile(wb, `เส้นทาง_${localDateStr()}${suffix}.xlsx`);
         };
 
          const attachVehicleManagementListeners = () => {
@@ -2610,6 +2958,7 @@ const formatZeroAsEmpty = (value) => {
                 vehicleType: formData.get('vehicleType'),
                 driveType: formData.get('driveType') || '',
                 company: formData.get('company') || '',
+                model: formData.get('model') || '',
             };
 
             try {
