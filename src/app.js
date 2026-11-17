@@ -1000,7 +1000,7 @@ const formatZeroAsEmpty = (value) => {
                 ${nChanged ? `<p class="text-amber-300 text-sm mb-3">⚠️ ${nChanged} แถวเคยนำเข้าแล้วแต่ตัวเลขในไฟล์ต่างจากที่บันทึกไว้ — ระบบไม่ทับข้อมูลเดิม ถ้าต้องแก้ ให้แก้ที่หน้า "คิวรถ"</p>` : ''}
                 <div class="overflow-x-auto rounded-lg border border-slate-700 mb-2 max-h-[32rem] overflow-y-auto">
                     <table class="w-full text-sm"><thead class="bg-slate-800 text-gray-400 sticky top-0"><tr>
-                        <th class="p-2 text-left">แถว</th><th class="p-2 text-left">วันที่</th><th class="p-2 text-left">ทิศทาง</th><th class="p-2 text-left">ทะเบียน</th><th class="p-2 text-left">คนขับ</th><th class="p-2 text-left">เส้นทาง</th><th class="p-2 text-right">น้ำมัน</th><th class="p-2 text-left">ผลตรวจน้ำมัน</th><th class="p-2 text-left">นำเข้า</th><th class="p-2 text-left">ข้อความ</th>
+                        <th class="p-2 text-left">แถว</th><th class="p-2 text-left">วันที่</th><th class="p-2 text-left">ขาขึ้น/ขาล่อง</th><th class="p-2 text-left">ทะเบียน</th><th class="p-2 text-left">คนขับ</th><th class="p-2 text-left">เส้นทาง</th><th class="p-2 text-right">น้ำมัน</th><th class="p-2 text-left">ผลตรวจน้ำมัน</th><th class="p-2 text-left">นำเข้า</th><th class="p-2 text-left">ข้อความ</th>
                     </tr></thead><tbody>${body}</tbody></table>
                 </div>
                 ${rows.length > 3000 ? `<p class="text-xs text-gray-500 mb-2">แสดง 3,000 แถวแรกจาก ${rows.length.toLocaleString()} แถว — แนะนำใช้ไฟล์ใหม่ทุกเดือน</p>` : ''}

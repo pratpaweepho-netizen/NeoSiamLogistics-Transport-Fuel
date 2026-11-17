@@ -1,5 +1,5 @@
 // Excel template for importing trips (ขาขึ้น / ขาล่อง) in place of the "บันทึกน้ำมัน" form.
-// User decisions 17 Nov 2026: one sheet, 1 row = 1 trip leg with a ทิศทาง column; money columns optional;
+// User decisions 17 Nov 2026: one sheet, 1 row = 1 trip leg with a ขาขึ้น/ขาล่อง column; money columns optional;
 // the dispatcher fills it daily; from the start month on, trips come from this template only.
 // Pure functions (no DOM/Firebase): ExcelJS is passed in, so Node tests and the browser share this code.
 
@@ -24,7 +24,8 @@ const pumpName = (k) => GAS_STATION_FRIENDLY_NAMES[k] || k;
 // Column layout. `list` = dropdown from the lists sheet; `strict` = Excel refuses other values (stop style).
 export const TEMPLATE_COLUMNS = [
     { key: 'date', header: 'วันที่', width: 12, type: 'date', required: true },
-    { key: 'direction', header: 'ทิศทาง', width: 9, list: 'directions', strict: true, required: true },
+    // Header renamed from "ทิศทาง" (user, 17 Nov 2026); old downloaded templates still import via `aliases`.
+    { key: 'direction', header: 'ขาขึ้น/ขาล่อง', aliases: ['ทิศทาง'], width: 13, list: 'directions', strict: true, required: true },
     { key: 'queueType', header: 'ประเภทคิว', width: 12, list: 'queueTypes' },
     { key: 'driver', header: 'คนขับ', width: 22, list: 'drivers' },
     { key: 'head', header: 'ทะเบียนหัว', width: 12, list: 'heads', required: true },
@@ -71,7 +72,8 @@ const HELP_LINES = [
     'วิธีกรอกแม่แบบนำเข้าเที่ยวรถ',
     '',
     '1. กรอกในชีต "นำเข้าเที่ยวรถ" — 1 แถว = 1 เที่ยว (ขาขึ้นหรือขาล่อง แยกแถวกัน)',
-    '2. ช่องที่ต้องกรอกทุกแถว: วันที่, ทิศทาง, ทะเบียนหัว',
+    '2. ช่องที่ต้องกรอกทุกแถว: วันที่, ขาขึ้น/ขาล่อง, ทะเบียนหัว',
+    '   ช่อง "ขาขึ้น/ขาล่อง": เลือก ขาขึ้น (ออกไปส่งของต่างจังหวัด) หรือ ขาล่อง (เที่ยวกลับ) — ไปกลับ 1 รอบ = 2 แถว',
     '3. วันที่: พิมพ์แบบ วัน/เดือน/ปี เช่น 17/11/2569 หรือ 17/11/2026 · ตอนนำเข้าให้ดูช่องวันที่ในหน้าตัวอย่างว่าถูกต้อง',
     '   แนะนำ: ใช้ไฟล์ใหม่ทุกเดือน (ดาวน์โหลดแม่แบบใหม่ต้นเดือน จะได้รายชื่อคนขับ/ทะเบียนล่าสุด)',
     '4. ทะเบียนหัว / ทะเบียนหาง: เลือกจากรายการ — รถวิ่งเดี่ยวให้เว้นทะเบียนหางว่าง',
@@ -84,11 +86,11 @@ const HELP_LINES = [
     '',
     'ตอนนำเข้า (หน้า "นำเข้าข้อมูล" ในเว็บ):',
     '• ระบบแสดงตัวอย่างและผลตรวจน้ำมันก่อนบันทึกเสมอ',
-    '• แถวที่ผิด (ไม่มีวันที่ / ทิศทาง / ทะเบียนหัว, ตัวเลขผิด) จะไม่ถูกบันทึก — ดาวน์โหลดไฟล์ "แถวที่ผิด" ไปแก้แล้วนำเข้าใหม่',
+    '• แถวที่ผิด (ไม่มีวันที่ / ขาขึ้น/ขาล่อง / ทะเบียนหัว, ตัวเลขผิด) จะไม่ถูกบันทึก — ดาวน์โหลดไฟล์ "แถวที่ผิด" ไปแก้แล้วนำเข้าใหม่',
     '• นำเข้าไฟล์เดิมซ้ำได้ ระบบไม่สร้างเที่ยวซ้ำ และไม่ทับข้อมูลที่บันทึกไปแล้ว (แก้ข้อมูลเก่าที่หน้า "คิวรถ")',
     '',
     'ตัวอย่างการกรอก (อย่ากรอกตัวอย่างนี้ลงชีตข้อมูล):',
-    '  วันที่ 17/11/2569 · ทิศทาง ขาขึ้น · ทะเบียนหัว 70-8901 · ทะเบียนหาง 8158 · ปลายทาง กำแพงเพชร · ตัดหางที่ นครสวรรค์ · ลิตร จิตตมาศ 50',
+    '  วันที่ 17/11/2569 · ขาขึ้น/ขาล่อง = ขาขึ้น · ทะเบียนหัว 70-8901 · ทะเบียนหาง 8158 · ปลายทาง กำแพงเพชร · ตัดหางที่ นครสวรรค์ · ลิตร จิตตมาศ 50',
 ];
 
 // Build the workbook. Returns the ExcelJS workbook; the caller writes it (writeBuffer / writeFile).
@@ -143,7 +145,7 @@ export function generateTemplate(ExcelJS, lists) {
 export function findTemplateHeader(rows) {
     for (let i = 0; i < Math.min(rows.length, 10); i++) {
         const cells = (rows[i] || []).map(clean);
-        if (cells.includes('ทิศทาง') && cells.includes('ทะเบียนหัว') && cells.includes('ตัดหางที่')) return i;
+        if ((cells.includes('ขาขึ้น/ขาล่อง') || cells.includes('ทิศทาง')) && cells.includes('ทะเบียนหัว') && cells.includes('ตัดหางที่')) return i;
     }
     return -1;
 }
@@ -194,12 +196,16 @@ const thMonth = (ym) => { const [y, m] = ym.split('-').map(Number); return `${m}
 export function parseTemplateRows(rows, opts = {}, firstExcelRow = 1) {
     const { startMonth = '', vehicles = [], drivers = [], fileName = '', today = '' } = opts;
     const h = findTemplateHeader(rows);
-    if (h < 0) return { rows: [], error: 'ไม่พบหัวตารางของแม่แบบ (ต้องมีช่อง ทิศทาง / ทะเบียนหัว / ตัดหางที่)' };
+    if (h < 0) return { rows: [], error: 'ไม่พบหัวตารางของแม่แบบ (ต้องมีช่อง ขาขึ้น/ขาล่อง / ทะเบียนหัว / ตัดหางที่)' };
     const header = rows[h].map(clean);
     const idx = {};
     const missing = [];
     for (const c of TEMPLATE_COLUMNS) {
-        const i = header.indexOf(c.header);
+        const names = [c.header, ...(c.aliases || [])];
+        const found = names.filter(name => header.includes(name));
+        // Old and new name both present (e.g. a column added by hand) → do not guess which one holds the data.
+        if (found.length > 1) return { rows: [], error: `แม่แบบมีทั้งช่อง ${found.map(n => `"${n}"`).join(' และ ')} — ลบช่องที่ไม่ใช้ออกให้เหลือช่องเดียว แล้วนำเข้าใหม่` };
+        const i = found.length ? header.indexOf(found[0]) : -1;
         if (i >= 0) idx[c.key] = i; else if (c.required || c.type === 'num' && c.group === 'fuel') missing.push(c.header);
     }
     if (missing.length) return { rows: [], error: `แม่แบบไม่ครบ ขาดช่อง: ${missing.join(', ')} — ดาวน์โหลดแม่แบบใหม่` };
@@ -221,7 +227,7 @@ export function parseTemplateRows(rows, opts = {}, firstExcelRow = 1) {
             if (today && date > today) warnings.push('วันที่เป็นวันในอนาคต');
         }
         const direction = clean(get(r, 'direction'));
-        if (!DIRECTIONS.includes(direction)) errors.push(direction ? `ทิศทาง "${direction}" ต้องเป็น ขาขึ้น หรือ ขาล่อง` : 'ไม่มีทิศทาง');
+        if (!DIRECTIONS.includes(direction)) errors.push(direction ? `ช่อง ขาขึ้น/ขาล่อง ใส่ "${direction}" — ต้องเลือก ขาขึ้น หรือ ขาล่อง` : 'ไม่ได้เลือก ขาขึ้น/ขาล่อง');
 
         const head = normPlate(get(r, 'head'));
         let trailer = normPlate(get(r, 'trailer'));

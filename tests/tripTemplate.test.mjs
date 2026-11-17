@@ -44,22 +44,30 @@ const lists = buildTemplateLists({ drivers, vehicles, rateStandards: [{ destinat
 eq('lists: heads / trailers from master plates', [lists.heads, lists.trailers], [['70-7893', '70-8901'], ['8158']]);
 
 // --- parsing
-const ok1 = parse([row({ 'วันที่': '17/11/2569', 'ทิศทาง': 'ขาขึ้น', 'คนขับ': 'พีรพล', 'ทะเบียนหัว': '70-8901', 'ทะเบียนหาง': '8158', 'ปลายทาง': 'กำแพงเพชร', 'ตัดหางที่': 'นครสวรรค์', 'ลิตร จิตตมาศ (บางประอิน)': 50, 'ลิตร ดาวไพศาล (นครสวรรค์)': '180', 'ค่าเที่ยว (บาท)': '1,500' })]).rows[0];
+const ok1 = parse([row({ 'วันที่': '17/11/2569', 'ขาขึ้น/ขาล่อง': 'ขาขึ้น', 'คนขับ': 'พีรพล', 'ทะเบียนหัว': '70-8901', 'ทะเบียนหาง': '8158', 'ปลายทาง': 'กำแพงเพชร', 'ตัดหางที่': 'นครสวรรค์', 'ลิตร จิตตมาศ (บางประอิน)': 50, 'ลิตร ดาวไพศาล (นครสวรรค์)': '180', 'ค่าเที่ยว (บาท)': '1,500' })]).rows[0];
 eq('valid row: plate joined, liters, money, drop', [ok1.status, ok1.trip.plate, ok1.trip.totalLiters, ok1.trip.revenue, ok1.trip.trailerDrop, ok1.trip.source], ['ok', '70-8901-8158', 230, 1500, 'นครสวรรค์', 'template']);
-eq('full plate typed in the trailer cell is not doubled', parse([row({ 'วันที่': '17/11/2569', 'ทิศทาง': 'ขาขึ้น', 'คนขับ': 'พีรพล', 'ทะเบียนหัว': '70-8901', 'ทะเบียนหาง': '70-8901-8158', 'ปลายทาง': 'กำแพงเพชร' })]).rows[0].trip.plate, '70-8901-8158');
-const bad = parse([row({ 'วันที่': '', 'ทิศทาง': 'ขึ้น', 'ทะเบียนหัว': '', 'ลิตร จิตตมาศ (บางประอิน)': '50ลิตร' })]).rows[0];
+eq('full plate typed in the trailer cell is not doubled', parse([row({ 'วันที่': '17/11/2569', 'ขาขึ้น/ขาล่อง': 'ขาขึ้น', 'คนขับ': 'พีรพล', 'ทะเบียนหัว': '70-8901', 'ทะเบียนหาง': '70-8901-8158', 'ปลายทาง': 'กำแพงเพชร' })]).rows[0].trip.plate, '70-8901-8158');
+const bad = parse([row({ 'วันที่': '', 'ขาขึ้น/ขาล่อง': 'ขึ้น', 'ทะเบียนหัว': '', 'ลิตร จิตตมาศ (บางประอิน)': '50ลิตร' })]).rows[0];
 eq('missing date / bad direction / no head / non-numeric liters → error, no key', [bad.status, bad.errors.length, bad.key], ['error', 4, '']);
-eq('row before the start month is blocked', parse([row({ 'วันที่': '31/10/2569', 'ทิศทาง': 'ขาขึ้น', 'ทะเบียนหัว': '70-7893' })]).rows[0].status, 'error');
-eq('negative liters blocked', parse([row({ 'วันที่': '17/11/2569', 'ทิศทาง': 'ขาขึ้น', 'ทะเบียนหัว': '70-7893', 'ลิตร จิตตมาศ (บางประอิน)': -5 })]).rows[0].status, 'error');
-const w = parse([row({ 'วันที่': '17/11/2569', 'ทิศทาง': 'ขาขึ้น', 'ทะเบียนหัว': '99-9999', 'คนขับ': 'ไม่รู้จัก', 'ปลายทาง': 'ตาก', 'รายการงาน': 'ตัดลูกนว.' })]).rows[0];
+eq('row before the start month is blocked', parse([row({ 'วันที่': '31/10/2569', 'ขาขึ้น/ขาล่อง': 'ขาขึ้น', 'ทะเบียนหัว': '70-7893' })]).rows[0].status, 'error');
+eq('negative liters blocked', parse([row({ 'วันที่': '17/11/2569', 'ขาขึ้น/ขาล่อง': 'ขาขึ้น', 'ทะเบียนหัว': '70-7893', 'ลิตร จิตตมาศ (บางประอิน)': -5 })]).rows[0].status, 'error');
+const w = parse([row({ 'วันที่': '17/11/2569', 'ขาขึ้น/ขาล่อง': 'ขาขึ้น', 'ทะเบียนหัว': '99-9999', 'คนขับ': 'ไม่รู้จัก', 'ปลายทาง': 'ตาก', 'รายการงาน': 'ตัดลูกนว.' })]).rows[0];
 eq('unknown plate / driver and drop written only in text → warnings, still saved', [w.status, w.warnings.length, !!w.key], ['warn', 3, true]);
-eq('blank lines are skipped', parse([H.map(() => ''), row({ 'วันที่': '17/11/2569', 'ทิศทาง': 'ขาล่อง', 'ทะเบียนหัว': '70-7893', 'คนขับ': 'พีรพล' })]).rows.length, 1);
-eq('excel row number kept', parse([H.map(() => ''), row({ 'วันที่': '17/11/2569', 'ทิศทาง': 'ขาล่อง', 'ทะเบียนหัว': '70-7893', 'คนขับ': 'พีรพล' })]).rows[0].excelRow, 3);
+eq('blank lines are skipped', parse([H.map(() => ''), row({ 'วันที่': '17/11/2569', 'ขาขึ้น/ขาล่อง': 'ขาล่อง', 'ทะเบียนหัว': '70-7893', 'คนขับ': 'พีรพล' })]).rows.length, 1);
+eq('excel row number kept', parse([H.map(() => ''), row({ 'วันที่': '17/11/2569', 'ขาขึ้น/ขาล่อง': 'ขาล่อง', 'ทะเบียนหัว': '70-7893', 'คนขับ': 'พีรพล' })]).rows[0].excelRow, 3);
 eq('not a template → error message', !!parseTemplateRows([['a', 'b']], opts).error, true);
+// header renamed "ทิศทาง" → "ขาขึ้น/ขาล่อง" (user, 17 Nov 2026): the new name is in the template, old files still import
+eq('template header says ขาขึ้น/ขาล่อง', H.includes('ขาขึ้น/ขาล่อง') && !H.includes('ทิศทาง'), true);
+const oldH = H.map(h => (h === 'ขาขึ้น/ขาล่อง' ? 'ทิศทาง' : h));
+const oldRow = row({ 'วันที่': '17/11/2569', 'ขาขึ้น/ขาล่อง': 'ขาล่อง', 'ทะเบียนหัว': '70-7893', 'คนขับ': 'พีรพล' });
+const oldRes = parseTemplateRows([oldH, oldRow], opts);
+eq('old template with header "ทิศทาง" still imports', [oldRes.error, oldRes.rows[0]?.trip.direction, oldRes.rows[0]?.status], ['', 'ขาล่อง', 'ok']);
+eq('both old and new header in one file → clear error, nothing imported', (() => { const r = parseTemplateRows([[...H, 'ทิศทาง'], [...oldRow, 'ขาขึ้น']], opts); return [r.rows.length, r.error.includes('"ขาขึ้น/ขาล่อง" และ "ทิศทาง"')]; })(), [0, true]);
+eq('empty direction → message names the new column', parse([row({ 'วันที่': '17/11/2569', 'ทะเบียนหัว': '70-7893', 'คนขับ': 'พีรพล' })]).rows[0].errors, ['ไม่ได้เลือก ขาขึ้น/ขาล่อง']);
 eq('Firebase-safe: no undefined fields', Object.values(ok1.trip).some(v => v === undefined), false);
 
 // --- keys and save plan
-const same = [row({ 'วันที่': '17/11/2569', 'ทิศทาง': 'ขาขึ้น', 'คนขับ': 'พีรพล', 'ทะเบียนหัว': '70-7893', 'ปลายทาง': 'ตาก' })];
+const same = [row({ 'วันที่': '17/11/2569', 'ขาขึ้น/ขาล่อง': 'ขาขึ้น', 'คนขับ': 'พีรพล', 'ทะเบียนหัว': '70-7893', 'ปลายทาง': 'ตาก' })];
 const k1 = parse(same).rows[0].key, k2 = parse(same).rows[0].key;
 eq('same row → same key on re-import', k1 === k2 && k1.startsWith('tpl_2026-11-17_'), true);
 const twice = parse([same[0], same[0]]).rows;
@@ -67,10 +75,10 @@ eq('two identical rows in one file get different keys', twice[0].key !== twice[1
 // review: a copy-pasted row must not be saved twice silently → the 2nd is "possible-dup" (in this file)
 planTemplateSave(twice, {});
 eq('identical rows in one file → 2nd is possible-dup from the file', [twice[0].importState, twice[1].importState, twice[1].dupOf.source, twice[1].dupOf.row], ['new', 'possible-dup', 'file', 2]);
-const fixedFuel = parse([row({ 'วันที่': '17/11/2569', 'ทิศทาง': 'ขาขึ้น', 'คนขับ': 'พีรพล', 'ทะเบียนหัว': '70-7893', 'ปลายทาง': 'ตาก', 'ลิตร จิตตมาศ (บางประอิน)': 99 })]).rows;
+const fixedFuel = parse([row({ 'วันที่': '17/11/2569', 'ขาขึ้น/ขาล่อง': 'ขาขึ้น', 'คนขับ': 'พีรพล', 'ทะเบียนหัว': '70-7893', 'ปลายทาง': 'ตาก', 'ลิตร จิตตมาศ (บางประอิน)': 99 })]).rows;
 eq('corrected liters keep the key (no second trip)', fixedFuel[0].key, k1);
 
-const parsed = parse([...same, row({ 'วันที่': '17/11/2569', 'ทิศทาง': 'ขาล่อง', 'คนขับ': 'พีรพล', 'ทะเบียนหัว': '70-8901', 'ทะเบียนหาง': '8158' }), row({ 'วันที่': '18/11/2569', 'ทิศทาง': 'ขาขึ้น', 'คนขับ': 'พีรพล', 'ทะเบียนหัว': '70-7893', 'ปลายทาง': 'ตาก' })]).rows;
+const parsed = parse([...same, row({ 'วันที่': '17/11/2569', 'ขาขึ้น/ขาล่อง': 'ขาล่อง', 'คนขับ': 'พีรพล', 'ทะเบียนหัว': '70-8901', 'ทะเบียนหาง': '8158' }), row({ 'วันที่': '18/11/2569', 'ขาขึ้น/ขาล่อง': 'ขาขึ้น', 'คนขับ': 'พีรพล', 'ทะเบียนหัว': '70-7893', 'ปลายทาง': 'ตาก' })]).rows;
 const existing = { '2026-11': {
     [k1]: { ...parsed[0].trip, gasStationsLiters: { jittamas_bangpain: 1 } },                                     // same key, different figures
     'tdh_2026-11-17_abc': { date: '2026-11-17', direction: 'ขาล่อง', plate: '70-8901-8158', destination: 'x' }, // same truck/day/direction from Transport
@@ -94,7 +102,7 @@ const r3 = await saveTemplateTrips(db, parsed, { includeKeys: [parsed[1].key] })
 eq('save with the ticked possible-dup row adds only that row', r3.added, 1);
 eq('the changed row was never overwritten', store['2026-11'][k1].gasStationsLiters, { jittamas_bangpain: 1 });
 // Codex P2: two people importing the same file at the same moment → each trip written once
-const race = parse([row({ 'วันที่': '20/11/2569', 'ทิศทาง': 'ขาขึ้น', 'คนขับ': 'พีรพล', 'ทะเบียนหัว': '70-7893', 'ปลายทาง': 'ตาก' })]).rows;
+const race = parse([row({ 'วันที่': '20/11/2569', 'ขาขึ้น/ขาล่อง': 'ขาขึ้น', 'คนขับ': 'พีรพล', 'ทะเบียนหัว': '70-7893', 'ปลายทาง': 'ตาก' })]).rows;
 planTemplateSave(race, {});
 writes = 0;
 const [ra, rb] = await Promise.all([saveTemplateTrips(db, race), saveTemplateTrips(db, race)]);
@@ -105,13 +113,13 @@ const rf = await saveTemplateTrips(failDb, twice, { includeKeys: [twice[1].key] 
 eq('one failed write is counted, the other row still saved', [rf.added, rf.failed, rf.error.message], [1, 1, 'network']);
 
 // review: Firebase returns pump keys sorted → an unchanged re-import must not show "changed"
-const two = parse([row({ 'วันที่': '17/11/2569', 'ทิศทาง': 'ขาขึ้น', 'คนขับ': 'พีรพล', 'ทะเบียนหัว': '70-7893', 'ปลายทาง': 'ตาก', 'ลิตร จิตตมาศ (บางประอิน)': 50, 'ลิตร ดาวไพศาล (นครสวรรค์)': 180 })]).rows;
+const two = parse([row({ 'วันที่': '17/11/2569', 'ขาขึ้น/ขาล่อง': 'ขาขึ้น', 'คนขับ': 'พีรพล', 'ทะเบียนหัว': '70-7893', 'ปลายทาง': 'ตาก', 'ลิตร จิตตมาศ (บางประอิน)': 50, 'ลิตร ดาวไพศาล (นครสวรรค์)': 180 })]).rows;
 const fromDb = { ...two[0].trip, gasStationsLiters: { daopaisan_nakhonsawan: 180, jittamas_bangpain: 50 } };
 planTemplateSave(two, { '2026-11': { [two[0].key]: fromDb } });
 eq('unchanged multi-pump row re-imported → already, not changed', [two[0].importState, two[0].changed], ['already', false]);
 
 // review: an error row fixed later must not take the key of a trip that was saved from the same file
-const A = { 'วันที่': '17/11/2569', 'ทิศทาง': 'ขาขึ้น', 'คนขับ': 'พีรพล', 'ทะเบียนหัว': '70-7893', 'ปลายทาง': 'ตาก' };
+const A = { 'วันที่': '17/11/2569', 'ขาขึ้น/ขาล่อง': 'ขาขึ้น', 'คนขับ': 'พีรพล', 'ทะเบียนหัว': '70-7893', 'ปลายทาง': 'ตาก' };
 const orig = parse([row({ ...A, 'ลิตร จิตตมาศ (บางประอิน)': 'abc' }), row({ ...A, 'คนขับ': 'สมชาย ใจดี' })]).rows;
 const savedB = { '2026-11': { [orig[1].key]: orig[1].trip } };
 const fixedA = parse([row({ ...A, 'ลิตร จิตตมาศ (บางประอิน)': 50 })]).rows;
@@ -142,8 +150,8 @@ const wb = generateTemplate(ExcelJS, lists);
 const ws = wb.getWorksheet(TEMPLATE_SHEET);
 const put = (excelRow, o) => { for (const [k, v] of Object.entries(o)) ws.getCell(excelRow, col(k) + 1).value = v; };
 // A date typed in Excel is a whole-day serial; ExcelJS writes Date values as UTC, so give it UTC midnight.
-put(2, { 'วันที่': new Date(Date.UTC(2026, 10, 17)), 'ทิศทาง': 'ขาขึ้น', 'คนขับ': 'พีรพล', 'ทะเบียนหัว': '70-8901', 'ทะเบียนหาง': '8158', 'ปลายทาง': 'กำแพงเพชร', 'ตัดหางที่': 'นครสวรรค์', 'ลิตร จิตตมาศ (บางประอิน)': 50, 'ลิตร ดาวไพศาล (นครสวรรค์)': 190 });
-put(4, { 'วันที่': '17/11/2569', 'ทิศทาง': 'ขาล่อง', 'คนขับ': 'พีรพล', 'ทะเบียนหัว': '70-7893', 'ลิตร ดาวไพศาล (นครสวรรค์)': 120 });
+put(2, { 'วันที่': new Date(Date.UTC(2026, 10, 17)), 'ขาขึ้น/ขาล่อง': 'ขาขึ้น', 'คนขับ': 'พีรพล', 'ทะเบียนหัว': '70-8901', 'ทะเบียนหาง': '8158', 'ปลายทาง': 'กำแพงเพชร', 'ตัดหางที่': 'นครสวรรค์', 'ลิตร จิตตมาศ (บางประอิน)': 50, 'ลิตร ดาวไพศาล (นครสวรรค์)': 190 });
+put(4, { 'วันที่': '17/11/2569', 'ขาขึ้น/ขาล่อง': 'ขาล่อง', 'คนขับ': 'พีรพล', 'ทะเบียนหัว': '70-7893', 'ลิตร ดาวไพศาล (นครสวรรค์)': 120 });
 const buf = await wb.xlsx.writeBuffer();
 const read = XLSX.read(buf, { type: 'buffer', cellDates: true });
 eq('round trip: sheets', read.SheetNames, [TEMPLATE_SHEET, 'วิธีกรอก', LIST_SHEET]);
