@@ -6,7 +6,7 @@ import { ICONS, GAS_STATION_FRIENDLY_NAMES, ROUTE_STATION_COLUMNS } from "./cons
 import { parseFuelBaseRows } from "./importer.js";
 import { detectSheetType, parseUphillQueue, parseDownhillQueue, parsePartnerQueue, parseDailyRows } from "./importerTrips.js";
 import { parseDrivers, parseRateTable, parseVehicles } from "./importerMasters.js";
-import { parseRateSheet, buildAuditContext, auditTrip, applyCarry, flagDoubleDownhill, AUDIT_CLASSES, AUDIT_STATUS, DOWN_STATUS, normalizeOriginExtras, parseDriverAliasSheet, applyDriverAlias } from "./fuelAudit.js";
+import { parseRateSheet, buildAuditContext, auditTrip, applyCarry, flagDoubleDownhill, AUDIT_CLASSES, AUDIT_STATUS, DOWN_STATUS, normalizeOriginExtras, parseDriverAliasSheet, applyDriverAlias, suggestFill, normalizeDestinationList } from "./fuelAudit.js";
 import { COLL_STATUS, downhillTripKeys, planDownhillFuel, withDownhillFuel, reconcileColumnL, createAllIfAbsent } from "./downhillFuel.js";
 import { planDateFix, buildDateFixBatches, recheckBatch, prevDay } from "./dateFix.js";
 import { TEMPLATE_SHEET, buildTemplateLists, generateTemplate, findTemplateHeader, parseTemplateRows, planTemplateSave, saveTemplateTrips } from "./tripTemplate.js";
@@ -212,7 +212,7 @@ const formatZeroAsEmpty = (value) => {
                                 <div><label class="block text-sm font-medium text-gray-400 mb-1">รายการงาน</label>
                                     <input type="text" id="form-job-detail" class="w-full bg-slate-800 border border-slate-600 rounded-md px-3 py-2 text-white" /></div>
 
-                                <div class="bg-sky-900/20 border border-sky-800 rounded-lg p-2 text-xs text-sky-200">💡 กรอก ประเภทรถ + ต้นทาง + ปลายทาง → ดูการ์ด "ข้อมูลเส้นทาง (อัตโนมัติ)" ทางขวาว่าต้องเติมปั๊มไหน เท่าไร แล้วกด "ใช้ค่าจากเส้นทางนี้" เพื่อเติมให้อัตโนมัติ (กันเติมผิดปั๊ม/ผิดจำนวน)</div>
+                                <div class="bg-sky-900/20 border border-sky-800 rounded-lg p-2 text-xs text-sky-200">💡 กรอก ทะเบียนรถ + ต้นทาง + ปลายทาง → ดูการ์ด "ข้อมูลเส้นทาง (ตามตารางอัตรา)" ทางขวาว่าต้องเติมปั๊มไหน เท่าไร (ตามไฟล์อัตราเติมน้ำมันที่นำเข้าล่าสุด) แล้วกด "ใช้ค่าจากตารางอัตรา" เพื่อเติมให้อัตโนมัติ</div>
 
                                 <div class="space-y-3 rounded-lg border border-slate-600 p-4">
                                     <div class="flex justify-between items-center"><h3 class="font-semibold text-lg text-white">น้ำมัน (ลิตร)</h3>
@@ -1508,7 +1508,7 @@ const formatZeroAsEmpty = (value) => {
                             <input type="text" name="jobDetail" value="${trip?.jobDetail || ''}" class="w-full bg-slate-800 border border-slate-600 rounded-md px-3 py-2 text-white" /></div>
                     </div>
 
-                    <button type="button" data-action="apply-route-to-trip" class="text-sm bg-success hover:bg-green-600 text-white py-1.5 px-3 rounded-lg">⛽ ดึงน้ำมันมาตรฐานจากเส้นทาง (ตาม ประเภทรถ + ต้นทาง + ปลายทาง)</button>
+                    <button type="button" data-action="apply-route-to-trip" class="text-sm bg-success hover:bg-green-600 text-white py-1.5 px-3 rounded-lg">⛽ ดึงลิตรจากตารางอัตรา (ตาม ทะเบียน/ประเภทรถ + ต้นทาง + ปลายทาง)</button>
                     <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         <div class="space-y-3 rounded-lg border border-slate-600 p-3">
                             <h4 class="font-semibold text-white">น้ำมัน (ลิตร)</h4>
@@ -1546,26 +1546,23 @@ const formatZeroAsEmpty = (value) => {
         const handleApplyRouteToTrip = (button) => {
             const form = button.closest('#trip-form');
             if (!form) return;
-            const vehicleType = form.querySelector('[name="vehicleType"]').value;
-            const origin = form.querySelector('[name="origin"]').value;
-            const destination = form.querySelector('[name="destination"]').value;
-            const route = logisticsService.findMatchingRoute(vehicleType, origin, destination);
-            if (!route) {
-                alert(`ไม่พบเส้นทางที่ตรงกับ:\n${vehicleType || '(ว่าง)'} · ${origin || '(ว่าง)'} → ${destination || '(ว่าง)'}\n\n(ต้องมี ประเภทรถ + ต้นทาง + ปลายทาง ตรงกับข้อมูลเส้นทาง 492 เส้นทาง)`);
+            const v = (n) => form.querySelector(`[name="${n}"]`)?.value || '';
+            // Official rate sheet (master), same rules as the audit — not the old route table (user correction 17 Nov 2026).
+            const sug = suggestFill({ vehicleType: v('vehicleType'), plate: v('plate'), origin: v('origin'), destination: v('destination'), direction: v('direction'),
+                jobDetail: v('jobDetail'), notes: v('notes'), queueType: v('queueType') }, rateCtx());
+            if (!sug.ok) {
+                alert(`ไม่มีอัตราในตารางอัตราสำหรับเที่ยวนี้:\n${sug.reason}`);
                 return;
             }
-            const fill = (listId, stations, unit) => {
-                const c = form.querySelector(`#${listId}`);
-                if (!c) return;
-                c.innerHTML = '';
-                Object.entries(stations || {}).forEach(([stationKey, amount], i) => {
-                    c.insertAdjacentHTML('beforeend', renderRouteDistributionRow({ stationKey, amount }, i, unit));
-                });
-            };
-            fill('route-distribution-list-liters', route.gasStationsLiters, 'Liters');
-            fill('route-distribution-list-baht', route.gasStationsBaht, 'Baht');
-            const nL = Object.keys(route.gasStationsLiters || {}).length, nB = Object.keys(route.gasStationsBaht || {}).length;
-            if (nL + nB === 0) alert('เส้นทางนี้ไม่มีข้อมูลน้ำมัน (ไม่ต้องเติม)');
+            const c = form.querySelector('#route-distribution-list-liters');
+            if (!c) return;
+            // Default = real practice for this destination (downhill ไพศาล on the uphill record or not); no tick box here.
+            if (!Object.keys(sug.fill).length) {
+                alert(sug.downOnly ? `เที่ยวขาล่อง: ไม่ได้เติมให้อัตโนมัติ — ถ้าเติมไพศาลขาล่องในเที่ยวนี้ ใส่ ${sug.down} ลิตรเอง (ถ้าขาขึ้นบันทึกไว้แล้วไม่ต้องใส่)` : 'ตามตารางอัตรา เที่ยวนี้ไม่ต้องเติม (ไม่มีลิตร) — ไม่ได้แก้ช่องลิตร');
+                return;
+            }
+            fillLiterRows(c, sug.fill);
+            // Baht rows are left as they are: the rate sheet has no baht amounts.
         };
 
         // Auto-fill เบี้ยเลี้ยง/หัก/สุทธิโอน from the imported rate table (ตารางเบี้ยเลี้ยง). silent = no alert.
@@ -2516,6 +2513,14 @@ const formatZeroAsEmpty = (value) => {
                         ${as.oxDraft ? '<button id="audit-ox-cancel" class="bg-slate-700 hover:bg-slate-600 text-white py-1 px-3 rounded-lg">ยกเลิกการแก้</button>' : ''}
                         <span id="audit-ox-msg" class="self-center">${as.oxMsg || ''}</span>
                     </div>
+                    <div class="border-t border-slate-700 pt-3">
+                        <label for="audit-dou" class="block text-xs text-gray-400 mb-1">ปลายทางที่บันทึกไพศาลขาล่องรวมในเที่ยวขาขึ้น (คั่นด้วย ,) — ใช้เป็นค่าเริ่มต้นของช่องติ๊กในหน้าบันทึกน้ำมัน</label>
+                        <div class="flex flex-wrap gap-2">
+                            <input id="audit-dou" value="${esc((as.downOnUphill || []).join(', '))}" class="flex-1 min-w-0 bg-slate-800 border border-slate-600 rounded-md px-2 py-1 text-white" />
+                            <button id="audit-dou-save" class="bg-primary hover:bg-secondary text-white font-bold py-1 px-3 rounded-lg">บันทึก</button>
+                        </div>
+                        <span id="audit-dou-msg" class="text-xs">${as.douMsg || ''}</span>
+                    </div>
                 </div>` : ''}`;
         };
         const rerenderOriginExtras = () => {
@@ -2546,6 +2551,18 @@ const formatZeroAsEmpty = (value) => {
                 rerenderOriginExtras();
             }));
             document.getElementById('audit-ox-cancel')?.addEventListener('click', () => { as.oxDraft = null; as.oxMsg = ''; rerenderOriginExtras(); });
+            document.getElementById('audit-dou-save')?.addEventListener('click', async () => {
+                const list = normalizeDestinationList(document.getElementById('audit-dou')?.value || '');
+                try {
+                    // false = none on purpose (Firebase drops an empty array, which would bring the default back).
+                    await logisticsService.saveAuditSettings({ downOnUphill: list.length ? list : false });
+                    as.douMsg = `<span class="text-green-400">✓ บันทึกแล้ว (${list.length} ปลายทาง)</span>`;
+                } catch (err) {
+                    console.error('Save downOnUphill failed:', err);
+                    as.douMsg = `<span class="text-red-400">บันทึกไม่สำเร็จ: ${esc(err.message)}</span>`;
+                }
+                rerenderOriginExtras();
+            });
             document.getElementById('audit-ox-save')?.addEventListener('click', async () => {
                 const raw = readOriginExtrasForm();
                 const rules = normalizeOriginExtras(raw);
@@ -3072,7 +3089,7 @@ const formatZeroAsEmpty = (value) => {
             attachAutocompleteListeners('form-destination', logisticsService.getUniqueValues('destination'));
 
             // V-lookup trigger
-            ['form-vehicle-type', 'form-origin', 'form-destination'].forEach(id => {
+            ['form-vehicle-type', 'form-origin', 'form-destination', 'form-direction', 'form-vehicle-registration', 'form-job-detail', 'form-notes', 'form-queue-type'].forEach(id => {
                 const input = document.getElementById(id);
                 if(input) input.addEventListener('change', updateVlookupCard);
             });
@@ -3317,85 +3334,99 @@ const formatZeroAsEmpty = (value) => {
             });
         };
         
+        // What to fill, from the OFFICIAL rate sheet (the system's master) via suggestFill → auditTrip, so the form
+        // suggests exactly what the audit expects — user correction 17 Nov 2026: the card used the old route table
+        // (e.g. 18W โกดังสาย 3 → พิษณุโลก จิตตมาศ 180) instead of the sheet (จิตตมาศ 80 + ไพศาล 180).
+        // The old route table is shown only as a reference.
+        const rateCtxCache = { std: null, veh: null, ox: null, dou: null, ctx: null };
+        const rateCtx = () => {
+            const as = appState.auditState;
+            if (rateCtxCache.std !== appState.rateStandards || rateCtxCache.veh !== appState.vehicles || rateCtxCache.ox !== as.originExtras || rateCtxCache.dou !== as.downOnUphill) {
+                Object.assign(rateCtxCache, { std: appState.rateStandards, veh: appState.vehicles, ox: as.originExtras, dou: as.downOnUphill,
+                    ctx: buildAuditContext(appState.rateStandards, appState.vehicles, { originExtras: as.originExtras, downOnUphill: as.downOnUphill }) });
+            }
+            return rateCtxCache.ctx;
+        };
+        const sameLiters = (a, b) => {
+            const n = (o) => JSON.stringify(Object.entries(o || {}).map(([k, v]) => [k, Number(v) || 0]).filter(([, v]) => v).sort());
+            return n(a) === n(b);
+        };
+        const fillLiterRows = (container, fill) => {
+            container.innerHTML = '';
+            Object.entries(fill).forEach(([stationKey, amount], i) => container.insertAdjacentHTML('beforeend', renderRouteDistributionRow({ stationKey, amount }, i, 'Liters')));
+        };
+        const formQuery = () => {
+            const val = (id) => document.getElementById(id)?.value || '';
+            return { vehicleType: val('form-vehicle-type'), plate: val('form-vehicle-registration'), origin: val('form-origin'), destination: val('form-destination'),
+                direction: val('form-direction'), jobDetail: val('form-job-detail'), notes: val('form-notes'), queueType: val('form-queue-type') };
+        };
+        // "Downhill ไพศาล on this record?" tick: default from practice (sug.downOnUp); the dispatcher's choice is kept only
+        // while the same record (plate + route + direction) is being entered, and reset with the form.
+        const vlookupDown = { key: '', include: false };
+        const downChoiceFor = (q, sug) => {
+            const key = [q.plate, q.direction, sug.cls, sug.model, sug.origin, sug.destination].join('|');
+            if (vlookupDown.key !== key) Object.assign(vlookupDown, { key, include: !!sug.downOnUp });
+            return vlookupDown.include;
+        };
+
         const updateVlookupCard = () => {
             const cardContent = document.getElementById('vlookup-card-content');
             if (!cardContent) return;
-
-            const vehicleType = document.getElementById('form-vehicle-type')?.value;
-            const origin = document.getElementById('form-origin')?.value;
-            const destination = document.getElementById('form-destination')?.value;
-
-            const route = logisticsService.findMatchingRoute(vehicleType, origin, destination);
-
-            if (!route) {
+            const q = formQuery();
+            const sug = suggestFill(q, rateCtx());
+            const oldRoute = logisticsService.findMatchingRoute(q.vehicleType, q.origin, q.destination);
+            const pname = (k) => esc(logisticsService.getFriendlyGasStationName(k));
+            const row = (label, value) => `<div class="flex justify-between items-center text-sm py-1"><span class="text-gray-400">${label}</span><span class="font-semibold">${value}</span></div>`;
+            const pumps = (o) => Object.entries(o || {}).map(([k, v]) => row(`${pname(k)}:`, Number(v).toLocaleString())).join('');
+            const list = (o) => Object.entries(o || {}).map(([k, v]) => `${pname(k)} ${Number(v).toLocaleString()}`).join(' · ');
+            const oldBaht = Object.keys(oldRoute?.gasStationsBaht || {}).length;
+            const oldNote = oldRoute && (!sug.ok || !sameLiters(oldRoute.gasStationsLiters, sug.fillWithDown) || oldBaht)
+                ? `<div class="mt-3 text-xs text-gray-500 border-t border-slate-600 pt-2">ฐานเส้นทางเดิม (ไม่ใช่ตารางอัตรา — ใช้อ้างอิงเท่านั้น): ${list(oldRoute.gasStationsLiters) || 'ไม่มีลิตร'}${oldBaht ? ` · บาท: ${list(oldRoute.gasStationsBaht)} (กรอกช่องบาทเองถ้าใช้)` : ''}</div>`
+                : '';
+            const notes = (sug.notes || []).map(n => `<p class="text-xs text-sky-300">${esc(n)}</p>`).join('');
+            if (!sug.ok) {
                 cardContent.innerHTML = `
-                    <h3 class="text-xl font-bold text-white mb-4">ข้อมูลเส้นทาง</h3>
-                    <p class="text-gray-400">ไม่พบข้อมูลเส้นทางที่ตรงกัน</p>
-                    <p class="text-sm text-gray-500 mt-2">กรุณากรอกข้อมูลประเภทรถ, ต้นทาง, และปลายทางให้ครบถ้วน</p>
-                `;
+                    <h3 class="text-xl font-bold text-white mb-4">ข้อมูลเส้นทาง (ตามตารางอัตรา)</h3>
+                    <p class="text-gray-400">${esc(sug.reason)}</p>
+                    <p class="text-sm text-gray-500 mt-2">กรอก ทะเบียน/ประเภทรถ, ต้นทาง, ปลายทาง ให้ครบ</p>${notes}${oldNote}`;
                 return;
             }
-            
-            const stationList = (stations) => {
-                if (!stations || Object.keys(stations).length === 0) return '<p class="text-sm text-gray-500">ไม่มี</p>';
-                return Object.entries(stations)
-                    .map(([key, value]) => `
-                        <div class="flex justify-between items-center text-sm py-1">
-                           <span class="text-gray-400">${logisticsService.getFriendlyGasStationName(key)}:</span>
-                           <span class="font-semibold">${value.toLocaleString()}</span>
-                        </div>
-                    `).join('');
-            };
-
+            const include = downChoiceFor(q, sug);
+            const fillNow = include ? sug.fillWithDown : sug.fillUp;
+            const total = Object.values(fillNow).reduce((a, b) => a + b, 0);
+            const victor = sug.model === 'victor' ? ' (Victor)' : '';
+            const rateCls = sug.rateCls && sug.rateCls !== sug.cls ? ` → คิดเรท${esc(AUDIT_CLASSES[sug.rateCls])}` : '';
             cardContent.innerHTML = `
-                <h3 class="text-xl font-bold text-white mb-4">ข้อมูลเส้นทาง (อัตโนมัติ)</h3>
+                <h3 class="text-xl font-bold text-white mb-4">ข้อมูลเส้นทาง (ตามตารางอัตรา)</h3>
                 <div class="space-y-2">
-                    <div class="flex justify-between items-center">
-                        <span class="font-semibold text-gray-300">ประเภทรถ:</span>
-                        <span>${route.vehicleType}</span>
-                    </div>
-                    <div class="flex justify-between items-center">
-                        <span class="font-semibold text-gray-300">เส้นทาง:</span>
-                        <span class="text-right">${route.origin} → ${route.destination}</span>
-                    </div>
+                    <div class="flex justify-between items-center"><span class="font-semibold text-gray-300">ประเภทรถ:</span><span>${esc(AUDIT_CLASSES[sug.cls] || sug.cls)}${victor}${rateCls}</span></div>
+                    ${sug.downOnly ? '' : `<div class="flex justify-between items-center"><span class="font-semibold text-gray-300">เส้นทาง:</span><span class="text-right">${esc(sug.origin)} → ${esc(sug.destination)}</span></div>`}
                     <hr class="border-slate-600 my-2">
-                    <div class="flex justify-between items-center text-lg">
-                        <span class="font-bold text-accent">รวม (ลิตร):</span>
-                        <span class="font-bold text-accent">${(route.totalLiters || 0).toLocaleString()}</span>
-                    </div>
-                     ${stationList(route.gasStationsLiters)}
-                     <hr class="border-slate-600 my-2">
-                    <div class="flex justify-between items-center text-lg">
-                        <span class="font-bold text-accent">รวม (บาท):</span>
-                        <span class="font-bold text-accent">${(route.totalBaht || 0).toLocaleString()}</span>
-                    </div>
-                    ${stationList(route.gasStationsBaht)}
-                    <button type="button" data-action="apply-route" class="w-full mt-4 bg-success hover:bg-green-600 text-white font-bold py-2 px-4 rounded-lg shadow-md transition">ใช้ค่าจากเส้นทางนี้</button>
-                    <p class="text-xs text-gray-500 mt-1 text-center">เติมจุดเติมน้ำมัน (ลิตร+บาท) ให้อัตโนมัติ</p>
-                </div>
-            `;
+                    <div class="flex justify-between items-center text-lg"><span class="font-bold text-accent">รวม (ลิตร):</span><span class="font-bold text-accent">${total.toLocaleString()}</span></div>
+                    ${sug.downOnly ? '' : `<p class="text-xs text-gray-400 mt-1">ขาขึ้น</p>${pumps(sug.up) || '<p class="text-sm text-gray-500">ไม่มี</p>'}`}
+                    ${sug.down ? `<p class="text-xs text-gray-400 mt-1">ขาล่อง</p>${row(`${pname('daopaisan_nakhonsawan')}:`, `${Number(sug.down).toLocaleString()}${victor}`)}
+                    <label class="flex items-center gap-2 text-xs text-gray-300"><input type="checkbox" id="vlookup-incl-down" class="w-4 h-4" ${include ? 'checked' : ''}> ${sug.downOnly ? 'เติมไพศาลขาล่องในเที่ยวนี้' : 'รวมขาล่องไพศาลในเที่ยวนี้'} <span class="text-gray-500">(${sug.downOnly ? 'ติ๊กเมื่อขาขึ้นยังไม่ได้บันทึกไว้' : sug.downOnUp ? 'เส้นนี้ปกติบันทึกรวม' : 'เส้นนี้ปกติบันทึกในเที่ยวขาล่อง'})</span></label>` : ''}
+                    ${sug.extras.map(x => `<p class="text-xs text-sky-300">${esc(x.label || 'เติมเพิ่มตามต้นทาง')}: ${pname(x.pump)} ได้เพิ่มไม่เกิน ${Number(x.maxLiters)} ลิตร</p>`).join('')}
+                    ${notes}
+                    ${(sug.rateFlags || []).length ? `<p class="text-xs text-amber-300">อัตราแถวนี้มีข้อสังเกต: ${sug.rateFlags.map(esc).join('; ')}</p>` : ''}
+                    <button type="button" data-action="apply-route" class="w-full mt-4 bg-success hover:bg-green-600 text-white font-bold py-2 px-4 rounded-lg shadow-md transition">ใช้ค่าจากตารางอัตรา</button>
+                    <p class="text-xs text-gray-500 mt-1 text-center">เติมลิตรตามตารางอัตรา${sug.sheet ? ` (${esc(sug.sheet)} แถว ${esc(sug.row)})` : ''} · ช่องบาทไม่เปลี่ยน</p>
+                    ${oldNote}
+                </div>`;
+            document.getElementById('vlookup-incl-down')?.addEventListener('change', (e) => { vlookupDown.include = e.target.checked; updateVlookupCard(); });
         };
 
-        // Populate the fuel form's distribution rows from the matched route (item 6).
+        // Fill the fuel form's liter rows from the official rate (baht rows are left as they are: the sheet has no baht).
         const handleApplyRouteToForm = () => {
-            const vehicleType = document.getElementById('form-vehicle-type')?.value;
-            const origin = document.getElementById('form-origin')?.value;
-            const destination = document.getElementById('form-destination')?.value;
-            const route = logisticsService.findMatchingRoute(vehicleType, origin, destination);
-            if (!route) return;
-
-            const fill = (listId, stations, unit) => {
-                const container = document.getElementById(listId);
-                if (!container) return;
-                container.innerHTML = '';
-                Object.entries(stations || {}).forEach(([stationKey, amount], index) => {
-                    container.insertAdjacentHTML('beforeend', renderRouteDistributionRow({ stationKey, amount }, index, unit));
-                });
-            };
-            fill('distribution-list-liters', route.gasStationsLiters, 'Liters');
-            fill('distribution-list-baht', route.gasStationsBaht, 'Baht');
+            const q = formQuery();
+            const sug = suggestFill(q, rateCtx());
+            if (!sug.ok) return;
+            const container = document.getElementById('distribution-list-liters');
+            if (!container) return;
+            const fill = downChoiceFor(q, sug) ? sug.fillWithDown : sug.fillUp;
+            if (!Object.keys(fill).length) { alert('ตามตารางอัตรา เที่ยวนี้ไม่ต้องเติม (ไม่มีลิตร) — ไม่ได้แก้ช่องลิตร'); return; }
+            fillLiterRows(container, fill);
             updateTotalAmount('liters');
-            updateTotalAmount('baht');
         };
         
         const updateDistributionList = (unit) => {
@@ -3442,6 +3473,7 @@ const formatZeroAsEmpty = (value) => {
                 document.getElementById('distribution-list-baht').innerHTML = '';
                 document.getElementById('form-total-liters').value = '';
                 document.getElementById('form-total-baht').value = '';
+                vlookupDown.key = ''; // next record starts from the practice default
                 updateVlookupCard();
                 const status = document.getElementById('form-status');
                 if (status) status.innerHTML = '';

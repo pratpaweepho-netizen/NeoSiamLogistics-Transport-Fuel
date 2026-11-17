@@ -3,7 +3,7 @@
 import firebase from "firebase/compat/app";
 import "firebase/compat/database";
 import { GAS_STATION_KEYS, GAS_STATION_FRIENDLY_NAMES, firebaseConfig } from "./constants.js";
-import { DEFAULT_ORIGIN_EXTRAS, normalizeOriginExtras, normalizeDriverAliases } from "./fuelAudit.js";
+import { DEFAULT_ORIGIN_EXTRAS, normalizeOriginExtras, normalizeDriverAliases, DEFAULT_DOWN_ON_UPHILL, normalizeDestinationList } from "./fuelAudit.js";
 
 // UI seam: app.js injects render/hideLoading so the data layer stays free of DOM/render code.
 let ui = { render: () => {}, hideLoading: () => {} };
@@ -29,7 +29,7 @@ export let appState = {
             // tolerance / carryStart are shared settings (Firebase settings/fuelAudit); the rest is per-screen UI state.
             // originExtras: "extra fill by pickup place" rules — default from the company's old fuel base until saved
             // in settings/fuelAudit.originExtras (user decision 17 Nov 2026).
-            auditState: { status: '', search: '', tolerance: 0, carryStart: '2026-11', showStandards: false, originExtras: DEFAULT_ORIGIN_EXTRAS, showOriginExtras: false, driverAliases: {} },
+            auditState: { status: '', search: '', tolerance: 0, carryStart: '2026-11', showStandards: false, originExtras: DEFAULT_ORIGIN_EXTRAS, showOriginExtras: false, driverAliases: {}, downOnUphill: DEFAULT_DOWN_ON_UPHILL },
             // Excel trip template start month (settings/tripTemplate.startMonth); '' = not set yet → template import blocked.
             templateStartMonth: '',
             // Column L downhill liters by trip key (downhillFuel/{ym}/{key}), only for the months the audit loaded
@@ -1069,6 +1069,12 @@ export let appState = {
                     {
                         const nextAliases = normalizeDriverAliases(s.driverAliases);
                         if (JSON.stringify(nextAliases) !== JSON.stringify(appState.auditState.driverAliases)) appState.auditState.driverAliases = nextAliases;
+                    }
+                    // Destinations whose downhill ไพศาล is written on the uphill record (entry-form default); saved list
+                    // wins (false = none), never saved → the default from real trips.
+                    if (s.downOnUphill !== undefined) {
+                        const nextDou = normalizeDestinationList(s.downOnUphill);
+                        if (JSON.stringify(nextDou) !== JSON.stringify(appState.auditState.downOnUphill)) appState.auditState.downOnUphill = nextDou;
                     }
                     // Saved rules win (an empty list saved on purpose means "no extras"); never saved → the default.
                     if (s.originExtras !== undefined) {

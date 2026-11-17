@@ -408,7 +408,8 @@ export function buildAuditContext(standards, vehicles, opts = {}) {
         const victorRows = rows.filter(s => s.downVictor && s.downVictor !== s.down);
         downDefault[cls] = { down, downVictor: victorRows.length ? modeOf(victorRows, 'downVictor') : down };
     }
-    return { std, drop, emptyKpp, vehFull, vehHead, destinations, downDefault, originExtras: normalizeOriginExtras(opts.originExtras) };
+    return { std, drop, emptyKpp, vehFull, vehHead, destinations, downDefault, originExtras: normalizeOriginExtras(opts.originExtras),
+        downOnUphill: new Set(normalizeDestinationList(opts.downOnUphill === undefined ? DEFAULT_DOWN_ON_UPHILL : opts.downOnUphill)) };
 }
 
 // Which vehicle-master row describes the truck on this trip. Returns { vehicle, note }.
@@ -458,13 +459,20 @@ function auditDownhillTrip(trip, ctx, tolerance, actual, actualTotal, vc, baht, 
 // When the board wrote only the head plate of a truck that also runs with a trailer, check both ways:
 // if the fill matches the trailer (พ่วง) rate in total but not the solo rate, the trailer was most likely
 // just left off the board — use the trailer rate and say so.
-export function auditTrip(trip, ctx, tolerance = 0) {
+// opts.vehicle: judge with this vehicle (entry-form suggestions: the plate or the typed class); opts.expectOnly: return
+// the expected liters even when nothing was filled yet (used by suggestFill).
+export function auditTrip(trip, ctx, tolerance = 0, opts = {}) {
     const { towOption } = vehicleForPlate(trip.plate, ctx);
     const uphill = clean(trip.direction) === 'ขาขึ้น';
     // Empty trailer left at กพ. (sheet rule, read from the rate data). Without the rule in the data the trip is a
     // manual check — never silently a full towing trip (the dispatcher said the trailer was left at กพ.).
     const emptyKpp = uphill && isEmptyTrailerToKpp(trip);
     const headMode = emptyKpp ? (ctx.emptyKpp ? 'kpp-empty' : 'kpp-empty-norule') : uphill && isDropAtNsw(trip) ? 'nsw' : '';
+    if (opts.vehicle) {
+        // A drop says the truck was towing: a solo head with a known pair is judged as the pair (same as below).
+        const v = headMode && towOption && opts.vehicle !== towOption && vehicleClassOf(opts.vehicle).cls in TOW_OF ? towOption : opts.vehicle;
+        return auditTripAs(trip, ctx, tolerance, v, headMode, !!opts.expectOnly);
+    }
     // A trailer was dropped, so the truck WAS towing: judge it as its head+trailer pair (keeps e.g. a victor model).
     if (headMode && towOption) {
         const r = auditTripAs(trip, ctx, tolerance, towOption, headMode);
@@ -487,14 +495,14 @@ export function auditTrip(trip, ctx, tolerance = 0) {
 // there — sheet rule "พ่วง ลากหางเปล่า ไปตัดไว้ที่ กำแพง น้ำมันจ่ายเป็นรถสิบล้อ + เพิ่ม N ลิตร", user confirmed 17 Nov 2026)
 // | 'kpp-empty-norule' (same, but the rule is not in the imported rate data yet → manual check).
 // In both drop modes the uphill is charged at the head's own rate and the downhill at the towing rate.
-function auditTripAs(trip, ctx, tolerance, forcedVehicle, headMode = '') {
+function auditTripAs(trip, ctx, tolerance, forcedVehicle, headMode = '', expectOnly = false) {
     const dir = clean(trip.direction);
     if (dir !== 'ขาขึ้น' && dir !== 'ขาล่อง') return null;
     const actual = { ...(trip.gasStationsLiters || {}) };
     const baht = { ...(trip.gasStationsBaht || {}) };
     const actualTotal = Object.values(actual).reduce((a, b) => a + (Number(b) || 0), 0);
     const bahtTotal = Object.values(baht).reduce((a, b) => a + (Number(b) || 0), 0);
-    if (!actualTotal && !bahtTotal) return null;
+    if (!actualTotal && !bahtTotal && !expectOnly) return null;
     const found = vehicleForPlate(trip.plate, ctx);
     const vehicle = forcedVehicle || found.vehicle;
     const plateNote = forcedVehicle ? '' : found.note;
@@ -699,4 +707,65 @@ export function parseDriverAliasSheet(rows, masterNames = []) {
         aliases.push(a);
     }
     return { aliases, skipped, conflicts, error: '' };
+}
+
+// ---- What the entry forms should suggest (user, 17 Nov 2026: "ผมว่าคุณผิดแล้ว" — the form card still read the old
+// route table, e.g. 18W โกดังสาย 3 → พิษณุโลก จิตตมาศ 180, while the official sheet says จิตตมาศ 80 + ไพศาล ขาล่อง 180).
+// Built on auditTrip itself (expectOnly), so the form suggests exactly what the audit will expect — trailer drops,
+// head+trailer pairs, victor/sino, origin extras all included — and the two can never drift apart.
+
+// Destinations whose downhill ไพศาล fill the board writes on the UPHILL record (settings/fuelAudit.downOnUphill).
+// Default from real trips Jul–Nov 2026: 99–100% for these; 0% for เชียงใหม่ แม่สอด ลำพูน แม่สาย เชียงราย แพร่.
+export const DEFAULT_DOWN_ON_UPHILL = ['นครสวรรค์', 'พิษณุโลก', 'กำแพงเพชร', 'เพชรบูรณ์', 'ตาก', 'บึงสามพัน'];
+export function normalizeDestinationList(list) {
+    if (list === false || list == null) return [];
+    const arr = Array.isArray(list) ? list : typeof list === 'object' ? Object.values(list) : String(list).split(',');
+    return [...new Set(arr.map(x => canonDestination(x) || clean(x)).filter(Boolean))];
+}
+
+/**
+ * q: { vehicleType, plate, origin, destination, direction, jobDetail, notes, queueType, trailerDrop }.
+ * Returns { ok:true, cls, rateCls, model, origin, destination, up, down, downOnUp, fillUp, fillWithDown, fill, extras,
+ *           notes, sheet, row } or { ok:false, reason }. fill = the default (with the downhill when downOnUp).
+ */
+export function suggestFill(q, ctx) {
+    const dir = clean(q.direction) || 'ขาขึ้น';
+    // Vehicle: the plate's master row; a head typed with a towing class uses its pair; unknown plate → typed class.
+    let vehicle = null; const notes = [];
+    if (clean(q.plate)) {
+        const f = vehicleForPlate(q.plate, ctx);
+        vehicle = f.vehicle;
+        const typed = clean(q.vehicleType) ? vehicleClassOf({ vehicleType: q.vehicleType, driveType: 'รถบริษัท' }).cls : null;
+        if (vehicle && typed && f.towOption && vehicleClassOf(vehicle).cls !== typed && vehicleClassOf(f.towOption).cls === typed) vehicle = f.towOption;
+        if (!vehicle) notes.push('ทะเบียนนี้ไม่อยู่ในหน้าทะเบียนรถ — หน้าตรวจการเติมจะตรวจเที่ยวนี้ไม่ได้ (เพิ่มทะเบียนก่อน)');
+    }
+    if (!vehicle) vehicle = { vehicleType: q.vehicleType, driveType: 'รถบริษัท' };
+    const vc = vehicleClassOf(vehicle);
+    if (vc.partner) return { ok: false, reason: 'รถร่วม — ไม่มีอัตราในตาราง' };
+    if (!vc.cls) return { ok: false, reason: vc.reason };
+    const model = vc.model || '';
+    if (dir === 'ขาล่อง') {
+        const def = ctx.downDefault?.[vc.cls];
+        if (!def) return { ok: false, reason: `ไม่มีอัตราขาล่องของ ${AUDIT_CLASSES[vc.cls]}` };
+        const down = model === 'victor' ? def.downVictor : def.down;
+        notes.push('ถ้าเที่ยวขาขึ้นของรอบนี้บันทึกไพศาลขาล่องไว้แล้ว (เส้นเหนือล่าง เช่น นว./พิษณุโลก/กพ.) ไม่ต้องเติมซ้ำในเที่ยวขาล่อง');
+        return { ok: true, cls: vc.cls, rateCls: vc.cls, model, origin: clean(q.origin), destination: clean(q.destination), up: {}, down, downOnUp: false,
+            fillUp: {}, fillWithDown: { [PAISAN]: down }, fill: {}, extras: [], notes, sheet: '', row: '', downOnly: true };
+    }
+    if (!clean(q.origin) || !clean(q.destination)) return { ok: false, reason: 'กรอกต้นทางและปลายทางให้ครบ' };
+    const trip = { direction: 'ขาขึ้น', plate: clean(q.plate), origin: q.origin, destination: q.destination, jobDetail: q.jobDetail || '',
+        notes: q.notes || '', queueType: q.queueType || '', trailerDrop: q.trailerDrop || '', gasStationsLiters: {}, gasStationsBaht: {} };
+    const r = auditTrip(trip, ctx, 0, { vehicle, expectOnly: true });
+    if (!r) return { ok: false, reason: 'คำนวณไม่ได้' };
+    if (r.status === 'no-rate' || r.status === 'manual') return { ok: false, reason: r.reason, notes };
+    // With nothing filled the audit's ไพศาล reading leaves the downhill out of `expected` — exactly the uphill part.
+    const up = Object.fromEntries(Object.entries(r.expected || {}).filter(([, v]) => v > 0));
+    const down = r.down || 0;
+    const fillWithDown = { ...up };
+    if (down) fillWithDown[PAISAN] = (fillWithDown[PAISAN] || 0) + down;
+    const downOnUp = !!down && ctx.downOnUphill?.has(r.destination);
+    for (const f of r.flags) if (!f.startsWith('ขาล่องไพศาล') && !f.startsWith('อัตราแถวนี้มีข้อสังเกต')) notes.push(f);
+    return { ok: true, cls: r.cls, rateCls: r.rateCls || r.cls, model: r.model, origin: r.origin, destination: r.destination, up, down, downOnUp,
+        fillUp: up, fillWithDown, fill: downOnUp ? fillWithDown : up, extras: matchOriginExtras(q.origin, ctx.originExtras),
+        notes, rateFlags: r.standard?.flags || [], sheet: r.standard?.sheet || '', row: r.standard?.row || '' };
 }

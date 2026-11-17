@@ -305,6 +305,36 @@ const amap = normalizeDriverAliases(ar.aliases);
 const tA = applyDriverAlias({ id: 'a', driver: ' สกล ', plate: '70-1' }, amap);
 eq('applyDriverAlias: full name, board name kept, untouched trip returned as is', [tA.driver, tA.driverBoard, applyDriverAlias({ driver: 'อื่น' }, amap).driver], ['สกล แปลกชัยภูมิ', ' สกล ', 'อื่น']);
 const resA = [{ status: 'over', actualTotal: 90, expectedTotal: 80, trip: applyDriverAlias({ driver: 'สกล' }, amap) }, { status: 'ok', actualTotal: 80, expectedTotal: 80, trip: { driver: 'สกล แปลกชัยภูมิ' } }];
+// Entry-form suggestion from the official sheet (user correction 17 Nov 2026: card used the old route table).
+const { suggestFill } = await import('../src/fuelAudit.js');
+const ctxS = buildAuditContext([...nswStd, { cls: '18W', origin: 'กรุงเทพ', destination: 'พิษณุโลก', variant: 'standard', up: { jittamas_bangpain: 80 }, down: 180, downVictor: 190, flags: [] }],
+    [{ registrationNumber: '70-8901-8158', vehicleType: '18W', driveType: 'รถบริษัท', model: 'victor' }, { registrationNumber: '70-1', vehicleType: '18W', driveType: 'รถร่วม' }], { originExtras: DEFAULT_ORIGIN_EXTRAS });
+const sg = suggestFill({ vehicleType: '18W', origin: 'โกดังสาย 3', destination: 'พิษณุโลก', direction: 'ขาขึ้น' }, ctxS);
+eq('18W โกดังสาย 3 → พิษณุโลก: จิตตมาศ 80 + ไพศาล ขาล่อง 180 (not จิตตมาศ 180)', [sg.ok, sg.up, sg.down, sg.fill], [true, { jittamas_bangpain: 80 }, 180, { jittamas_bangpain: 80, daopaisan_nakhonsawan: 180 }]);
+const ctxCM = buildAuditContext([{ cls: '18W', origin: 'กรุงเทพ', destination: 'เชียงใหม่', variant: 'standard', up: { jittamas_bangpain: 255, srinakorn_klongklung: 50 }, down: 180, downVictor: 190, flags: [] }], []);
+const sgCM = suggestFill({ vehicleType: '18W', origin: 'HiQ', destination: 'เชียงใหม่', direction: 'ขาขึ้น' }, ctxCM);
+eq('เชียงใหม่ (downhill recorded on the downhill trip in practice) → default fill = uphill only', [sgCM.downOnUp, sgCM.fill, sgCM.fillWithDown.daopaisan_nakhonsawan], [false, { jittamas_bangpain: 255, srinakorn_klongklung: 50 }, 180]);
+eq('พิษณุโลก → default includes the downhill ไพศาล', sg.downOnUp, true);
+eq('victor plate → downhill 190', suggestFill({ vehicleType: '18W', plate: '70-8901-8158', origin: 'HiQ', destination: 'พิษณุโลก', direction: 'ขาขึ้น' }, ctxS).down, 190);
+eq('สหพัฒน์ pickup shows the เต็กย้ง allowance', suggestFill({ vehicleType: '18W', origin: 'สหพัฒน์', destination: 'กำแพงเพชร', direction: 'ขาขึ้น' }, ctxS).extras.length, 1);
+eq('destination not in the sheet → reason, no fill', [suggestFill({ vehicleType: '18W', origin: 'HiQ', destination: 'ภูเก็ต', direction: 'ขาขึ้น' }, ctxS).ok, /ไม่อยู่ในตารางอัตรา/.test(suggestFill({ vehicleType: '18W', origin: 'HiQ', destination: 'ภูเก็ต', direction: 'ขาขึ้น' }, ctxS).reason)], [false, true]);
+eq('partner truck → no suggestion', suggestFill({ plate: '70-1', origin: 'HiQ', destination: 'พิษณุโลก', direction: 'ขาขึ้น' }, ctxS).ok, false);
+eq('downhill trip → nothing pre-filled by default (avoid booking the ไพศาล twice), class downhill offered', [suggestFill({ vehicleType: '18W', direction: 'ขาล่อง' }, ctxS).fill, suggestFill({ vehicleType: '18W', direction: 'ขาล่อง' }, ctxS).fillWithDown], [{}, { daopaisan_nakhonsawan: 180 }]);
+// review: the suggestion follows the audit's own rules (it is computed BY auditTrip)
+const ctxS2 = buildAuditContext([...nswStd, { cls: '18W', origin: 'กรุงเทพ', destination: 'พิษณุโลก', variant: 'standard', up: { jittamas_bangpain: 80 }, down: 180, downVictor: 190, flags: [] },
+    { cls: '10W', origin: 'กรุงเทพ', destination: 'พิษณุโลก', variant: 'standard', up: { jittamas_bangpain: 50 }, down: 120, downVictor: 120, flags: [] }],
+    [{ registrationNumber: '70-8901', vehicleType: '10W', driveType: 'รถบริษัท' }, { registrationNumber: '70-8901-8158', vehicleType: '18W', driveType: 'รถบริษัท' }]);
+const nswS = suggestFill({ vehicleType: '18W', plate: '70-8901-8158', origin: 'HiQ', destination: 'พิษณุโลก', direction: 'ขาขึ้น', jobDetail: 'ตัดลูกนว.' }, ctxS2);
+eq('ตัดลูก นว. in the job → 10W uphill (50) + towing downhill (180), like the audit', [nswS.up, nswS.down, nswS.rateCls], [{ jittamas_bangpain: 50 }, 180, '10W']);
+const filledAsSuggested = auditTrip({ direction: 'ขาขึ้น', origin: 'HiQ', plate: '70-8901-8158', destination: 'พิษณุโลก', jobDetail: 'ตัดลูกนว.', gasStationsLiters: nswS.fillWithDown }, ctxS2);
+eq('a trip filled exactly as suggested audits as ok', filledAsSuggested.status, 'ok');
+eq('head plate + typed 18W → the pair (towing) rate', suggestFill({ vehicleType: '18W', plate: '70-8901', origin: 'HiQ', destination: 'พิษณุโลก', direction: 'ขาขึ้น' }, ctxS2).up, { jittamas_bangpain: 80 });
+const unk = suggestFill({ vehicleType: '18W', plate: '99-9999', origin: 'HiQ', destination: 'พิษณุโลก', direction: 'ขาขึ้น' }, ctxS2);
+eq('unknown plate → typed class suggestion + note that the audit cannot check it', [unk.ok, unk.notes.some(n => n.includes('ไม่อยู่ในหน้าทะเบียนรถ'))], [true, true]);
+const ctxDou = buildAuditContext(ctxS2 === null ? [] : [{ cls: '18W', origin: 'กรุงเทพ', destination: 'พิษณุโลก', variant: 'standard', up: { jittamas_bangpain: 80 }, down: 180, downVictor: 190, flags: [] }], [], { downOnUphill: false });
+eq('downOnUphill set to none in settings → พิษณุโลก no longer includes the downhill', suggestFill({ vehicleType: '18W', origin: 'HiQ', destination: 'พิษณุโลก', direction: 'ขาขึ้น' }, ctxDou).downOnUp, false);
+const { normalizeDestinationList } = await import('../src/fuelAudit.js');
+eq('destination list from text / object / false', [normalizeDestinationList('พิษณุโลก, กำแพงเพชร, ,'), normalizeDestinationList({ 0: 'ตาก' }), normalizeDestinationList(false)], [['พิษณุโลก', 'กำแพงเพชร'], ['ตาก'], []]);
 eq('driver named like an Object property is not aliased', [applyDriverAlias({ driver: 'constructor' }, amap).driver, applyDriverAlias({ driver: 'toString' }, {}).driver], ['constructor', 'toString']);
 eq('carry-over: board name and full name become one balance', applyCarry(resA), { 'สกล แปลกชัยภูมิ': 10 });
 eq('rules from settings (object form, text keywords) are normalised; bad rules dropped',
