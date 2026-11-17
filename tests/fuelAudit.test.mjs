@@ -232,6 +232,50 @@ const ctxDropOx = buildAuditContext([...standards, ...dropStd], vehicles, { orig
 const kppOx = auditTrip(trip({ origin: 'สหพัฒน์', destination: 'แม่สอด', jobDetail: 'ตัดลูก กพ', gasStationsLiters: { jittamas_bangpain: 210, tekyong_chonburi: 53 } }), ctxDropOx);
 const kppNo = auditTrip(trip({ origin: 'สหพัฒน์', destination: 'แม่สอด', jobDetail: 'ตัดลูก กพ', gasStationsLiters: { jittamas_bangpain: 210, tekyong_chonburi: 53 } }), ctxDrop);
 eq('KPP drop beyond กพ.: เต็กย้ง allowance taken off the diff', [kppOx.status, kppOx.diff, kppNo.diff - kppOx.diff], ['manual', kppNo.diff - 53, 53]);
+// User confirmed 17 Nov 2026: sheet rule "พ่วง ลากหางเปล่า ไปตัดไว้ที่ กำแพง น้ำมันจ่ายเป็นรถสิบล้อ+เพิ่ม 20 ลิตร".
+const { EMPTY_KPP_CLASS, EMPTY_KPP_DROP } = await import('../src/fuelAudit.js');
+const ruleSheet = [
+    ['สถานที่', '', 'รายการเติมน้ำมัน (พ่วง) ขาขึ้น', '', '', '', 'ขาล่อง'],
+    HDR,
+    ['จาก กรุงเทพ', 'กำแพงเพชร', 80, '***', '***', 80, 180, 'เบี้ยขับ 900'],
+    ['          พ่วง ลากหางเปล่า ไปตัดไว้ที่ กำแพง น้ำมันจ่ายเป็นรถสิบล้อ+เพิ่ม 20  ลิตร', '', '***', '***', '', '', '180 (victor190)'],
+];
+const pr = parseRateSheet({ เหนือบน: ruleSheet });
+const er = pr.standards.find(s => s.cls === EMPTY_KPP_CLASS);
+eq('parser reads the empty-trailer rule from the sheet (+20, row 4)', [er?.extraLiters, er?.row, pr.standards.filter(s => s.cls === '18W').length], [20, 4, 1]);
+const ctxE = buildAuditContext([...nswStd, er], [{ registrationNumber: '70-8901-8158', vehicleType: '18W', driveType: 'รถบริษัท' }]);
+const em = (L, o = {}) => auditTrip({ direction: 'ขาขึ้น', origin: 'HiQ', plate: '70-8901-8158', destination: 'กำแพงเพชร', jobDetail: 'ลากหางเปล่า ไปตัดไว้ที่ กพ', gasStationsLiters: L, ...o }, ctxE);
+eq('empty trailer left at กพ.: 10W 50 + 20 + downhill 180 = ok', [em({ jittamas_bangpain: 70, daopaisan_nakhonsawan: 180 }).status, em({ jittamas_bangpain: 70, daopaisan_nakhonsawan: 180 }).rateCls], ['ok', '10W']);
+eq('… without the extra 20 → ok too (allowance)', em({ jittamas_bangpain: 50, daopaisan_nakhonsawan: 180 }).status, 'ok');
+eq('… 50 + 30 → over +10', [em({ jittamas_bangpain: 80, daopaisan_nakhonsawan: 180 }).status, em({ jittamas_bangpain: 80, daopaisan_nakhonsawan: 180 }).diff], ['over', 10]);
+eq('… not the KPP-drop manual check', em({ jittamas_bangpain: 70, daopaisan_nakhonsawan: 180 }, { jobDetail: 'ลากหางเปล่า ตัดลูก กพ' }).status, 'ok');
+eq('template option "กำแพงเพชร (หางเปล่า)" uses the same rule', em({ jittamas_bangpain: 70, daopaisan_nakhonsawan: 180 }, { jobDetail: '', trailerDrop: EMPTY_KPP_DROP }).status, 'ok');
+eq('"ลากลูกเปล่าไปขึ้นน้ำตาล" (towed empty to LOAD) is not this rule', em({ jittamas_bangpain: 80, daopaisan_nakhonsawan: 180 }, { jobDetail: 'กำแพงเพชร//ลากลูกเปล่า**ไปขึ้นน้ำตาลต่อ' }).rateCls, undefined);
+// review: rule not in the imported rate data yet → manual check (never silently the full towing rate)
+const noRule = (o) => auditTrip({ direction: 'ขาขึ้น', origin: 'HiQ', plate: '70-8901-8158', destination: 'กำแพงเพชร', gasStationsLiters: { jittamas_bangpain: 80, daopaisan_nakhonsawan: 180 }, ...o }, ctxNsw);
+eq('rule missing from the rate data → manual, says to import the rate file', [noRule({ jobDetail: 'ลากหางเปล่า ไปตัดไว้ที่ กพ' }).status, noRule({ trailerDrop: EMPTY_KPP_DROP }).status, /นำเข้าไฟล์อัตราใหม่/.test(noRule({ trailerDrop: EMPTY_KPP_DROP }).reason)], ['manual', 'manual', true]);
+// review: rule is written for พ่วง only
+const ctxE6 = buildAuditContext([...nswStd, er,
+    { cls: '6W', origin: 'กรุงเทพ', destination: 'กำแพงเพชร', variant: 'standard', up: { jittamas_bangpain: 50 }, down: 100, downVictor: 100, flags: [] },
+    { cls: '6W_BOX', origin: 'กรุงเทพ', destination: 'กำแพงเพชร', variant: 'standard', up: { jittamas_bangpain: 70 }, down: 150, downVictor: 150, flags: [] }],
+    [{ registrationNumber: '70-1-2', vehicleType: '6W_BOX', driveType: 'รถบริษัท' }]);
+eq('6W_BOX with the empty-trailer text → manual (rule is for พ่วง)', auditTrip({ direction: 'ขาขึ้น', origin: 'HiQ', plate: '70-1-2', destination: 'กำแพงเพชร', jobDetail: 'ลากหางเปล่า ไปตัดไว้ที่ กพ', gasStationsLiters: { jittamas_bangpain: 70 } }, ctxE6).status, 'manual');
+// review: the +20 may be filled at ไพศาล (on the way to กพ.)
+const emP = em({ jittamas_bangpain: 50, daopaisan_nakhonsawan: 200 });
+eq('empty trailer: extra 20 at ไพศาล → ok, downhill reading stays 180', [emP.status, emP.downActual, emP.downStatus], ['ok', 180, 'ok']);
+// review: loaded trailer dropped, came back empty → NOT the empty-trailer rule
+const back = em({ jittamas_bangpain: 80, daopaisan_nakhonsawan: 180 }, { jobDetail: 'ตัดลูก กพ ส่งตาก ขากลับลากลูกเปล่ากลับ', destination: 'ตาก' });
+eq('"ตัดลูก กพ … ขากลับลากลูกเปล่า" → KPP-drop table check, not the empty-trailer rule', [back.status, back.reason.startsWith('เที่ยวถอดหางที่กำแพงเพชร')], ['manual', true]);
+// review: empty trailer beyond กพ. with no 10-wheel rate there → manual (not the full towing rate)
+eq('empty trailer beyond กพ., no 10W rate for the destination → manual', em({ jittamas_bangpain: 80 }, { destination: 'นครสวรรค์' }).status, 'manual');
+// review: parser — merged cell (rule text in column B), Thai digits, unreadable number warned
+const pr2 = parseRateSheet({ s: [ruleSheet[0], ruleSheet[1], ruleSheet[2], ['', 'พ่วง ลากหางเปล่า ไปตัดไว้ที่ กำแพง น้ำมันจ่ายเป็นรถสิบล้อ+เพิ่ม ๒๕ ลิตร']] });
+eq('rule in column B with Thai digits → +25', pr2.standards.find(s => s.cls === EMPTY_KPP_CLASS)?.extraLiters, 25);
+const pr3 = parseRateSheet({ s: [ruleSheet[0], ruleSheet[1], ruleSheet[2], ['พ่วง ลากหางเปล่า ไปตัดไว้ที่ กำแพง น้ำมันจ่ายเป็นรถสิบล้อ']] });
+eq('rule without a number → warning, no rule', [pr3.standards.some(s => s.cls === EMPTY_KPP_CLASS), pr3.warnings.some(w => w.includes('ลากหางเปล่า'))], [false, true]);
+// review: two rule rows with different extras → reported as a conflict, not "same"
+const pr4 = parseRateSheet({ a: ruleSheet, b: [ruleSheet[0], ruleSheet[1], ['พ่วง ลากหางเปล่า ไปตัดไว้ที่ กำแพง +30 ลิตร']] });
+eq('two empty-trailer rules with different extras → conflict flag', pr4.standards.filter(s => s.cls === EMPTY_KPP_CLASS).some(s => s.flags.some(f => f.startsWith('ขัดกับแถว'))), true);
 eq('rules from settings (object form, text keywords) are normalised; bad rules dropped',
     normalizeOriginExtras(Object.values({ 0: { label: 'x', keywords: 'ก, ข', pump: 'nissan_singburi', maxLiters: '20' }, 1: { keywords: [], pump: 'x', maxLiters: 5 }, 2: { keywords: ['ค'], pump: '', maxLiters: 5 } })),
     [{ label: 'x', keywords: ['ก', 'ข'], exclude: [], pump: 'nissan_singburi', maxLiters: 20 }]);

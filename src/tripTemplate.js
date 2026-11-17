@@ -5,7 +5,7 @@
 
 import { clean } from './parseUtils.js';
 import { GAS_STATION_FRIENDLY_NAMES, ROUTE_STATION_COLUMNS } from './constants.js';
-import { textDropPlace, normPlate, plateKey } from './fuelAudit.js';
+import { textDropPlace, normPlate, plateKey, EMPTY_KPP_DROP } from './fuelAudit.js';
 import { createAllIfAbsent } from './dbUtils.js';
 import { ymd } from './importerTrips.js';
 
@@ -14,7 +14,7 @@ export const LIST_SHEET = 'รายการ';
 export const HELP_SHEET = 'วิธีกรอก';
 export const DIRECTIONS = ['ขาขึ้น', 'ขาล่อง'];
 export const NO_DROP = 'ไม่ตัด';
-export const DROP_OPTIONS = [NO_DROP, 'นครสวรรค์', 'กำแพงเพชร'];
+export const DROP_OPTIONS = [NO_DROP, 'นครสวรรค์', 'กำแพงเพชร', EMPTY_KPP_DROP];
 export const DEFAULT_QUEUE_TYPES = ['ลนต.', 'ลงงานห้าง', 'ตีเปล่า', 'ค้าง', 'หนักล่อง'];
 const TEMPLATE_ROWS = 3000;          // rows that get dropdowns / number checks (~2 months of trips; help says 1 file per month)
 const MAX_LITERS_PER_PUMP = 1000;    // above this a fill is almost certainly a typo → warning
@@ -32,7 +32,7 @@ export const TEMPLATE_COLUMNS = [
     { key: 'trailer', header: 'ทะเบียนหาง', width: 11, list: 'trailers' },
     { key: 'origin', header: 'ต้นทาง', width: 16, list: 'origins' },
     { key: 'destination', header: 'ปลายทาง', width: 20, list: 'destinations' },
-    { key: 'trailerDrop', header: 'ตัดหางที่', width: 11, list: 'drops', strict: true },
+    { key: 'trailerDrop', header: 'ตัดหางที่', width: 19, list: 'drops', strict: true },
     { key: 'jobDetail', header: 'รายการงาน', width: 28 },
     ...ROUTE_STATION_COLUMNS.flatMap(s => s.units.map(u => ({
         key: `${u === 'Baht' ? 'B' : 'L'}:${s.key}`, station: s.key, unit: u,
@@ -78,7 +78,7 @@ const HELP_LINES = [
     '   แนะนำ: ใช้ไฟล์ใหม่ทุกเดือน (ดาวน์โหลดแม่แบบใหม่ต้นเดือน จะได้รายชื่อคนขับ/ทะเบียนล่าสุด)',
     '4. ทะเบียนหัว / ทะเบียนหาง: เลือกจากรายการ — รถวิ่งเดี่ยวให้เว้นทะเบียนหางว่าง',
     '   รถพ่วง เช่น หัว 70-8901 หาง 8158 → ระบบรวมเป็น 70-8901-8158 ให้เอง',
-    '5. ตัดหางที่: ว่าง = ไม่ตัด · "นครสวรรค์" = ตัดหางที่ นว. (ขาขึ้นคิดเรทตัวแม่) · "กำแพงเพชร" = ถอดหางที่ กพ.',
+    '5. ตัดหางที่: ว่าง = ไม่ตัด · "นครสวรรค์" = ตัดหางที่ นว. (ขาขึ้นคิดเรทตัวแม่) · "กำแพงเพชร" = ถอดหางที่ กพ. · "กำแพงเพชร (หางเปล่า)" = ลากหางเปล่าไปตัดไว้ที่ กพ. (เรทสิบล้อ + เพิ่มตามตาราง)',
     '6. น้ำมัน: ใส่ "ลิตร" แยกตามปั๊มเป็นตัวเลขเท่านั้น (ไม่ใส่คำว่า ลิตร) · ปั๊มที่จ่ายเป็นเงินใช้ช่อง "บาท"',
     '   ขาล่องที่เติมไพศาล ให้กรอกในแถวขาล่อง ช่อง "ลิตร ดาวไพศาล (นครสวรรค์)"',
     '7. ช่องเงิน (ค่าเที่ยว / โอนสุทธิ / ค่าน้ำมัน / เบี้ยเลี้ยง / หัก / ระยะทาง) ไม่บังคับ',

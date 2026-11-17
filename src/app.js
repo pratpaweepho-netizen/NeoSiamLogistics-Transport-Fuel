@@ -494,7 +494,9 @@ const formatZeroAsEmpty = (value) => {
         const pumpName = (key) => GAS_STATION_FRIENDLY_NAMES[key] || key;
         const fmtPumps = (obj) => Object.entries(obj || {}).filter(([, v]) => Number(v)).map(([k, v]) => `${esc(pumpName(k))} ${Number(v).toLocaleString()}`).join(' + ') || '-';
         // A rate's uphill liters; trailer-drop rates have parts (แม่/ลูก) and a total but no pump.
-        const fmtRateUp = (s) => s.parts?.length
+        const fmtRateUp = (s) => s.extraLiters
+            ? `อัตราสิบล้อ + เพิ่มไม่เกิน ${Number(s.extraLiters)} ลิตร <span class="text-xs text-gray-400">(${esc(s.ruleText)})</span>`
+            : s.parts?.length
             ? `${s.parts.map(p => `${esc(p.part)}→${esc(p.destination)} ${Number(p.liters).toLocaleString()}`).join(' + ')} = ${Number(s.upTotal).toLocaleString()} (ไม่ระบุปั๊ม)`
             : fmtPumps(s.up);
 
