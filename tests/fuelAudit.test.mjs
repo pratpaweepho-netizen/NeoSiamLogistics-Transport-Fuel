@@ -1,5 +1,5 @@
 // Run: node tests/fuelAudit.test.mjs   (no network, no Excel file needed)
-import { parseRateSheet, buildAuditContext, auditTrip, canonDestination, applyCarry, flagDoubleDownhill, ratesMissingFrom } from '../src/fuelAudit.js';
+import { parseRateSheet, buildAuditContext, auditTrip, canonDestination, applyCarry, flagDoubleDownhill, ratesMissingFrom, rateVersionFor, makeRateContexts, planRateSave, buildRateSaveValue } from '../src/fuelAudit.js';
 
 let fail = 0;
 const eq = (name, a, b) => {
@@ -404,6 +404,34 @@ const dL = { leg: 'down', status: 'ok', flags: [], actual: { daopaisan_nakhonsaw
 const d26 = { leg: 'down', status: 'ok', flags: [], actual: { daopaisan_nakhonsawan: 180 }, trip: { id: 'a4', date: '2026-10-26', direction: 'ขาล่อง', driver: 'Q', plate: '70-7777' } };
 const seq7 = [u18, u24, dL, d26];
 flagDoubleDownhill(seq7, seq7.map(r => r.trip));
+// rate versions by effective date (user decision 17 Nov 2026: new sheet from 13 Nov 2026)
+const vOld = { effectiveFrom: '', standards: [{ cls: '10W', origin: 'กรุงเทพ', destination: 'เพชรบูรณ์', variant: 'standard', up: { jittamas_bangpain: 80 }, upTotal: 80, down: 120, downVictor: 120, flags: [] }] };
+const vNew = { effectiveFrom: '2026-11-13', standards: [{ cls: '10W', origin: 'กรุงเทพ', destination: 'เพชรบูรณ์', variant: 'via_bkk', up: { jittamas_bangpain: 60 }, upTotal: 60, down: 120, downVictor: 120, flags: [] },
+    { cls: '10W', origin: 'กรุงเทพ', destination: 'เพชรบูรณ์', variant: 'via_nsw', up: { jittamas_bangpain: 90 }, upTotal: 90, down: 120, downVictor: 120, flags: [] }] };
+eq('version by trip date', [rateVersionFor([vOld, vNew], '2026-11-12'), rateVersionFor([vOld, vNew], '2026-11-13'), rateVersionFor([vNew, vOld], '2026-12-01'), rateVersionFor([vOld, vNew], '')], [vOld, vNew, vNew, vNew]);
+eq('no version covers the date → null', rateVersionFor([vNew], '2026-10-01'), null);
+const ctxForDate = makeRateContexts([vOld, vNew], [{ registrationNumber: '70-4545', vehicleType: '10W', driveType: 'รถบริษัท' }]);
+const pe = (date) => auditTrip({ direction: 'ขาขึ้น', origin: 'HiQ', plate: '70-4545', destination: 'เมืองเพชรบูรณ์', date, gasStationsLiters: { jittamas_bangpain: 80 } }, ctxForDate(date), 0);
+eq('trip before 13 Nov judged by the old set, from 13 Nov by the new one', [pe('2026-11-12').status, pe('2026-11-13').status], ['ok', 'manual']);
+eq('one context per version (cached)', ctxForDate('2026-01-01') === ctxForDate('2026-05-05'), true);
+eq('uncovered date → empty context, not another period', makeRateContexts([vNew], [])('2026-10-01').std, {});
+eq('save from 13 Nov: current archived and still used, later sets retired', planRateSave({ effectiveFrom: '' }, [{ id: 'h1', effectiveFrom: '2026-11-20' }, { id: 'h2', effectiveFrom: '2026-01-01' }, { id: 'h3', effectiveFrom: '2026-12-01', retired: true }], '2026-11-13'),
+    { archiveCurrent: true, archivedRetired: false, retire: ['h1'] });
+eq('re-import for the same date replaces the current set', planRateSave({ effectiveFrom: '2026-11-13' }, [], '2026-11-13').archivedRetired, true);
+eq('"all months" retires everything', planRateSave({ effectiveFrom: '2026-11-13' }, [{ id: 'h1', effectiveFrom: '' }], ''), { archiveCurrent: true, archivedRetired: true, retire: ['h1'] });
+eq('first import: nothing to archive', planRateSave(null, [], '').archiveCurrent, false);
+// the actual write: the user's case — current set (no start date) archived and still used before 13 Nov
+const curStored = { meta: { fileName: 'old.xlsx', importedAt: '17/11/2569 13:06:31', count: 81 }, rows: { r001: { cls: '18W' } } };
+const upd = buildRateSaveValue(curStored, { r001: { cls: '10W' } }, { fileName: 'new.xlsx', importedAt: 'T2', count: 88, effectiveFrom: '2026-11-13', saveId: 'S1' }, 'K1', '');
+eq('save writes the new set with its start date', [upd.meta.effectiveFrom, upd.meta.saveId, upd.rows.r001.cls], ['2026-11-13', 'S1', '10W']);
+eq('the old set moves to history, still in use, rows kept', [upd.history.K1.meta.retired, upd.history.K1.meta.effectiveFrom, upd.history.K1.meta.fileName, upd.history.K1.rows.r001.cls], [false, '', 'old.xlsx', '18W']);
+eq('no undefined values', JSON.stringify(upd, (k, v) => v === undefined ? 'UNDEF' : v).includes('UNDEF'), false);
+eq('first ever save: nothing archived, no history key', Object.keys(buildRateSaveValue(null, { r001: {} }, { fileName: 'first.xlsx', importedAt: 'T', count: 1, effectiveFrom: '', saveId: 'S0' }, 'K2', '')), ['meta', 'rows']);
+eq('stored set changed since the preview → refused (null)', [buildRateSaveValue(upd, {}, { saveId: 'S9' }, 'K9', ''), buildRateSaveValue(curStored, {}, { saveId: 'S9' }, 'K9', 'S1')], [null, null]);
+const upd3 = buildRateSaveValue(upd, { r1: {} }, { fileName: 'fix.xlsx', importedAt: 'T3', effectiveFrom: '2026-11-13', saveId: 'S2' }, 'K3', 'S1');
+eq('re-import for the same date: the replaced set is retired, the older one stays in use', [upd3.history.K3.meta.retired, upd3.history.K1.meta.retired, upd3.history.K1.rows.r001.cls], [true, false, '18W']);
+const upd4 = buildRateSaveValue(upd, { r1: {} }, { fileName: 'all.xlsx', importedAt: 'T4', effectiveFrom: '', saveId: 'S3' }, 'K4', 'S1');
+eq('"all months": every earlier set retired, rows kept as backup', [upd4.history.K1.meta.retired, upd4.history.K4.meta.retired, !!upd4.history.K1.rows], [true, true, true]);
 const lostList = ratesMissingFrom([...standards, { cls: 'EMPTY_TRAILER_KPP', origin: '', destination: '', variant: 'standard', extraLiters: 20 }], standards.filter(s => s.destination !== 'แพร่'));
 eq('import preview names rates the file would drop (incl. the empty-trailer rule)', [lostList.length, lostList.some(x => x.includes('แพร่')), lostList.some(x => x.includes('+20'))], [2, true, true]);
 eq('older-queue column-L trip in between does not hide the next real double', [d26.flags.some(f => f.startsWith('อาจบันทึกขาล่องซ้ำ')), u24.flags.some(f => f.startsWith('อาจบันทึกขาล่องซ้ำ'))], [true, true]);

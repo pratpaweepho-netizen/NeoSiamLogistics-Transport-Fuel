@@ -205,6 +205,71 @@ export function parseRateSheet(sheets) {
 
 export const standardKey = (s) => `${s.cls}|${s.origin}|${s.destination}|${s.variant}`;
 
+// Rate sets by effective date (user decision 17 Nov 2026: the team's updated sheet applies from 13 Nov 2026; earlier
+// trips keep the set that was in force). versions: [{ effectiveFrom: 'YYYY-MM-DD' | '', standards }], '' = since the
+// beginning. A trip uses the version with the latest effectiveFrom on or before its date; a trip without a date uses
+// the newest. null = no set covers that date.
+export function rateVersionFor(versions, date) {
+    const d = clean(date);
+    let best = null;
+    for (const v of versions || []) {
+        if (!v) continue;
+        const eff = clean(v.effectiveFrom);
+        if (d && eff > d) continue;
+        if (!best || eff > clean(best.effectiveFrom)) best = v;
+    }
+    return best;
+}
+
+// One audit context per rate version, built once: returns (date) => ctx. A date no version covers gets an empty
+// context (every trip "no rate"), never another period's rates.
+export function makeRateContexts(versions, vehicles, opts = {}) {
+    const cache = new Map();
+    const get = (v) => {
+        if (!cache.has(v)) cache.set(v, buildAuditContext(v ? v.standards : [], vehicles, opts));
+        return cache.get(v);
+    };
+    return (date) => get(rateVersionFor(versions, date));
+}
+
+// What saving a new set that starts on `effectiveFrom` does to the sets already stored: the set in force is archived
+// (fuelRateStandards/history); every stored set that starts on or after the new date is fully overridden → retired (kept as a
+// backup, never used by the audit). effectiveFrom '' = the new set replaces every period.
+// current: { effectiveFrom } | null; history: [{ id, effectiveFrom, retired }].
+export function planRateSave(current, history, effectiveFrom) {
+    const eff = clean(effectiveFrom);
+    return {
+        archiveCurrent: !!current,
+        archivedRetired: !!current && clean(current.effectiveFrom) >= eff,
+        retire: (history || []).filter(h => h && !h.retired && clean(h.effectiveFrom) >= eff).map(h => h.id),
+    };
+}
+
+// The whole new value of the fuelRateStandards node { meta, rows, history: { key: { meta, rows } } } — written by
+// ONE transaction, so the new set, the archived set and the retire marks land together or not at all, and a second
+// save started from the same set is refused (the transaction re-runs against the stored value).
+// cur: the stored node value (or null); rows: the new rows by id; meta must carry saveId; archiveKey: a fresh key.
+// Returns null when the stored set is not the one the preview was compared with (expectedSaveId) → abort.
+// Values never contain undefined (Firebase rejects it).
+export function buildRateSaveValue(cur, rows, meta, archiveKey, expectedSaveId = '') {
+    if (((cur && cur.meta && cur.meta.saveId) || '') !== expectedSaveId) return null;
+    const hasCur = !!(cur && cur.rows);
+    const curEff = (hasCur && cur.meta?.effectiveFrom) || '';
+    const history = { ...((cur && cur.history) || {}) };
+    const plan = planRateSave(hasCur ? { effectiveFrom: curEff } : null,
+        Object.entries(history).map(([id, h]) => ({ id, effectiveFrom: h?.meta?.effectiveFrom || '', retired: !!h?.meta?.retired })), meta.effectiveFrom || '');
+    for (const id of plan.retire) history[id] = { ...history[id], meta: { ...(history[id].meta || {}), retired: true } };
+    if (plan.archiveCurrent) {
+        history[archiveKey] = {
+            meta: { ...(cur.meta || {}), effectiveFrom: curEff, archivedAt: meta.importedAt || '', replacedBy: meta.fileName || '', replacedFrom: meta.effectiveFrom || '', retired: plan.archivedRetired },
+            rows: cur.rows,
+        };
+    }
+    const out = { meta: { ...meta, effectiveFrom: meta.effectiveFrom || '' }, rows };
+    if (Object.keys(history).length) out.history = history;
+    return out;
+}
+
 // Rates now in the system that an incoming file does not have — saving replaces the whole set, so these would be
 // lost (e.g. the team's 17 Nov update overwrote the "ลากหางเปล่า +20 ลิตร" sentence and dropped วิเชียรบุรี).
 // Returns readable labels for the import preview.

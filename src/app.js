@@ -6,7 +6,7 @@ import { ICONS, GAS_STATION_FRIENDLY_NAMES, ROUTE_STATION_COLUMNS } from "./cons
 import { parseFuelBaseRows } from "./importer.js";
 import { detectSheetType, parseUphillQueue, parseDownhillQueue, parsePartnerQueue, parseDailyRows } from "./importerTrips.js";
 import { parseDrivers, parseRateTable, parseVehicles } from "./importerMasters.js";
-import { parseRateSheet, buildAuditContext, auditTrip, applyCarry, flagDoubleDownhill, AUDIT_CLASSES, AUDIT_STATUS, DOWN_STATUS, normalizeOriginExtras, parseDriverAliasSheet, applyDriverAlias, suggestFill, normalizeDestinationList, ratesMissingFrom } from "./fuelAudit.js";
+import { parseRateSheet, buildAuditContext, auditTrip, applyCarry, flagDoubleDownhill, AUDIT_CLASSES, AUDIT_STATUS, DOWN_STATUS, normalizeOriginExtras, parseDriverAliasSheet, applyDriverAlias, suggestFill, normalizeDestinationList, ratesMissingFrom, makeRateContexts } from "./fuelAudit.js";
 import { COLL_STATUS, downhillTripKeys, planDownhillFuel, withDownhillFuel, reconcileColumnL, createAllIfAbsent } from "./downhillFuel.js";
 import { planDateFix, buildDateFixBatches, recheckBatch, prevDay } from "./dateFix.js";
 import { TEMPLATE_SHEET, buildTemplateLists, generateTemplate, findTemplateHeader, parseTemplateRows, planTemplateSave, saveTemplateTrips } from "./tripTemplate.js";
@@ -526,7 +526,7 @@ const formatZeroAsEmpty = (value) => {
                     ${importStatCard('อัตราในระบบตอนนี้', appState.rateStandards.length)}
                 </div>
                 ${warnings.length ? `<p class="text-yellow-400 mb-3">⚠️ ${warnings.map(esc).join(', ')}</p>` : ''}
-                ${lost.length ? `<div class="bg-red-900/30 border border-red-700 rounded-lg p-3 mb-3 text-sm text-red-200"><b>⚠️ อัตราในระบบตอนนี้ที่ไฟล์นี้ไม่มี (${lost.length} รายการ) — ถ้าบันทึก รายการเหล่านี้จะหายไป:</b><br>${lost.map(esc).join(' · ')}</div>` : ''}
+                ${lost.length ? `<div class="bg-red-900/30 border border-red-700 rounded-lg p-3 mb-3 text-sm text-red-200"><b>⚠️ อัตราในระบบตอนนี้ที่ไฟล์นี้ไม่มี (${lost.length} รายการ) — ถ้าบันทึก เที่ยวตั้งแต่วันที่เริ่มใช้จะไม่มีอัตราเหล่านี้ (ถ้าติ๊ก "ใช้กับทุกเดือน" จะหายจากทุกเดือน):</b><br>${lost.map(esc).join(' · ')}</div>` : ''}
                 ${skippedSheets.length ? `<p class="text-xs text-gray-400 mb-3">ไม่ได้อ่าน: ${skippedSheets.map(esc).join(', ')} (ไม่มีหัวคอลัมน์ "รวมยอดขาขึ้น/ลิตร")</p>` : ''}
                 ${cur ? `<p class="text-xs text-gray-400 mb-3">ฉบับในระบบตอนนี้: ${esc(cur.fileName)} · บันทึกเมื่อ ${esc(cur.importedAt)}</p>` : ''}
                 <div class="overflow-x-auto rounded-lg border border-slate-700 mb-4 max-h-[28rem]">
@@ -537,21 +537,65 @@ const formatZeroAsEmpty = (value) => {
                         <tbody>${rows}</tbody>
                     </table>
                 </div>
-                <div class="bg-sky-900/30 border border-sky-700 rounded-lg p-3 mb-4 text-sm text-sky-200">ไฟล์นี้จะเป็น <b>อัตรามาตรฐาน</b> ที่หน้า "ตรวจการเติม" ใช้เทียบ — บันทึกแล้วจะแทนอัตราฉบับเดิมทั้งชุด (ไม่กระทบคิวรถหรือเส้นทาง)</div>
+                <div class="bg-sky-900/30 border border-sky-700 rounded-lg p-3 mb-4 text-sm text-sky-200">ไฟล์นี้จะเป็น <b>อัตรามาตรฐาน</b> ที่หน้า "ตรวจการเติม" ใช้เทียบ สำหรับเที่ยวตั้งแต่ <b>วันที่เริ่มใช้</b> — เที่ยวก่อนหน้านั้นยังใช้ฉบับเดิม (ฉบับเดิมเก็บไว้ ไม่ลบ · ไม่กระทบคิวรถหรือเส้นทาง)
+                    <div class="flex flex-wrap items-end gap-4 mt-3">
+                        <div><label for="rate-effective-from" class="block text-xs text-sky-300 mb-1">วันที่เริ่มใช้อัตราชุดนี้</label>
+                            <input type="date" id="rate-effective-from" class="bg-slate-800 border border-slate-600 rounded-md px-3 py-2 text-white" /></div>
+                        <label class="flex items-center gap-2 text-sm"><input type="checkbox" id="rate-effective-all" class="w-4 h-4"> ใช้กับทุกเดือน (ไม่ใช้ฉบับเดิมอีก)</label>
+                    </div>
+                    ${cur ? `<p class="text-xs text-gray-400 mt-2">ฉบับที่ใช้อยู่: ${esc(cur.fileName)}${cur.effectiveFrom ? ` (เริ่มใช้ ${esc(thaiDate(cur.effectiveFrom))})` : ' (ใช้กับทุกเที่ยว)'}</p>` : ''}
+                </div>
                 <button id="import-rates-save-btn" class="bg-primary hover:bg-secondary text-white font-bold py-2 px-5 rounded-lg shadow-md">บันทึกเป็นอัตรามาตรฐาน (${standards.length} อัตรา)</button>
                 <div id="import-result" class="mt-4"></div>`;
+        };
+
+        // Rate sets the audit uses: the current one (fuelRateStandards, from meta.effectiveFrom) and the archived sets
+        // still in force for earlier dates (fuelRateStandards/history, not retired). Same array while nothing changed (cache key).
+        const rateVersionsCache = { std: null, meta: null, hist: null, list: [] };
+        const rateVersions = () => {
+            const c = rateVersionsCache;
+            if (c.std !== appState.rateStandards || c.meta !== appState.rateStandardsMeta || c.hist !== appState.rateHistory) {
+                Object.assign(c, { std: appState.rateStandards, meta: appState.rateStandardsMeta, hist: appState.rateHistory,
+                    list: [{ id: 'current', effectiveFrom: appState.rateStandardsMeta?.effectiveFrom || '', standards: appState.rateStandards, meta: appState.rateStandardsMeta },
+                        ...(appState.rateHistory || []).filter(h => !h.retired)] });
+            }
+            return c.list;
+        };
+        // [{ v, label }] — each set in use and the trips it covers, e.g. "ก่อน 13 พ.ย. 2569" / "ตั้งแต่ 13 พ.ย. 2569".
+        const rateVersionRanges = () => {
+            const list = [...rateVersions()].sort((a, b) => (a.effectiveFrom || '').localeCompare(b.effectiveFrom || ''));
+            return list.map((v, i) => {
+                const next = list[i + 1]?.effectiveFrom;
+                const from = v.effectiveFrom ? `ตั้งแต่ ${thaiDate(v.effectiveFrom)}` : '';
+                const to = next ? `ก่อน ${thaiDate(next)}` : '';
+                return { v, label: [from, to].filter(Boolean).join(' ') || 'ทุกเที่ยว' };
+            });
         };
 
         const handleImportRatesCommit = async () => {
             if (!importParsedStandards?.standards?.length) return;
             const { standards, fileName } = importParsedStandards;
-            if (!confirm(`บันทึก ${standards.length} อัตราจาก "${fileName}" เป็นอัตรามาตรฐาน?\n\nอัตราฉบับเดิมในระบบจะถูกแทนที่ทั้งชุด`)) return;
+            const effInput = document.getElementById('rate-effective-from')?.value || '';
+            const allMonths = !!document.getElementById('rate-effective-all')?.checked;
+            const msg = document.getElementById('import-result');
+            const firstSet = !appState.rateStandards.length;
+            if (!firstSet && !allMonths && !/^\d{4}-\d{2}-\d{2}$/.test(effInput)) { if (msg) msg.innerHTML = '<p class="text-red-400">เลือก "วันที่เริ่มใช้" ก่อน (หรือติ๊ก "ใช้กับทุกเดือน")</p>'; return; }
+            const effectiveFrom = allMonths || firstSet ? '' : effInput;
+            const curMeta = appState.rateStandardsMeta;
+            const curName = curMeta?.fileName || 'ฉบับเดิม';
+            const curEff = curMeta?.effectiveFrom || '';
+            const what = firstSet ? 'ใช้กับทุกเที่ยว (ยังไม่มีอัตราฉบับก่อนหน้า)'
+                : allMonths ? `ใช้กับทุกเดือน — "${curName}" และฉบับก่อนหน้าทั้งหมดจะไม่ถูกใช้อีก (เก็บไว้เป็นสำรอง)`
+                : effectiveFrom <= curEff ? `เที่ยวตั้งแต่ ${thaiDate(effectiveFrom)} ใช้ไฟล์นี้ — แทน "${curName}" (ซึ่งเริ่มใช้ ${thaiDate(curEff)})`
+                : `เที่ยวตั้งแต่ ${thaiDate(effectiveFrom)} ใช้ไฟล์นี้ · เที่ยวก่อนหน้านั้นยังใช้ "${curName}"`;
+            if (!confirm(`บันทึก ${standards.length} อัตราจาก "${fileName}" เป็นอัตรามาตรฐาน?\n\n${what}`)) return;
             const btn = document.getElementById('import-rates-save-btn');
             const resultDiv = document.getElementById('import-result');
             btn.disabled = true; btn.classList.add('opacity-60', 'cursor-not-allowed');
             try {
-                const meta = { fileName, importedAt: new Date().toLocaleString('th-TH'), count: standards.length, flagged: standards.filter(s => s.flags.length).length };
-                await logisticsService.replaceRateStandards(standards, meta);
+                const meta = { fileName, importedAt: new Date().toLocaleString('th-TH'), count: standards.length, flagged: standards.filter(s => s.flags.length).length, effectiveFrom };
+                // expectedCurrent: the set this preview was compared with — the save is refused if another one was saved since.
+                await logisticsService.replaceRateStandards(standards, meta, curMeta?.saveId || '');
                 resultDiv.innerHTML = `<p class="text-green-400 font-bold">✓ บันทึกอัตรามาตรฐาน ${standards.length} อัตราแล้ว — ไปที่แท็บ "ตรวจการเติม" เพื่อดูผลตรวจ</p>`;
             } catch (err) {
                 console.error('Save rate standards failed:', err);
@@ -1011,7 +1055,7 @@ const formatZeroAsEmpty = (value) => {
         // '2026-11-17' → '17 พ.ย. 2569' — so a day/month swapped by the PC's date setting is easy to spot.
         const thaiDate = (d) => { const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(d || ''); return m ? `${+m[3]} ${TH_MONTHS[+m[2] - 1]} ${+m[1] + 543}` : ''; };
 
-        const renderTemplatePreview = ({ rows }, ctx) => {
+        const renderTemplatePreview = ({ rows }, ctxFor) => {
             const tol = appState.auditState.tolerance || 0;
             const count = (f) => rows.filter(f).length;
             const nErr = count(p => p.status === 'error'), nNew = count(p => p.importState === 'new');
@@ -1025,7 +1069,7 @@ const formatZeroAsEmpty = (value) => {
             };
             const auditCell = (p) => {
                 if (p.status === 'error' || !p.trip.totalLiters && !p.trip.totalBaht) return '<span class="text-gray-600">—</span>';
-                const r = auditTrip(p.trip, ctx, tol);
+                const r = auditTrip(p.trip, ctxFor(p.trip.date), tol);
                 if (!r) return '<span class="text-gray-600">—</span>';
                 const why = [r.reason, ...(r.flags || [])].filter(Boolean).join(' · ');
                 const diff = r.status === 'no-rate' ? '' : ` ${r.diff > 0 ? '+' : ''}${r.diff}`;
@@ -1097,7 +1141,7 @@ const formatZeroAsEmpty = (value) => {
                 return;
             }
             importParsedTemplate = { ...res, fileName };
-            preview.innerHTML = renderTemplatePreview(res, buildAuditContext(appState.rateStandards, appState.vehicles, { originExtras: appState.auditState.originExtras }));
+            preview.innerHTML = renderTemplatePreview(res, makeRateContexts(rateVersions(), appState.vehicles, { originExtras: appState.auditState.originExtras }));
             const nNew = res.rows.filter(p => p.importState === 'new').length;
             const btn = document.getElementById('tpl-save-btn');
             document.querySelectorAll('.tpl-dup-cb').forEach(cb => cb.addEventListener('change', () => {
@@ -1555,7 +1599,7 @@ const formatZeroAsEmpty = (value) => {
             const v = (n) => form.querySelector(`[name="${n}"]`)?.value || '';
             // Official rate sheet (master), same rules as the audit — not the old route table (user correction 17 Nov 2026).
             const sug = suggestFill({ vehicleType: v('vehicleType'), plate: v('plate'), origin: v('origin'), destination: v('destination'), direction: v('direction'),
-                jobDetail: v('jobDetail'), notes: v('notes'), queueType: v('queueType') }, rateCtx());
+                jobDetail: v('jobDetail'), notes: v('notes'), queueType: v('queueType') }, rateCtx(v('date')));
             if (!sug.ok) {
                 alert(`ไม่มีอัตราในตารางอัตราสำหรับเที่ยวนี้:\n${sug.reason}`);
                 return;
@@ -2365,11 +2409,13 @@ const formatZeroAsEmpty = (value) => {
             const aliasTrip = (t) => applyDriverAlias(t, dal);
             // The trip as the audit sees it (alias + column L fill). The double-downhill check needs the column L reference too.
             const asAudited = (t) => withDownhillFuel(aliasTrip(t), dfuel[t.id]);
-            if (auditCache.trips !== appState.trips || auditCache.std !== appState.rateStandards || auditCache.veh !== appState.vehicles || auditCache.tol !== tol || auditCache.pastKey !== pastKey || auditCache.dfuel !== dfuel || auditCache.ox !== ox || auditCache.dal !== dal) {
-                const ctx = buildAuditContext(appState.rateStandards, appState.vehicles, { originExtras: ox });
+            const rv = rateVersions();
+            if (auditCache.trips !== appState.trips || auditCache.std !== rv || auditCache.veh !== appState.vehicles || auditCache.tol !== tol || auditCache.pastKey !== pastKey || auditCache.dfuel !== dfuel || auditCache.ox !== ox || auditCache.dal !== dal) {
+                // Each trip is judged by the rate set in force on its date (rate versions, user decision 17 Nov 2026).
+                const ctxFor = makeRateContexts(rv, appState.vehicles, { originExtras: ox });
                 // Downhill trips without their own liters take the column L fill (downhillFuel); the trip itself is untouched.
                 const run = (trips) => (trips || []).map(t => {
-                    const r = auditTrip(asAudited(t), ctx, tol);
+                    const r = auditTrip(asAudited(t), ctxFor(t.date), tol);
                     if (r && r.trip.fuelFrom === 'colL') r.flags = [...r.flags, `ลิตรจากช่อง "คิวรถล่าสุด" ไฟล์ Transport: ${r.trip.fuelText}`];
                     return r;
                 }).filter(Boolean);
@@ -2377,8 +2423,8 @@ const formatZeroAsEmpty = (value) => {
                 let balances = {};
                 if (carryReady) {
                     // Earlier months do not change with the live month — audit them once per (data, rates, vehicles, tolerance).
-                    if (auditPastResults.key !== pastKey || auditPastResults.std !== appState.rateStandards || auditPastResults.veh !== appState.vehicles || auditPastResults.tol !== tol || auditPastResults.dfuel !== dfuel || auditPastResults.ox !== ox || auditPastResults.dal !== dal) {
-                        auditPastResults = { key: pastKey, std: appState.rateStandards, veh: appState.vehicles, tol, dfuel, ox, dal, results: pastMonths.flatMap(m => run(auditPastTrips[m])) };
+                    if (auditPastResults.key !== pastKey || auditPastResults.std !== rv || auditPastResults.veh !== appState.vehicles || auditPastResults.tol !== tol || auditPastResults.dfuel !== dfuel || auditPastResults.ox !== ox || auditPastResults.dal !== dal) {
+                        auditPastResults = { key: pastKey, std: rv, veh: appState.vehicles, tol, dfuel, ox, dal, results: pastMonths.flatMap(m => run(auditPastTrips[m])) };
                     }
                     const ordered = [...auditPastResults.results.map(r => ({ ...r })), ...all].sort(tripOrder);
                     reconcileColumnL(ordered, new Set([...pastMonths, month]));
@@ -2388,7 +2434,7 @@ const formatZeroAsEmpty = (value) => {
                     reconcileColumnL(all, new Set([month]));
                     flagDoubleDownhill(all, appState.trips.map(asAudited));
                 }
-                auditCache = { trips: appState.trips, std: appState.rateStandards, veh: appState.vehicles, tol, pastKey, dfuel, ox, dal, all, balances };
+                auditCache = { trips: appState.trips, std: rv, veh: appState.vehicles, tol, pastKey, dfuel, ox, dal, all, balances };
             }
             const { all, balances } = auditCache;
             const q = (as.search || '').trim().toLowerCase();
@@ -2436,7 +2482,7 @@ const formatZeroAsEmpty = (value) => {
                             </div>
                         </div>
                         <p class="text-xs text-gray-400">${meta
-                            ? `อัตรามาตรฐาน: ${esc(meta.fileName)} · ${appState.rateStandards.length} อัตรา · บันทึกเมื่อ ${esc(meta.importedAt)}${meta.flagged ? ` · <span class="text-amber-300">${meta.flagged} แถวในไฟล์อัตรามีข้อสังเกต</span>` : ''}`
+                            ? `อัตรามาตรฐาน: ${esc(meta.fileName)} · ${appState.rateStandards.length} อัตรา${meta.effectiveFrom ? ` · ใช้กับเที่ยวตั้งแต่ ${esc(thaiDate(meta.effectiveFrom))}` : ''} · บันทึกเมื่อ ${esc(meta.importedAt)}${meta.flagged ? ` · <span class="text-amber-300">${meta.flagged} แถวในไฟล์อัตรามีข้อสังเกต</span>` : ''}${rateVersionRanges().filter(x => x.v.id !== 'current').map(x => `<br>ฉบับก่อนหน้า: ${esc(x.v.meta?.fileName || '-')} · ${x.v.standards.length} อัตรา · ใช้กับเที่ยว${esc(x.label)}`).join('')}`
                             : '<span class="text-amber-300">⚠️ ยังไม่มีอัตรามาตรฐาน — นำเข้าไฟล์ "อัตราเติมน้ำมันประจำ ปั๊ม ต่างๆ" ที่แท็บ นำเข้า Excel ก่อน</span>'}</p>
                         <div id="audit-content" class="mt-4">${renderAuditContent()}</div>
                         <div id="audit-ox" class="mt-2">${renderOriginExtrasEditor()}</div>
@@ -2446,6 +2492,7 @@ const formatZeroAsEmpty = (value) => {
 
         const renderAuditContent = () => {
             if (!appState.rateStandards.length) return '';
+            if (!appState.rateHistoryLoaded) return '<p class="text-center py-8 text-gray-500">กำลังโหลดตารางอัตราฉบับก่อนหน้า…</p>';
             if (!logisticsService.getTrips().length) return `<p class="text-center py-8 text-gray-500">ไม่มีคิวรถในเดือนนี้ — เลือกเดือนอื่น</p>`;
             const as = appState.auditState;
             const { all, shown, count, downCount, downTrips, downTripsTotal, overL, underL, drivers, tol, carryOn, carryReady, carryPending, carryFailed, carryTooLong, pastMonths } = computeAudit();
@@ -2538,7 +2585,7 @@ const formatZeroAsEmpty = (value) => {
                     </table>
                 </div>
                 <div class="mt-6">
-                    <button id="audit-toggle-standards" class="text-sky-300 hover:text-sky-200 text-sm font-bold">${as.showStandards ? '▼' : '▶'} ตารางอัตรามาตรฐาน (${appState.rateStandards.length} อัตรา)</button>
+                    <button id="audit-toggle-standards" class="text-sky-300 hover:text-sky-200 text-sm font-bold">${as.showStandards ? '▼' : '▶'} ตารางอัตรามาตรฐาน (${appState.rateStandards.length} อัตรา${appState.rateStandardsMeta?.effectiveFrom ? ` · ฉบับที่ใช้กับเที่ยวตั้งแต่ ${esc(thaiDate(appState.rateStandardsMeta.effectiveFrom))} — ฉบับก่อนหน้าดูได้ใน Export Excel` : ''})</button>
                     ${as.showStandards ? `
                     <div class="overflow-x-auto rounded-lg border border-slate-700 mt-2">
                         <table class="w-full text-sm text-left">
@@ -2699,6 +2746,7 @@ const formatZeroAsEmpty = (value) => {
 
         const handleAuditExport = () => {
             if (!appState.rateStandards.length) { alert('ยังไม่มีอัตรามาตรฐาน'); return; }
+            if (!appState.rateHistoryLoaded) { alert('ตารางอัตรายังโหลดไม่ครบ — รอสักครู่แล้วลอง Export อีกครั้ง'); return; }
             const { all, drivers, tol, carryOn, carryReady } = computeAudit();
             if (!all.length) { alert('ไม่มีเที่ยวให้ export ในเดือนนี้'); return; }
             // Never hand out a file with blank carry columns that look final.
@@ -2728,10 +2776,10 @@ const formatZeroAsEmpty = (value) => {
                 drivers.map(d => [d.driver, d.n, d.checked, d.ok, d.over, d.overL, d.under, d.underL, d.wrong, d.balance == null ? '' : d.balance]),
                 [24, 8, 8, 8, 10, 10, 10, 10, 8, 16]);
             sheet('อัตรามาตรฐาน',
-                ['ชีต', 'แถว', 'ประเภทรถ', 'รุ่น', 'ต้นทาง', 'ปลายทาง', 'ขาขึ้น (ลิตร)', 'รวมขาขึ้น', 'ขาล่องไพศาล', 'ขาล่อง victor', 'เบี้ยขับ', 'ข้อสังเกต'],
-                appState.rateStandards.map(s => [s.sheet, s.row, AUDIT_CLASSES[s.cls], s.variant === 'sino' ? 'sino' : '', s.origin, s.destinationLabel,
-                    Object.entries(s.up).map(([k, v]) => `${pumpName(k)} ${v}`).join(' + '), s.upTotal, n(s.down), n(s.downVictor), s.allowanceText, (s.flags || []).join(' | ')]),
-                [14, 6, 18, 8, 12, 24, 40, 10, 12, 12, 30, 50]);
+                ['ใช้กับเที่ยว', 'ไฟล์อัตรา', 'ชีต', 'แถว', 'ประเภทรถ', 'รุ่น', 'ต้นทาง', 'ปลายทาง', 'ขาขึ้น (ลิตร)', 'รวมขาขึ้น', 'ขาล่องไพศาล', 'ขาล่อง victor', 'เบี้ยขับ', 'ข้อสังเกต'],
+                rateVersionRanges().flatMap(({ v, label }) => v.standards.map(s => [label, v.meta?.fileName || '', s.sheet, s.row, AUDIT_CLASSES[s.cls], s.variant === 'sino' ? 'sino' : '', s.origin, s.destinationLabel,
+                    Object.entries(s.up).map(([k, x]) => `${pumpName(k)} ${x}`).join(' + '), s.upTotal, n(s.down), n(s.downVictor), s.allowanceText, (s.flags || []).join(' | ')])),
+                [24, 30, 14, 6, 18, 8, 12, 24, 40, 10, 12, 12, 30, 50]);
             XLSX.writeFile(wb, `ตรวจการเติมน้ำมัน_${appState.tripsMonth || localDateStr().slice(0, 7)}_คลาดเคลื่อน${tol}ลิตร.xlsx`);
         };
 
@@ -3163,7 +3211,7 @@ const formatZeroAsEmpty = (value) => {
             attachAutocompleteListeners('form-destination', logisticsService.getUniqueValues('destination'));
 
             // V-lookup trigger
-            ['form-vehicle-type', 'form-origin', 'form-destination', 'form-direction', 'form-vehicle-registration', 'form-job-detail', 'form-notes', 'form-queue-type'].forEach(id => {
+            ['form-date', 'form-vehicle-type', 'form-origin', 'form-destination', 'form-direction', 'form-vehicle-registration', 'form-job-detail', 'form-notes', 'form-queue-type'].forEach(id => {
                 const input = document.getElementById(id);
                 if(input) input.addEventListener('change', updateVlookupCard);
             });
@@ -3412,14 +3460,17 @@ const formatZeroAsEmpty = (value) => {
         // suggests exactly what the audit expects — user correction 17 Nov 2026: the card used the old route table
         // (e.g. 18W โกดังสาย 3 → พิษณุโลก จิตตมาศ 180) instead of the sheet (จิตตมาศ 80 + ไพศาล 180).
         // The old route table is shown only as a reference.
-        const rateCtxCache = { std: null, veh: null, ox: null, dou: null, ctx: null };
-        const rateCtx = () => {
+        // The rate set in force on the given date (rate versions); no date → the newest set. Callers pass the date of
+        // the form they fill (entry form #form-date, trip edit modal name="date").
+        const rateCtxCache = { std: null, veh: null, ox: null, dou: null, ctxFor: null };
+        const rateCtx = (date) => {
             const as = appState.auditState;
-            if (rateCtxCache.std !== appState.rateStandards || rateCtxCache.veh !== appState.vehicles || rateCtxCache.ox !== as.originExtras || rateCtxCache.dou !== as.downOnUphill) {
-                Object.assign(rateCtxCache, { std: appState.rateStandards, veh: appState.vehicles, ox: as.originExtras, dou: as.downOnUphill,
-                    ctx: buildAuditContext(appState.rateStandards, appState.vehicles, { originExtras: as.originExtras, downOnUphill: as.downOnUphill }) });
+            const rv = rateVersions();
+            if (rateCtxCache.std !== rv || rateCtxCache.veh !== appState.vehicles || rateCtxCache.ox !== as.originExtras || rateCtxCache.dou !== as.downOnUphill) {
+                Object.assign(rateCtxCache, { std: rv, veh: appState.vehicles, ox: as.originExtras, dou: as.downOnUphill,
+                    ctxFor: makeRateContexts(rv, appState.vehicles, { originExtras: as.originExtras, downOnUphill: as.downOnUphill }) });
             }
-            return rateCtxCache.ctx;
+            return rateCtxCache.ctxFor(date || '');
         };
         const sameLiters = (a, b) => {
             const n = (o) => JSON.stringify(Object.entries(o || {}).map(([k, v]) => [k, Number(v) || 0]).filter(([, v]) => v).sort());
@@ -3432,7 +3483,7 @@ const formatZeroAsEmpty = (value) => {
         const formQuery = () => {
             const val = (id) => document.getElementById(id)?.value || '';
             return { vehicleType: val('form-vehicle-type'), plate: val('form-vehicle-registration'), origin: val('form-origin'), destination: val('form-destination'),
-                direction: val('form-direction'), jobDetail: val('form-job-detail'), notes: val('form-notes'), queueType: val('form-queue-type') };
+                direction: val('form-direction'), jobDetail: val('form-job-detail'), notes: val('form-notes'), queueType: val('form-queue-type'), date: val('form-date') };
         };
         // "Downhill ไพศาล on this record?" tick: default from practice (sug.downOnUp); the dispatcher's choice is kept only
         // while the same record (plate + route + direction) is being entered, and reset with the form.
@@ -3447,7 +3498,7 @@ const formatZeroAsEmpty = (value) => {
             const cardContent = document.getElementById('vlookup-card-content');
             if (!cardContent) return;
             const q = formQuery();
-            const sug = suggestFill(q, rateCtx());
+            const sug = suggestFill(q, rateCtx(q.date));
             const oldRoute = logisticsService.findMatchingRoute(q.vehicleType, q.origin, q.destination);
             const pname = (k) => esc(logisticsService.getFriendlyGasStationName(k));
             const row = (label, value) => `<div class="flex justify-between items-center text-sm py-1"><span class="text-gray-400">${label}</span><span class="font-semibold">${value}</span></div>`;
@@ -3493,7 +3544,7 @@ const formatZeroAsEmpty = (value) => {
         // Fill the fuel form's liter rows from the official rate (baht rows are left as they are: the sheet has no baht).
         const handleApplyRouteToForm = () => {
             const q = formQuery();
-            const sug = suggestFill(q, rateCtx());
+            const sug = suggestFill(q, rateCtx(q.date));
             if (!sug.ok) return;
             const container = document.getElementById('distribution-list-liters');
             if (!container) return;

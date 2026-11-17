@@ -3,7 +3,7 @@
 import firebase from "firebase/compat/app";
 import "firebase/compat/database";
 import { GAS_STATION_KEYS, GAS_STATION_FRIENDLY_NAMES, firebaseConfig } from "./constants.js";
-import { DEFAULT_ORIGIN_EXTRAS, normalizeOriginExtras, normalizeDriverAliases, DEFAULT_DOWN_ON_UPHILL, normalizeDestinationList } from "./fuelAudit.js";
+import { DEFAULT_ORIGIN_EXTRAS, normalizeOriginExtras, normalizeDriverAliases, DEFAULT_DOWN_ON_UPHILL, normalizeDestinationList, buildRateSaveValue } from "./fuelAudit.js";
 
 // UI seam: app.js injects render/hideLoading so the data layer stays free of DOM/render code.
 let ui = { render: () => {}, hideLoading: () => {} };
@@ -26,6 +26,10 @@ export let appState = {
             // Fuel audit (ตรวจการเติม): official rate sheet rows + the audit page's UI state
             rateStandards: [],
             rateStandardsMeta: null,
+            // Earlier rate sets (fuelRateStandards/history): [{ id, meta, effectiveFrom, retired, standards }]. A set in force is
+            // archived here when a new one is saved with a start date; the audit uses each set for its own period.
+            rateHistory: [],
+            rateHistoryLoaded: false,
             // tolerance / carryStart are shared settings (Firebase settings/fuelAudit); the rest is per-screen UI state.
             // originExtras: "extra fill by pickup place" rules — default from the company's old fuel base until saved
             // in settings/fuelAudit.originExtras (user decision 17 Nov 2026).
@@ -1050,12 +1054,19 @@ export let appState = {
                     if (appState.view === 'form') ui.render();
                 }, onListenerError('rateTable'));
 
+                // fuelRateStandards { meta, rows, history }: the set in force (from meta.effectiveFrom) and the earlier sets
+                // (history, archived when a newer set was saved with a start date). One node, one listener: the audit
+                // never sees a new set without its earlier sets.
                 database.ref('fuelRateStandards').on('value', (snapshot) => {
                     const data = snapshot.val() || {};
-                    appState.rateStandards = data.rows
-                        ? Object.entries(data.rows).map(([id, v]) => ({ id, ...v, up: v.up || {}, flags: v.flags || [] })).sort((a, b) => a.id.localeCompare(b.id))
-                        : [];
+                    const toRows = (rows) => Object.entries(rows || {}).map(([id, v]) => ({ id, ...v, up: v.up || {}, flags: v.flags || [] })).sort((a, b) => a.id.localeCompare(b.id));
+                    appState.rateStandards = toRows(data.rows);
                     appState.rateStandardsMeta = data.meta || null;
+                    appState.rateHistory = Object.entries(data.history || {}).map(([id, h]) => ({
+                        id, meta: h.meta || {}, effectiveFrom: h.meta?.effectiveFrom || '', retired: !!h.meta?.retired,
+                        standards: h.meta?.retired ? [] : toRows(h.rows),
+                    })).sort((a, b) => a.effectiveFrom.localeCompare(b.effectiveFrom) || a.id.localeCompare(b.id));
+                    appState.rateHistoryLoaded = true;
                     // Not 'import': re-rendering there would wipe the preview and the "saved" message right after saving.
                     if (appState.view === 'audit') ui.render();
                 }, onListenerError('fuelRateStandards'));
@@ -1119,11 +1130,20 @@ export let appState = {
             fetchTripsMonth: (ym) => database.ref(`trips/${ym}`).once('value')
                 .then(s => { const v = s.val(); return v ? Object.entries(v).map(([id, t]) => ({ id, ...t })) : []; }),
             getRateStandards: () => [...appState.rateStandards],
-            // Replace the whole rate master with a freshly parsed sheet (the sheet is the source of truth).
-            replaceRateStandards: (standards, meta) => {
+            // Save a freshly parsed sheet as the rate set in force from meta.effectiveFrom ('' = every period). The set it
+            // replaces moves to history (still used for trips before that date); later-starting sets are retired (kept).
+            // ONE transaction on the node: all of it is written or nothing, and if another save landed since the preview
+            // (stored meta.saveId ≠ expectedSaveId) this one is refused.
+            replaceRateStandards: async (standards, meta, expectedSaveId = '') => {
                 const rows = {};
                 standards.forEach(s => { const { id, ...rest } = s; rows[id] = rest; });
-                return database.ref('fuelRateStandards').set({ meta, rows });
+                const ref = database.ref('fuelRateStandards');
+                const saveId = ref.push().key, archiveKey = ref.push().key;
+                const tx = await ref.transaction(cur => {
+                    const next = buildRateSaveValue(cur, rows, { ...meta, saveId }, archiveKey, expectedSaveId);
+                    return next === null ? undefined : next; // undefined = abort
+                });
+                if (!tx.committed) throw new Error('มีการบันทึกอัตราชุดอื่นระหว่างนี้ — โหลดหน้าใหม่แล้วอ่านไฟล์อีกครั้ง');
             },
 
             addRoute: (routeData) => database.ref('routes').push(routeData),
