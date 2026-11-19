@@ -4,6 +4,9 @@ import firebase from "firebase/compat/app";
 import "firebase/compat/database";
 import { GAS_STATION_KEYS, GAS_STATION_FRIENDLY_NAMES, firebaseConfig } from "./constants.js";
 import { DEFAULT_ORIGIN_EXTRAS, normalizeOriginExtras, normalizeDriverAliases, DEFAULT_DOWN_ON_UPHILL, normalizeDestinationList, buildRateSaveValue } from "./fuelAudit.js";
+import { fmtMonth } from "./thaiDate.js";
+import { closedOf as closedOfIn, settingsForRestore, rateSaveClosedHit, PARTS_LOCKED_BY_CLOSED_MONTHS } from "./periods.js";
+import { round2 } from "./money.js";
 
 // UI seam: app.js injects render/hideLoading so the data layer stays free of DOM/render code.
 let ui = { render: () => {}, hideLoading: () => {} };
@@ -30,6 +33,11 @@ export let appState = {
             // archived here when a new one is saved with a start date; the audit uses each set for its own period.
             rateHistory: [],
             rateHistoryLoaded: false,
+            // Closed pay periods (settings/closedMonths/{YYYY-MM}): trips of these months cannot be changed in the app.
+            closedMonths: {},
+            closedMonthsLoaded: false, // writes to trips wait for the first snapshot (never "open" by default)
+            closedMonthsError: '',
+            tripsLoadedFor: '', // the month whose trips snapshot is in appState.trips
             // tolerance / carryStart are shared settings (Firebase settings/fuelAudit); the rest is per-screen UI state.
             // originExtras: "extra fill by pickup place" rules — default from the company's old fuel base until saved
             // in settings/fuelAudit.originExtras (user decision 17 Nov 2026).
@@ -81,6 +89,20 @@ export let appState = {
         const createIfAbsent = (path, value) => database.ref(path)
             .transaction(cur => (cur === null ? value : undefined))
             .then(r => !!r.committed);
+
+        // Closed months (item 6, 19 Nov 2026): every service that writes trips or column-L liters refuses a closed month.
+        // App-level only — the database rules are not closed yet (phase 3 parked), so this guards the app, not the data.
+        const closedOf = (yms) => closedOfIn(yms, appState.closedMonths);
+        const closedError = (yms) => new Error(`เดือน ${yms.map(fmtMonth).join(', ')} ปิดงวดแล้ว — เปิดงวดในหน้า "การเงิน" ก่อนจึงจะแก้เที่ยวของเดือนนั้นได้`);
+        const lockStateError = () => (!appState.closedMonthsLoaded
+            ? new Error(appState.closedMonthsError ? `โหลดสถานะปิดงวดไม่สำเร็จ (${appState.closedMonthsError}) — แก้เที่ยวไม่ได้จนกว่าจะโหลดได้ ลองโหลดหน้าใหม่` : 'กำลังโหลดสถานะปิดงวด — ลองอีกครั้งในอีกสักครู่')
+            : null);
+        const whenOpen = (yms, write) => {
+            const e = lockStateError();
+            if (e) return Promise.reject(e);
+            const c = closedOf(yms);
+            return c.length ? Promise.reject(closedError(c)) : write();
+        };
 
         export const logisticsService = {
             initialize: () => {
@@ -1074,6 +1096,16 @@ export let appState = {
                     if (appState.view === 'audit') ui.render();
                 }, onListenerError('fuelRateStandards'));
 
+                database.ref('settings/closedMonths').on('value', (snapshot) => {
+                    appState.closedMonths = snapshot.val() || {};
+                    appState.closedMonthsLoaded = true;
+                    appState.closedMonthsError = '';
+                    if (['payroll', 'queue', 'audit'].includes(appState.view)) ui.render();
+                }, (err) => {
+                    appState.closedMonthsError = String(err?.message || err); // writes stay refused (lockStateError)
+                    onListenerError('settings/closedMonths')(err);
+                });
+
                 database.ref('settings/fuelAudit').on('value', (snapshot) => {
                     const s = snapshot.val() || {};
                     if (typeof s.tolerance === 'number') appState.auditState.tolerance = s.tolerance;
@@ -1124,6 +1156,10 @@ export let appState = {
             // the part ends up exactly as in the file. onProgress(childKey) reports each step.
             replaceDbNode: async (name, value, onProgress) => {
                 if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(name)) throw new Error(`ชื่อส่วนข้อมูลไม่ถูกต้อง: ${name}`);
+                // a whole-part restore of trips / column-L liters / rate sets would also rewrite closed months
+                if (PARTS_LOCKED_BY_CLOSED_MONTHS.includes(name)) { const e = lockStateError(); if (e) throw e; const c = closedOf(Object.keys(appState.closedMonths || {})); if (c.length) throw closedError(c); }
+                // settings: the file's settings, but the CURRENT lock state and logs (never reopen / re-close months from a file)
+                if (name === 'settings') value = settingsForRestore(value, (await database.ref('settings').once('value')).val());
                 const big = value && typeof value === 'object' && !Array.isArray(value) && JSON.stringify(value).length > 4e6;
                 if (!big) { await database.ref(name).set(value ?? null); return; }
                 const keys = Object.keys(value);
@@ -1135,24 +1171,35 @@ export let appState = {
                 if (extra.length) await database.ref(name).update(Object.fromEntries(extra.map(k => [k, null])));
             },
             logRestore: (entry) => database.ref('settings/restoreLog').push(entry),
+            // Close / reopen a pay period; every change is logged in settings/periodLog with the totals at that moment.
+            closeMonth: async (ym, totals) => {
+                const at = new Date().toISOString();
+                await database.ref().update({ [`settings/closedMonths/${ym}`]: { closedAt: at, totals }, [`settings/periodLog/${database.ref('settings/periodLog').push().key}`]: { at, ym, action: 'close', totals } });
+            },
+            closedOf: (yms) => closedOf(yms),
+            lockStateError: () => lockStateError(),
+            reopenMonth: async (ym, reason) => {
+                const at = new Date().toISOString();
+                await database.ref().update({ [`settings/closedMonths/${ym}`]: null, [`settings/periodLog/${database.ref('settings/periodLog').push().key}`]: { at, ym, action: 'reopen', reason: reason || '' } });
+            },
             fetchTripsMonthRaw: (ym) => database.ref(`trips/${ym}`).once('value').then(s => s.val() || {}),
-            applyTripsUpdate: (updates) => database.ref('trips').update(updates),
+            applyTripsUpdate: (updates) => whenOpen(Object.keys(updates).map(p => p.split('/')[0]), () => database.ref('trips').update(updates)),
             logDateFix: (entry) => database.ref('settings/dateFixLog').push(entry),
             logUphillPay: (entry) => database.ref('settings/uphillPayLog').push(entry),
             // One trip, conditional: updateFn(current) returns the new trip or undefined (abort). A trip not in the local
             // cache arrives as null first — returning null then makes Firebase re-run with the stored value (never
             // creates a trip). Resolves { committed, exists }.
-            transactTrip: (ym, id, updateFn) => database.ref(`trips/${ym}/${id}`)
+            transactTrip: (ym, id, updateFn) => whenOpen([ym], () => database.ref(`trips/${ym}/${id}`)
                 .transaction((cur) => (cur === null ? null : updateFn(cur)), undefined, false)
-                .then(r => ({ committed: r.committed, exists: r.snapshot.exists() })),
+                .then(r => ({ committed: r.committed, exists: r.snapshot.exists() }))),
             // Column L downhill liters (downhillFuel/{ym}/{tripKey}) — separate from trips, which are never modified.
             fetchDownhillTripsMonth: (ym) => database.ref(`trips/${ym}`).orderByKey().startAt('tdh_').endAt('tdh_\uf8ff').once('value').then(s => s.val() || {}),
             fetchDownhillFuelMonth: (ym) => database.ref(`downhillFuel/${ym}`).once('value').then(s => s.val() || {}),
-            createDownhillFuel: (ym, key, rec) => createIfAbsent(`downhillFuel/${ym}/${key}`, rec),
+            createDownhillFuel: (ym, key, rec) => whenOpen([ym], () => createIfAbsent(`downhillFuel/${ym}/${key}`, rec)),
             // Database adapter for the Excel trip template (tripTemplate.js).
             templateTripsDb: {
                 fetchMonth: (ym) => database.ref(`trips/${ym}`).once('value').then(s => s.val()),
-                createIfAbsent: (ym, key, trip) => createIfAbsent(`trips/${ym}/${key}`, trip),
+                createIfAbsent: (ym, key, trip) => whenOpen([ym], () => createIfAbsent(`trips/${ym}/${key}`, trip)),
             },
             // One-off read of a whole month (no live listener) — used for the liters carried over from earlier months.
             fetchTripsMonth: (ym) => database.ref(`trips/${ym}`).once('value')
@@ -1163,6 +1210,9 @@ export let appState = {
             // ONE transaction on the node: all of it is written or nothing, and if another save landed since the preview
             // (stored meta.saveId ≠ expectedSaveId) this one is refused.
             replaceRateStandards: async (standards, meta, expectedSaveId = '') => {
+                { const e = lockStateError(); if (e) throw e; }
+                const hit = rateSaveClosedHit(meta.effectiveFrom || '', appState.closedMonths);
+                if (hit.length) throw new Error(`เรทชุดนี้จะเปลี่ยนผลตรวจของเดือนที่ปิดงวดแล้ว (${hit.map(fmtMonth).join(', ')}) — เลือกวันที่เริ่มใช้หลังเดือนนั้น หรือเปิดงวดก่อน`);
                 const rows = {};
                 standards.forEach(s => { const { id, ...rest } = s; rows[id] = rest; });
                 const ref = database.ref('fuelRateStandards');
@@ -1193,6 +1243,7 @@ export let appState = {
             loadTripsForMonth: (ym) => {
                 if (tripsRef) { tripsRef.off(); tripsRef = null; }
                 appState.tripsMonth = ym || '';
+                appState.tripsLoadedFor = '';
                 if (!ym) { appState.trips = []; ui.render(); return; }
                 tripsRef = database.ref(`trips/${ym}`);
                 tripsRef.on('value', (snapshot) => {
@@ -1200,6 +1251,7 @@ export let appState = {
                     appState.trips = data
                         ? Object.entries(data).map(([id, v]) => ({ id, ...v })).sort((a, b) => (a.date || '').localeCompare(b.date || ''))
                         : [];
+                    appState.tripsLoadedFor = ym;
                     if (['queue', 'payroll', 'reports', 'dashboard', 'audit'].includes(appState.view)) ui.render();
                 }, (err) => {
                     console.error(`Firebase listener "trips/${ym}" failed:`, err);
@@ -1217,19 +1269,19 @@ export let appState = {
                         month: ym,
                         count: t.length,
                         liters: t.reduce((s, x) => s + (x.totalLiters || 0), 0),
-                        baht: t.reduce((s, x) => s + (x.totalBaht || 0), 0),
-                        revenue: t.reduce((s, x) => s + (x.revenue || 0), 0),
-                        net: t.reduce((s, x) => s + (x.netTransfer || 0), 0),
+                        baht: round2(t.reduce((s, x) => s + (x.totalBaht || 0), 0)),
+                        revenue: round2(t.reduce((s, x) => s + (x.revenue || 0), 0)),
+                        net: round2(t.reduce((s, x) => s + (x.netTransfer || 0), 0)),
                     });
                 }
                 return out;
             },
-            addTrip: (ym, trip) => database.ref(`trips/${ym}`).push(trip),
-            updateTrip: (ym, id, data) => database.ref(`trips/${ym}/${id}`).set(data),
-            deleteTrip: (ym, id) => database.ref(`trips/${ym}/${id}`).remove(),
-            restoreTrip: (ym, id, data) => database.ref(`trips/${ym}/${id}`).set(data),
+            addTrip: (ym, trip) => whenOpen([ym], () => database.ref(`trips/${ym}`).push(trip)),
+            updateTrip: (ym, id, data) => whenOpen([ym], () => database.ref(`trips/${ym}/${id}`).set(data)),
+            deleteTrip: (ym, id) => whenOpen([ym], () => database.ref(`trips/${ym}/${id}`).remove()),
+            restoreTrip: (ym, id, data) => whenOpen([ym], () => database.ref(`trips/${ym}/${id}`).set(data)),
             // Bulk import trips: multi-location update grouped by month (adds, never clears).
-            addTripsBatch: (trips) => {
+            addTripsBatch: (trips) => whenOpen(trips.map(t => t.yearMonth), () => {
                 const rootRef = database.ref('trips');
                 const updates = {};
                 trips.forEach(t => {
@@ -1237,9 +1289,9 @@ export let appState = {
                     updates[`${t.yearMonth}/${key}`] = t;
                 });
                 return rootRef.update(updates);
-            },
+            }),
             // Replace ALL trips (clears the whole trips node first).
-            replaceAllTrips: (trips) => {
+            replaceAllTrips: (trips) => whenOpen(Object.keys(appState.closedMonths || {}), () => {
                 const rootRef = database.ref('trips');
                 const obj = {};
                 trips.forEach(t => {
@@ -1248,7 +1300,7 @@ export let appState = {
                     obj[t.yearMonth][key] = t;
                 });
                 return rootRef.set(obj);
-            },
+            }),
 
             updateRoute: (updatedRoute) => {
                 const { id, ...data } = updatedRoute;

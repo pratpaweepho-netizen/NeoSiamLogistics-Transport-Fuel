@@ -1,3 +1,8 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* Digits all the same width, so money and liter columns line up (user-approved 19 Nov 2026) */
+@layer base {
+    body { font-variant-numeric: tabular-nums; }
+}

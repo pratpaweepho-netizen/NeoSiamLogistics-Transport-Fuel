@@ -273,17 +273,41 @@ export function buildRateSaveValue(cur, rows, meta, archiveKey, expectedSaveId =
 // Rates now in the system that an incoming file does not have — saving replaces the whole set, so these would be
 // lost (e.g. the team's 17 Nov update overwrote the "ลากหางเปล่า +20 ลิตร" sentence and dropped วิเชียรบุรี).
 // Returns readable labels for the import preview.
+// One source of truth with the preview's diff box (rateDiff below).
 export function ratesMissingFrom(current, incoming) {
-    const have = new Set((incoming || []).filter(s => !s.duplicateOf).map(standardKey));
-    const seen = new Set(), out = [];
-    for (const s of current || []) {
-        const k = standardKey(s);
-        if (s.duplicateOf || have.has(k) || seen.has(k)) continue;
-        seen.add(k);
-        out.push(s.cls === EMPTY_KPP_CLASS ? `กฎ${AUDIT_CLASSES[EMPTY_KPP_CLASS]} +${s.extraLiters} ลิตร`
-            : `${AUDIT_CLASSES[s.cls] || s.cls} ${s.origin ? `${s.origin} → ` : ''}${s.destinationLabel || s.destination}${s.variant === 'sino' ? ' (sino)' : ''}`);
+    return rateDiff(current, incoming).removed.map(r => r.label);
+}
+
+// What a new rate file changes vs the set now in the system (pattern from the subcontractor project, 19 Nov 2026):
+// added / changed (with old → new for every figure) / removed / unchanged, matched by standardKey. Shown in the
+// import preview so "เชียงใหม่ จิตตมาศ 255 → 265" is seen before saving.
+const rateLabel = (s) => (s.cls === EMPTY_KPP_CLASS ? `กฎ${AUDIT_CLASSES[EMPTY_KPP_CLASS]} +${s.extraLiters} ลิตร`
+    : `${AUDIT_CLASSES[s.cls] || s.cls} ${s.origin ? `${s.origin} → ` : ''}${s.destinationLabel || s.destination}${s.variant === 'sino' ? ' (sino)' : ''}`);
+const rateFigures = (s) => {
+    const f = {};
+    for (const [k, v] of Object.entries(s.up || {})) if (Number(v)) f[`up:${k}`] = Number(v);
+    if (Number(s.down)) f.down = Number(s.down);
+    if (Number(s.downVictor) && Number(s.downVictor) !== Number(s.down)) f.downVictor = Number(s.downVictor);
+    if (Number(s.extraLiters)) f.extraLiters = Number(s.extraLiters);
+    for (const p of s.parts || []) f[`part:${p.part}:${p.destination}`] = Number(p.liters) || 0;
+    if (clean(s.allowanceText)) f.allowanceText = clean(s.allowanceText);
+    return f;
+};
+export function rateDiff(current, incoming) {
+    const index = (list) => { const m = new Map(); for (const s of list || []) if (!s.duplicateOf && !m.has(standardKey(s))) m.set(standardKey(s), s); return m; };
+    const before = index(current), after = index(incoming);
+    const added = [], changed = [], removed = [];
+    let unchanged = 0;
+    for (const [k, s] of after) {
+        const o = before.get(k);
+        if (!o) { added.push({ label: rateLabel(s), now: rateFigures(s) }); continue; }
+        const a = rateFigures(o), b = rateFigures(s);
+        const fields = [...new Set([...Object.keys(a), ...Object.keys(b)])].filter(f => a[f] !== b[f]).sort()
+            .map(f => ({ field: f, from: a[f] ?? '', to: b[f] ?? '' }));
+        if (fields.length) changed.push({ label: rateLabel(s), fields }); else unchanged++;
     }
-    return out;
+    for (const [k, o] of before) if (!after.has(k)) removed.push({ label: rateLabel(o), was: rateFigures(o) });
+    return { added, changed, removed, unchanged, isFirst: !before.size };
 }
 
 // Sheet "ถอดหางกำแพงเพชร": the trailer (ลูก) is left at the Kamphaeng Phet branch and the head (แม่) runs on

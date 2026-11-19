@@ -99,7 +99,7 @@ export function payWriteProblem(item, trip, sameDriver = makeSameDriver()) {
  * items: from parseUphillPayProposal; tripsByMonth: { ym: { id: trip } } (the months the items point at).
  * Returns { writes:[{ ym, id, item }], skipped:[{ item, reason }], pending, excluded, totals:{ trips, money, byMonth } }.
  */
-export function planUphillPay(items, tripsByMonth, sameDriver = makeSameDriver()) {
+export function planUphillPay(items, tripsByMonth, sameDriver = makeSameDriver(), closedMonths = {}) {
     const writes = [], skipped = [];
     let pending = 0, excluded = 0;
     const attach = (items || []).filter(i => i.decision === 'attach');
@@ -112,6 +112,7 @@ export function planUphillPay(items, tripsByMonth, sameDriver = makeSameDriver()
             skipped.push({ item, reason: `รหัสเที่ยวนี้ถูกอ้างจาก ${claims[item.tripId].length} แถว (${claims[item.tripId].map(x => `${x.sheet} แถว ${x.row}`).join(', ')}) — ไม่แนบทั้งหมด แก้ในไฟล์ให้เหลือแถวเดียว` });
             continue;
         }
+        if (closedMonths?.[ym]) { skipped.push({ item, reason: 'เดือนนี้ปิดงวดแล้ว — ไม่แนบ (เปิดงวดก่อนถ้าต้องการแนบ)' }); continue; }
         const reason = payWriteProblem(item, tripsByMonth?.[ym]?.[item.tripId], sameDriver);
         if (reason) { skipped.push({ item, reason }); continue; }
         writes.push({ ym, id: item.tripId, item });

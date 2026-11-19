@@ -66,6 +66,11 @@ const w = plan.writes.find(x => x.id === 'daily_02-03-69_6');
 const next = applyPayToTrip(trips['2026-03']['daily_02-03-69_6'], w, 'AT', sameDriver);
 eq('write adds money + source, keeps the trip', [next.netTransfer, next.revenue, next.fuelCost, next.plate, next.payFrom.includes('แถว 3'), next.payAttachedAt], [400, 1500, 400, '70-8888', true, 'AT']);
 eq('write aborts when the trip is gone / paid meanwhile / changed', [applyPayToTrip(null, w, 'AT', sameDriver), applyPayToTrip({ ...trips['2026-03']['daily_02-03-69_6'], netTransfer: 5 }, w, 'AT', sameDriver), applyPayToTrip({ ...trips['2026-03']['daily_02-03-69_6'], date: '2026-03-03' }, w, 'AT', sameDriver)], [undefined, undefined, undefined]);
+{
+    const closedPlan = planUphillPay(p.items, trips, sameDriver, { '2026-03': { closedAt: 'x' } });
+    eq('closed month: nothing written, each row listed as skipped with the reason', [closedPlan.writes.length, closedPlan.skipped.filter(s => s.reason.startsWith('เดือนนี้ปิดงวดแล้ว')).length, closedPlan.totals.net], [0, plan.writes.length + plan.skipped.length - 2, 0]); // all but the 2 double-claimed rows
+    eq('another month closed: same plan as before', planUphillPay(p.items, trips, sameDriver, { '2026-02': {} }).writes.map(w => w.id), plan.writes.map(w => w.id));
+}
 eq('downhill trip refused', payWriteProblem({ date: '2026-03-02', plate: '70-1', driver: 'a' }, { date: '2026-03-02', direction: 'ขาล่อง', plate: '70-1', driver: 'a' }), 'เที่ยวในระบบไม่ใช่ขาขึ้น');
 eq('missing sheet A → error', parseUphillPayProposal({}).errors, ['ไม่พบชีต "A ตรงชัด"']);
 

@@ -1,3 +1,5 @@
+import defaultTheme from 'tailwindcss/defaultTheme';
+
 /** @type {import('tailwindcss').Config} */
 // Scans index.html + all source JS for class names. Note: the app builds markup as template
 // strings, so class names must appear as literal strings in source to be detected (they do).
@@ -5,6 +7,8 @@ export default {
   content: ['./index.html', './src/**/*.{js,ts}'],
   theme: {
     extend: {
+      // Sarabun for Thai and Latin (user-approved 19 Nov 2026); the system fonts stay as the fallback
+      fontFamily: { sans: ['Sarabun', ...defaultTheme.fontFamily.sans] },
       colors: {
         'primary': '#0284c7',   // sky-600
         'secondary': '#0369a1', // sky-700

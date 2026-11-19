@@ -1,4 +1,9 @@
 // UI layer: rendering, event handlers, and app bootstrap.
+// Thai UI font, bundled (no CDN): Sarabun, only the weights the app uses; each file loads only for scripts on screen
+import "@fontsource/sarabun/400.css";
+import "@fontsource/sarabun/500.css";
+import "@fontsource/sarabun/600.css";
+import "@fontsource/sarabun/700.css";
 import "./index.css";
 import * as XLSX from "xlsx";
 import { appState, logisticsService, bindUI } from "./services.js";
@@ -6,13 +11,16 @@ import { ICONS, GAS_STATION_FRIENDLY_NAMES, ROUTE_STATION_COLUMNS } from "./cons
 import { parseFuelBaseRows } from "./importer.js";
 import { detectSheetType, parseUphillQueue, parseDownhillQueue, parsePartnerQueue, parseDailyRows } from "./importerTrips.js";
 import { parseDrivers, parseRateTable, parseVehicles } from "./importerMasters.js";
-import { parseRateSheet, buildAuditContext, auditTrip, applyCarry, flagDoubleDownhill, AUDIT_CLASSES, AUDIT_STATUS, DOWN_STATUS, normalizeOriginExtras, parseDriverAliasSheet, applyDriverAlias, suggestFill, normalizeDestinationList, ratesMissingFrom, makeRateContexts } from "./fuelAudit.js";
+import { parseRateSheet, buildAuditContext, auditTrip, applyCarry, flagDoubleDownhill, AUDIT_CLASSES, AUDIT_STATUS, DOWN_STATUS, normalizeOriginExtras, parseDriverAliasSheet, applyDriverAlias, suggestFill, normalizeDestinationList, ratesMissingFrom, makeRateContexts, rateDiff } from "./fuelAudit.js";
 import { calcTripMoney, describeTripMoney, moneySaveProblem, storedAdvance, MONEY_MSG } from "./tripMoney.js";
 import { isUphillPayProposal, parseUphillPayProposal, planUphillPay, applyPayToTrip, makeSameDriver, PAY_FIELDS, PAY_FIELD_LABELS } from "./uphillPay.js";
 import { COLL_STATUS, downhillTripKeys, planDownhillFuel, withDownhillFuel, reconcileColumnL, createAllIfAbsent } from "./downhillFuel.js";
 import { planDateFix, buildDateFixBatches, recheckBatch, prevDay } from "./dateFix.js";
 import { fmtDate, fmtMonth, fmtDateText, xlDate } from "./thaiDate.js";
 import { downloadBlob, downloadJson } from "./download.js";
+import { buildStyledWorkbook, XLSX_MIME } from "./excelStyle.js";
+import { STATUS_EXPLAIN, DOWN_EXPLAIN, FLAG_EXPLAIN, explainFlag, explainOneLine, todoForRow } from "./flagExplain.js";
+import { round2, sumMoney, roundFields } from "./money.js";
 import { buildBackup, readBackup, planRestore, countAll, NODE_LABELS } from "./backup.js";
 import { startThaiDateInputs } from "./dateInputs.js";
 import { TEMPLATE_SHEET, buildTemplateLists, generateTemplate, findTemplateHeader, parseTemplateRows, planTemplateSave, saveTemplateTrips } from "./tripTemplate.js";
@@ -99,6 +107,12 @@ const formatZeroAsEmpty = (value) => {
             return renderRouteDistributionRow(item, index, unit);
         };
         
+        // Closed pay period (settings/closedMonths): a bar on the month pages; the writes are refused in services.js.
+        const closedBar = (ym) => {
+            const c = ym && appState.closedMonths?.[ym];
+            if (!c) return '';
+            return `<div class="mb-4 rounded-lg border border-amber-600 bg-amber-900/30 px-4 py-2 text-sm text-amber-200">🔒 เดือน ${esc(fmtMonth(ym))} ปิดงวดแล้วเมื่อ ${esc(fmtDate(c.closedAt))} — เพิ่ม/แก้/ลบ/นำเข้าเที่ยวของเดือนนี้ไม่ได้ · เปิดงวดได้ที่หน้า "การเงิน"</div>`;
+        };
         const renderApp = () => {
             const appContainer = document.getElementById('app-container');
             let viewHtml = '';
@@ -117,6 +131,7 @@ const formatZeroAsEmpty = (value) => {
                 ${appState.emulator ? '<div class="bg-yellow-400 text-black text-center text-sm font-bold py-1">โหมดทดสอบ: ใช้ฐานข้อมูลจำลองบนเครื่องนี้ — ไม่ใช่ข้อมูลจริง</div>' : ''}
                 ${renderHeader()}
                 <main class="container mx-auto px-6 py-8">
+                    ${['queue', 'audit', 'payroll'].includes(appState.view) ? closedBar(appState.tripsMonth) : ''}
                     ${viewHtml}
                 </main>
                 <footer class="text-center py-4 text-gray-500 text-sm">
@@ -272,7 +287,7 @@ const formatZeroAsEmpty = (value) => {
             if (plateFilter) trips = trips.filter(t => (t.plate || '').toUpperCase().includes(plateFilter));
 
             const totalLiters = trips.reduce((s, t) => s + (t.totalLiters || 0), 0);
-            const totalBaht = trips.reduce((s, t) => s + (t.totalBaht || 0), 0);
+            const totalBaht = sumMoney(trips, t => t.totalBaht);
             const colLWarn = columnLWarning();
 
             const friendlyNames = logisticsService.getAllGasStationFriendlyNames();
@@ -297,7 +312,7 @@ const formatZeroAsEmpty = (value) => {
             const stationTablesHtml = stationKeys.map(key => {
                 const list = grp[key];
                 const sumL = list.reduce((s, t) => s + (t.gasStationsLiters?.[key] || 0), 0);
-                const sumB = list.reduce((s, t) => s + (t.gasStationsBaht?.[key] || 0), 0);
+                const sumB = sumMoney(list, t => t.gasStationsBaht?.[key]);
                 const rows = list.map(t => {
                     const aL = t.gasStationsLiters?.[key] || 0, aB = t.gasStationsBaht?.[key] || 0;
                     const txt = [aL > 0 ? `${aL.toLocaleString()} ลิตร` : '', aB > 0 ? `${aB.toLocaleString()} บาท` : ''].filter(Boolean).join('<br>');
@@ -516,9 +531,25 @@ const formatZeroAsEmpty = (value) => {
             ? `${s.parts.map(p => `${esc(p.part)}→${esc(p.destination)} ${Number(p.liters).toLocaleString()}`).join(' + ')} = ${Number(s.upTotal).toLocaleString()} (ไม่ระบุปั๊ม)`
             : fmtPumps(s.up);
 
+        // What the new file changes vs the set in the system (rateDiff): changed figures old → new, new routes.
+        const rateFieldLabel = (f) => f.startsWith('up:') ? `ขาขึ้น ${pumpName(f.slice(3))}` : f === 'down' ? 'ขาล่องไพศาล' : f === 'downVictor' ? 'ขาล่อง victor'
+            : f === 'extraLiters' ? 'ลิตรเพิ่ม' : f === 'allowanceText' ? 'ช่องเบี้ยขับ' : f.startsWith('part:') ? `ถอดหาง ${f.split(':').slice(1).join(' → ')}` : f;
+        const renderRateDiff = (d) => {
+            if (d.isFirst) return '';
+            if (!d.added.length && !d.changed.length && !d.removed.length) return '<p class="mb-3 text-sm text-gray-300">ตัวเลขในไฟล์นี้เหมือนฉบับในระบบทุกเส้นทาง</p>';
+            const val = (v) => (v === '' ? '—' : typeof v === 'number' ? v.toLocaleString() : v);
+            const changed = d.changed.map(c => `<li><b>${esc(c.label)}</b>: ${c.fields.map(x => `${esc(rateFieldLabel(x.field))} ${esc(val(x.from))} → <span class="text-amber-300">${esc(val(x.to))}</span>`).join(' · ')}</li>`).join('');
+            const added = d.added.map(c => `<li>${esc(c.label)}: ${Object.entries(c.now).map(([k, v]) => `${esc(rateFieldLabel(k))} ${esc(val(v))}`).join(' · ')}</li>`).join('');
+            return `<div class="bg-sky-900/20 border border-sky-800 rounded-lg p-3 mb-3 text-sm text-gray-200">
+                <b>เทียบกับฉบับในระบบ:</b> เปลี่ยน ${d.changed.length} เส้นทาง · เพิ่มใหม่ ${d.added.length} · ไม่อยู่ในไฟล์ ${d.removed.length} · เหมือนเดิม ${d.unchanged}
+                ${changed ? `<details class="mt-2" open><summary class="cursor-pointer text-amber-300">เส้นทางที่ตัวเลขเปลี่ยน (${d.changed.length})</summary><ul class="mt-1 ml-4 list-disc space-y-1">${changed}</ul></details>` : ''}
+                ${added ? `<details class="mt-2"><summary class="cursor-pointer text-sky-300">เส้นทางใหม่ (${d.added.length})</summary><ul class="mt-1 ml-4 list-disc space-y-1">${added}</ul></details>` : ''}
+            </div>`;
+        };
         const renderRateImportPreview = ({ standards, warnings, skippedSheets, fileName }) => {
             const flagged = standards.filter(s => s.flags.length);
-            const lost = ratesMissingFrom(appState.rateStandards, standards);
+            const diff = rateDiff(appState.rateStandards, standards);
+            const lost = diff.removed.map(r => r.label);
             const cur = appState.rateStandardsMeta;
             const rows = standards.map(s => `
                 <tr class="border-b border-slate-700 ${s.flags.length ? 'bg-amber-900/20' : ''}">
@@ -537,6 +568,7 @@ const formatZeroAsEmpty = (value) => {
                     ${importStatCard('อัตราในระบบตอนนี้', appState.rateStandards.length)}
                 </div>
                 ${warnings.length ? `<p class="text-yellow-400 mb-3">⚠️ ${warnings.map(escD).join(', ')}</p>` : ''}
+                ${renderRateDiff(diff)}
                 ${lost.length ? `<div class="bg-red-900/30 border border-red-700 rounded-lg p-3 mb-3 text-sm text-red-200"><b>⚠️ อัตราในระบบตอนนี้ที่ไฟล์นี้ไม่มี (${lost.length} รายการ) — ถ้าบันทึก เที่ยวตั้งแต่วันที่เริ่มใช้จะไม่มีอัตราเหล่านี้ (ถ้าติ๊ก "ใช้กับทุกเดือน" จะหายจากทุกเดือน):</b><br>${lost.map(esc).join(' · ')}</div>` : ''}
                 ${skippedSheets.length ? `<p class="text-xs text-gray-400 mb-3">ไม่ได้อ่าน: ${skippedSheets.map(esc).join(', ')} (ไม่มีหัวคอลัมน์ "รวมยอดขาขึ้น/ลิตร")</p>` : ''}
                 ${cur ? `<p class="text-xs text-gray-400 mb-3">ฉบับในระบบตอนนี้: ${esc(cur.fileName)} · บันทึกเมื่อ ${esc(cur.importedAt)}</p>` : ''}
@@ -592,6 +624,8 @@ const formatZeroAsEmpty = (value) => {
             const firstSet = !appState.rateStandards.length;
             if (!firstSet && !allMonths && !/^\d{4}-\d{2}-\d{2}$/.test(effInput)) { if (msg) msg.innerHTML = '<p class="text-red-400">เลือก "วันที่เริ่มใช้" ก่อน (หรือติ๊ก "ใช้กับทุกเดือน")</p>'; return; }
             const effectiveFrom = allMonths || firstSet ? '' : effInput;
+            const hitClosed = Object.keys(appState.closedMonths || {}).filter(ym => !effectiveFrom || ym >= effectiveFrom.slice(0, 7)).sort();
+            if (hitClosed.length) { if (msg) { msg.innerHTML = '<p class="text-red-400"></p>'; msg.firstChild.textContent = `เรทชุดนี้จะเปลี่ยนผลตรวจของเดือนที่ปิดงวดแล้ว (${hitClosed.map(fmtMonth).join(', ')}) — เลือกวันที่เริ่มใช้หลังเดือนนั้น หรือเปิดงวดก่อน`; } return; }
             const curMeta = appState.rateStandardsMeta;
             const curName = curMeta?.fileName || 'ฉบับเดิม';
             const curEff = curMeta?.effectiveFrom || '';
@@ -1174,6 +1208,11 @@ const formatZeroAsEmpty = (value) => {
             if (!importParsedTemplate || importParsedTemplate.saved) return;
             const includeKeys = [...document.querySelectorAll('.tpl-dup-cb:checked')].map(cb => cb.dataset.key);
             const n = importParsedTemplate.rows.filter(p => p.importState === 'new').length + includeKeys.length;
+            {
+                const yms = importParsedTemplate.rows.filter(p => p.importState === 'new' || includeKeys.includes(p.key)).map(p => p.trip?.yearMonth);
+                const closed = logisticsService.closedOf(yms), lockErr = logisticsService.lockStateError();
+                if (lockErr || closed.length) { alert(lockErr ? lockErr.message : `ไฟล์นี้มีเที่ยวของเดือนที่ปิดงวดแล้ว (${closed.map(fmtMonth).join(', ')}) — เปิดงวดก่อน หรือลบแถวของเดือนนั้นออกจากไฟล์`); return; }
+            }
             if (!n || !confirm(`บันทึก ${n.toLocaleString()} เที่ยวจาก "${importParsedTemplate.fileName}"?${includeKeys.length ? `\n(รวมแถว "อาจซ้ำ" ที่ติ๊กไว้ ${includeKeys.length} แถว)` : ''}\n\nไม่ลบและไม่ทับข้อมูลเดิม`)) return;
             const btn = document.getElementById('tpl-save-btn');
             const resultDiv = document.getElementById('import-result');
@@ -1280,6 +1319,10 @@ const formatZeroAsEmpty = (value) => {
         const handleColumnLSave = async () => {
             if (!collPlan || collPlan.saved || !collPlan.toSave.length) return;
             const n = collPlan.toSave.length;
+            {
+                const closed = logisticsService.closedOf(collPlan.toSave.map(e => e.ym)), lockErr = logisticsService.lockStateError();
+                if (lockErr || closed.length) { alert(lockErr ? lockErr.message : `มีรายการของเดือนที่ปิดงวดแล้ว (${closed.map(fmtMonth).join(', ')}) — เปิดงวดก่อน`); return; }
+            }
             if (!confirm(`บันทึกลิตรขาล่องจากช่อง "คิวรถล่าสุด" ${n.toLocaleString()} รายการ?\n\nเก็บแยกจากเที่ยวรถ ไม่แก้ไขเที่ยวขาล่องเดิม และไม่ทับรายการที่บันทึกไว้แล้ว`)) return;
             const btn = document.getElementById('coll-save-btn');
             const out = document.getElementById('coll-result');
@@ -1321,6 +1364,8 @@ const formatZeroAsEmpty = (value) => {
                 const tdhKeyMap = Object.fromEntries(oldKeys.map((k, i) => [k, newKeys[i]]));
                 const all = await logisticsService.fetchAllTrips();
                 const plan = planDateFix([...up, ...down], all, tdhKeyMap);
+                const closedHit = logisticsService.closedOf(plan.moves.flatMap(m => [m.fromYm, m.toYm]));
+                if (closedHit.length) { dfixOut(`<p class="text-red-400">การแก้วันที่จะย้ายเที่ยวของเดือนที่ปิดงวดแล้ว (${esc(closedHit.map(fmtMonth).join(', '))}) — เปิดงวดก่อน</p>`); return; }
                 dfix = { plan, all, backupDone: false, fileName: f.name };
                 dfixOut(renderDateFixPreview(plan));
                 document.getElementById('dfix-backup-btn')?.addEventListener('click', handleDateFixBackup);
@@ -1429,7 +1474,7 @@ const formatZeroAsEmpty = (value) => {
                 const before = Object.fromEntries(await Promise.all(months.map(async ym => [ym, await logisticsService.fetchTripsMonthRaw(ym)])));
                 // board short names → full names (confirmed aliases), as in the audit
                 const sameDriver = makeSameDriver((n) => applyDriverAlias({ driver: n }, appState.auditState.driverAliases).driver);
-                const plan = planUphillPay(parsed.items, before, sameDriver);
+                const plan = planUphillPay(parsed.items, before, sameDriver, appState.closedMonths);
                 upPay = { plan, errors: parsed.errors, months, before, sameDriver, backupDone: false, fileName };
                 preview.innerHTML = renderUphillPayPreview(upPay);
                 document.getElementById('uppay-backup-btn')?.addEventListener('click', handleUphillPayBackup);
@@ -1683,8 +1728,8 @@ const formatZeroAsEmpty = (value) => {
             if (dirFilter) trips = trips.filter(t => t.direction === dirFilter);
             if (q) trips = trips.filter(t => [t.driver, t.plate, t.origin, t.destination, t.vehicleType].some(v => (v || '').toLowerCase().includes(q)));
 
-            const sumRevenue = trips.reduce((s, t) => s + (t.revenue || 0), 0);
-            const sumNet = trips.reduce((s, t) => s + (t.netTransfer || 0), 0);
+            const sumRevenue = sumMoney(trips, t => t.revenue);
+            const sumNet = sumMoney(trips, t => t.netTransfer);
             const sumLiters = trips.reduce((s, t) => s + (t.totalLiters || 0), 0);
 
             const rows = trips.map(t => `
@@ -2005,6 +2050,11 @@ const formatZeroAsEmpty = (value) => {
                     // and the template's trailerDrop / trailerPlate, which the fuel audit relies on).
                     const { id: _omit, ...existing } = appState.trips.find(t => t.id === id) || {};
                     Object.assign(trip, { ...existing, ...trip });
+                    { // a move out of / into a closed month is refused BEFORE any write (else the trip would be duplicated)
+                        const lockErr = logisticsService.lockStateError();
+                        const closed = logisticsService.closedOf([originalMonth, trip.yearMonth]);
+                        if (lockErr || closed.length) { alert(lockErr ? lockErr.message : `เดือน ${closed.map(fmtMonth).join(', ')} ปิดงวดแล้ว — เปิดงวดในหน้า "การเงิน" ก่อน`); return; }
+                    }
                     if (originalMonth && originalMonth !== trip.yearMonth) {
                         // Moving to another month: write to the new month FIRST (keeping its key), then remove
                         // the old one. If the write fails we throw before deleting, so the trip is never lost.
@@ -2100,6 +2150,7 @@ const formatZeroAsEmpty = (value) => {
         };
 
         // --- View: Payroll (สรุปการเงินคนขับ) — aggregated from the loaded month's trips ---
+        const PAY_ROW_MONEY = ['revenue', 'allowance', 'deduction', 'net'];
         const aggregatePayroll = () => {
             // Board short names and full names are one driver (confirmed aliases, settings/fuelAudit.driverAliases).
             const trips = tripsAsAudited();
@@ -2112,7 +2163,9 @@ const formatZeroAsEmpty = (value) => {
                 g.count++; g.revenue += t.revenue || 0; g.allowance += t.driverAllowance || 0; g.deduction += t.deduction || 0; g.net += t.netTransfer || 0;
             });
             const bankOf = {}; logisticsService.getDrivers().forEach(d => { bankOf[(d.name || '').trim()] = d.bankAccount || ''; });
-            const list = Object.values(byDriver).sort((a, b) => b.net - a.net);
+            // Each driver is paid the ROUNDED row amount, so the grand total is the sum of the rounded rows (= what is
+            // transferred; it foots with the rows). Real amounts are whole or half baht, so this never differs in practice.
+            const list = Object.values(byDriver).map(g => roundFields(g, PAY_ROW_MONEY)).sort((a, b) => b.net - a.net);
             return { list, bankOf };
         };
         const renderPayroll = () => {
@@ -2126,6 +2179,9 @@ const formatZeroAsEmpty = (value) => {
                                 <div><label class="block text-xs text-gray-400 mb-1">เดือน</label>
                                     <input type="month" id="payroll-month" value="${month}" class="bg-slate-800 border border-slate-600 rounded-md px-3 py-2 text-white" /></div>
                                 <button id="payroll-export-btn" class="flex items-center gap-2 bg-success hover:bg-green-600 text-white font-bold py-2 px-4 rounded-lg shadow-md">${ICONS.Download} Export</button>
+                                ${appState.tripsMonth ? (appState.closedMonths?.[appState.tripsMonth]
+                                    ? '<button id="period-reopen-btn" class="bg-slate-600 hover:bg-slate-500 text-white font-bold py-2 px-4 rounded-lg" title="เปิดให้แก้เที่ยวของเดือนนี้ได้อีกครั้ง (ต้องใส่เหตุผล)">🔓 เปิดงวด</button>'
+                                    : '<button id="period-close-btn" class="bg-amber-700 hover:bg-amber-600 text-white font-bold py-2 px-4 rounded-lg" title="หลังจ่ายเงินเดือนนี้แล้ว: ล็อกไม่ให้เพิ่ม/แก้/ลบ/นำเข้าเที่ยวของเดือนนี้">🔒 ปิดงวดเดือนนี้</button>') : ''}
                             </div>
                         </div>
                         <div id="payroll-content">${renderPayrollContent()}</div>
@@ -2144,7 +2200,7 @@ const formatZeroAsEmpty = (value) => {
                     <td class="p-2 text-right text-red-400">${g.deduction.toLocaleString()}</td>
                     <td class="p-2 text-right font-bold text-green-400">${g.net.toLocaleString()}</td>
                 </tr>`).join('');
-            const tot = list.reduce((a, g) => ({ count: a.count + g.count, revenue: a.revenue + g.revenue, allowance: a.allowance + g.allowance, deduction: a.deduction + g.deduction, net: a.net + g.net }), { count: 0, revenue: 0, allowance: 0, deduction: 0, net: 0 });
+            const tot = roundFields(list.reduce((a, g) => ({ count: a.count + g.count, revenue: a.revenue + g.revenue, allowance: a.allowance + g.allowance, deduction: a.deduction + g.deduction, net: a.net + g.net }), { count: 0, revenue: 0, allowance: 0, deduction: 0, net: 0 }), PAY_ROW_MONEY);
             return `
                 <p class="text-xs text-gray-500 mb-3">เดือน ${appState.tripsMonth ? fmtMonth(appState.tripsMonth) : '(เลือกเดือน)'} · ${list.length} คนขับ · คำนวณจากคิวรถของเดือนนั้น</p>
                 <div class="overflow-x-auto"><table class="w-full text-left text-sm">
@@ -2161,16 +2217,45 @@ const formatZeroAsEmpty = (value) => {
             if (target && appState.tripsMonth !== target) logisticsService.loadTripsForMonth(target);
             monthInput?.addEventListener('change', (e) => logisticsService.loadTripsForMonth(e.target.value));
             document.getElementById('payroll-export-btn')?.addEventListener('click', handlePayrollExport);
+            document.getElementById('period-close-btn')?.addEventListener('click', handlePeriodClose);
+            document.getElementById('period-reopen-btn')?.addEventListener('click', handlePeriodReopen);
+        };
+        // Close the loaded month after its pay is done; the totals at that moment are kept with the lock and in the log.
+        const handlePeriodClose = async () => {
+            const ym = appState.tripsMonth;
+            if (!ym || appState.closedMonths?.[ym]) return;
+            if (appState.tripsLoadedFor !== ym) { alert('ข้อมูลเที่ยวของเดือนนี้ยังโหลดไม่เสร็จ — รอสักครู่แล้วกดอีกครั้ง'); return; }
+            if (!logisticsService.getTrips().length) { alert(`เดือน ${fmtMonth(ym)} ไม่มีเที่ยวรถ — ไม่ต้องปิดงวด`); return; }
+            const { list } = aggregatePayroll();
+            const totals = { trips: logisticsService.getTrips().length, revenue: sumMoney(list, g => g.revenue), allowance: sumMoney(list, g => g.allowance), deduction: sumMoney(list, g => g.deduction), net: sumMoney(list, g => g.net) };
+            if (!confirm(`ปิดงวดเดือน ${fmtMonth(ym)}?\n\nเที่ยว ${totals.trips.toLocaleString()} · สุทธิโอนรวม ${totals.net.toLocaleString()} บาท\n\nหลังปิด: เพิ่ม/แก้/ลบ/นำเข้าเที่ยวของเดือนนี้ไม่ได้ จนกว่าจะกด "เปิดงวด"`)) return;
+            try { await logisticsService.closeMonth(ym, totals); } catch (err) { alert(`ปิดงวดไม่สำเร็จ: ${err.message}`); }
+        };
+        const handlePeriodReopen = async () => {
+            const ym = appState.tripsMonth;
+            if (!ym || !appState.closedMonths?.[ym]) return;
+            const reason = (prompt(`เปิดงวดเดือน ${fmtMonth(ym)} เพื่อแก้ไข — ใส่เหตุผล (บันทึกไว้ในประวัติ):`) || '').trim();
+            if (!reason) return;
+            try { await logisticsService.reopenMonth(ym, reason); } catch (err) { alert(`เปิดงวดไม่สำเร็จ: ${err.message}`); }
+        };
+        // Report exports in the NeoSiam look (excelStyle.js); exceljs is loaded only when a file is made.
+        const downloadStyledXlsx = async (fileName, sheets) => {
+            try {
+                const mod = await import('exceljs');
+                const buf = await buildStyledWorkbook(mod.default || mod, sheets).xlsx.writeBuffer();
+                downloadBlob(new Blob([buf], { type: XLSX_MIME }), fileName);
+            } catch (err) {
+                console.error('Excel export failed:', err);
+                alert(`สร้างไฟล์ Excel ไม่สำเร็จ: ${err.message || err}`);
+            }
         };
         const handlePayrollExport = () => {
             const { list, bankOf } = aggregatePayroll();
             if (!list.length) { alert('ไม่มีข้อมูลให้ export'); return; }
             const headers = ['คนขับ', 'เลขบัญชี', 'จำนวนคิว', 'รายรับ', 'เบี้ยขับ', 'หักเงิน', 'สุทธิโอน', 'ชื่อในกระดานคิว'];
             const data = list.map(g => [g.driver, bankOf[g.driver.trim()] || '', g.count, g.revenue, g.allowance, g.deduction, g.net, [...g.boardNames].join(', ')]);
-            const ws = XLSX.utils.aoa_to_sheet([headers, ...data]);
-            const wb = XLSX.utils.book_new();
-            XLSX.utils.book_append_sheet(wb, ws, 'Payroll');
-            XLSX.writeFile(wb, `Payroll_${appState.tripsMonth || localDateStr().slice(0, 7)}.xlsx`);
+            return downloadStyledXlsx(`Payroll_${appState.tripsMonth || localDateStr().slice(0, 7)}.xlsx`,
+                [{ name: 'Payroll', headers, rows: data, widths: [24, 18, 10, 14, 14, 12, 14, 30], filter: true }]);
         };
 
         // --- View: Reports (รายงานสรุป) — summarizes the loaded month's trips ---
@@ -2228,21 +2313,22 @@ const formatZeroAsEmpty = (value) => {
             if (!trips.length) return `${filterBar}<p class="text-center py-8 text-gray-500">ไม่มีคิวตรงตามตัวกรอง — ลองล้างตัวกรอง</p>`;
 
             const sum = (arr, f) => arr.reduce((s, t) => s + (f(t) || 0), 0);
-            const totLiters = sum(trips, t => t.totalLiters), totBaht = sum(trips, t => t.totalBaht);
-            const totRevenue = sum(trips, t => t.revenue), totNet = sum(trips, t => t.netTransfer);
+            const totLiters = sum(trips, t => t.totalLiters), totBaht = sumMoney(trips, t => t.totalBaht);
+            const totRevenue = sumMoney(trips, t => t.revenue), totNet = sumMoney(trips, t => t.netTransfer);
             const fmt = (n) => (n || 0).toLocaleString();
 
             // group helper → [{key, count, net}] sorted by net desc
             const groupBy = (keyFn) => {
                 const m = {};
                 trips.forEach(t => { const k = keyFn(t) || '(ไม่ระบุ)'; if (!m[k]) m[k] = { key: k, count: 0, net: 0 }; m[k].count++; m[k].net += t.netTransfer || 0; });
-                return Object.values(m).sort((a, b) => b.net - a.net);
+                return Object.values(m).map(r => roundFields(r, ['net'])).sort((a, b) => b.net - a.net);
             };
             const byDir = groupBy(t => t.direction);
             const byType = groupBy(t => t.vehicleType);
             const topDrivers = groupBy(t => t.driver).slice(0, 10);
             const ownPartner = { 'รถบริษัท': { count: 0, net: 0 }, 'รถร่วม': { count: 0, net: 0 }, 'ไม่ทราบ': { count: 0, net: 0 } };
             trips.forEach(t => { const k = driveClass(t); ownPartner[k].count++; ownPartner[k].net += t.netTransfer || 0; });
+            for (const k of Object.keys(ownPartner)) ownPartner[k].net = round2(ownPartner[k].net);
 
             const bars = (rows, maxKeyWidth = 'w-28') => {
                 const max = Math.max(1, ...rows.map(r => r.net));
@@ -2392,7 +2478,7 @@ const formatZeroAsEmpty = (value) => {
                 r.count++; r.liters += t.totalLiters || 0; r.baht += t.totalBaht || 0;
                 r.revenue += t.revenue || 0; r.net += t.netTransfer || 0;
             });
-            return Object.values(m).sort((a, b) => a.date.localeCompare(b.date));
+            return Object.values(m).map(r => roundFields(r, ['baht', 'revenue', 'net'])).sort((a, b) => a.date.localeCompare(b.date));
         };
 
         // Per-route rows (origin → destination × trips/liters/baht), sorted by trip count desc.
@@ -2403,7 +2489,7 @@ const formatZeroAsEmpty = (value) => {
                 if (!m[k]) m[k] = { route: k, count: 0, liters: 0, baht: 0 };
                 const r = m[k]; r.count++; r.liters += t.totalLiters || 0; r.baht += t.totalBaht || 0;
             });
-            return Object.values(m).sort((a, b) => b.count - a.count);
+            return Object.values(m).map(r => roundFields(r, ['baht'])).sort((a, b) => b.count - a.count);
         };
 
         // Per-station rows (times refueled / liters / baht), sorted by liters desc.
@@ -2415,7 +2501,7 @@ const formatZeroAsEmpty = (value) => {
                 Object.entries(t.gasStationsLiters || {}).forEach(([k, v]) => { touch(k).liters += v; });
                 Object.entries(t.gasStationsBaht || {}).forEach(([k, v]) => { touch(k).baht += v; });
             });
-            return Object.values(m).map(r => ({ ...r, name: logisticsService.getFriendlyGasStationName(r.key) })).sort((a, b) => b.liters - a.liters);
+            return Object.values(m).map(r => ({ ...roundFields(r, ['baht']), name: logisticsService.getFriendlyGasStationName(r.key) })).sort((a, b) => b.liters - a.liters);
         };
 
         // Per-driver rows (queues/liters/revenue/allowance/net), sorted by net desc.
@@ -2427,7 +2513,7 @@ const formatZeroAsEmpty = (value) => {
                 const r = m[k]; r.count++; r.liters += t.totalLiters || 0;
                 r.revenue += t.revenue || 0; r.allowance += t.driverAllowance || 0; r.net += t.netTransfer || 0;
             });
-            return Object.values(m).sort((a, b) => b.net - a.net);
+            return Object.values(m).map(r => roundFields(r, ['revenue', 'allowance', 'net'])).sort((a, b) => b.net - a.net);
         };
 
         // Sort rows by the active sort state for a table (falls back to the provided default).
@@ -2471,15 +2557,9 @@ const formatZeroAsEmpty = (value) => {
         const handleReportsExport = () => {
             const trips = tripsAsAudited(); // same liters / driver merge as the report on screen
             if (!trips.length) { alert('ไม่มีข้อมูลให้ export'); return; }
-            const total = (rows, f) => rows.reduce((s, r) => s + (r[f] || 0), 0);
-            const wb = XLSX.utils.book_new();
-            const addSheet = (name, header, rows, cols, totalRow) => {
-                const aoa = [header, ...rows];
-                if (totalRow) aoa.push(totalRow);
-                const ws = XLSX.utils.aoa_to_sheet(aoa);
-                if (cols) ws['!cols'] = cols;
-                XLSX.utils.book_append_sheet(wb, ws, name);
-            };
+            const total = (rows, f) => sumMoney(rows, r => r[f]);
+            const sheets = [];
+            const addSheet = (name, headers, rows, cols, total) => sheets.push({ name, headers, rows, total, widths: (cols || []).map(c => c.wch) });
 
             // 1) รายวัน
             const daily = computeReportDailyRows(trips);
@@ -2510,7 +2590,7 @@ const formatZeroAsEmpty = (value) => {
                 drivers.map(r => [r.driver, r.count, r.liters, r.revenue, r.allowance, r.net]),
                 [{ wch: 22 }, { wch: 8 }, { wch: 10 }, { wch: 12 }, { wch: 12 }, { wch: 12 }]);
 
-            XLSX.writeFile(wb, `รายงานสรุป_${appState.tripsMonth || localDateStr().slice(0, 7)}.xlsx`);
+            return downloadStyledXlsx(`รายงานสรุป_${appState.tripsMonth || localDateStr().slice(0, 7)}.xlsx`, sheets);
         };
         // Enumerate 'YYYY-MM' months inclusive between two (capped so a bad range can't loop forever).
         const monthRange = (from, to) => {
@@ -2771,7 +2851,9 @@ const formatZeroAsEmpty = (value) => {
                     <div class="text-2xl font-bold text-white">${Number(value).toLocaleString()}</div>
                     ${sub ? `<div class="text-xs text-gray-400">${sub}</div>` : ''}
                 </button>`;
-            const badge = (st) => `<span class="px-2 py-0.5 rounded text-xs text-white whitespace-nowrap ${AUDIT_STATUS[st].cls}">${AUDIT_STATUS[st].label}</span>`;
+            const badge = (st) => `<span title="${esc(explainOneLine(STATUS_EXPLAIN[st]))}" class="cursor-help px-2 py-0.5 rounded text-xs text-white whitespace-nowrap ${AUDIT_STATUS[st].cls}">${AUDIT_STATUS[st].label}</span>`;
+            // notes: a recognised flag gets its explanation on hover (the legend below says the same for phones)
+            const noteLine = (t) => { const e = explainFlag(t); return e ? `<span title="${esc(explainOneLine(e))}" class="cursor-help underline decoration-dotted decoration-gray-500">${escD(t)}</span>` : escD(t); };
             const LIMIT = 500;
             const rows = shown.slice(0, LIMIT).map(r => `
                 <tr class="border-b border-slate-700 align-top">
@@ -2786,7 +2868,7 @@ const formatZeroAsEmpty = (value) => {
                     <td class="p-2">${badge(r.status)}</td>
                     <td class="p-2 text-xs">${downCell(r)}</td>
                     <td class="p-2 text-xs">${carryCell(r)}</td>
-                    <td class="p-2 text-xs text-gray-300">${[r.reason, ...r.flags].filter(Boolean).map(escD).join('<br>')}</td>
+                    <td class="p-2 text-xs text-gray-300">${[r.reason, ...r.flags].filter(Boolean).map(noteLine).join('<br>')}</td>
                 </tr>`).join('');
             const driverRows = drivers.map(d => `
                 <tr class="border-b border-slate-700">
@@ -2817,6 +2899,7 @@ const formatZeroAsEmpty = (value) => {
                 </div>
                 <p class="text-xs text-gray-400 mb-1">ขาล่องไพศาลที่เขียนไว้ในเที่ยวขาขึ้น: ตรง ${downCount.ok || 0} · เกิน ${downCount.over || 0} · ขาด ${downCount.under || 0} · ไม่ได้บันทึก ${downCount.missing || 0} เที่ยว · ${downTripsTotal ? `เที่ยวขาล่อง (คิวขาล่อง) ที่กรอกการเติม: ตรง ${downTrips.ok || 0} · เกิน ${downTrips.over || 0} · ขาด ${downTrips.under || 0} · ผิดปั๊ม ${downTrips['wrong-pump'] || 0} · ตรวจไม่ได้ ${downTrips['no-rate'] || 0}` : 'เที่ยวขาล่องในคิวขาล่องยังไม่มีลิตร — ตรวจได้เมื่อทีมกรอกช่อง ปั๊มไพศาล'}</p>
                 <p class="text-xs text-gray-400 mb-4">${carryNote}</p>
+                ${renderAuditLegend()}
                 <div class="flex flex-wrap items-center gap-3 mb-3">
                     <input type="text" id="audit-search" value="${esc(as.search)}" placeholder="ค้นหา คนขับ / ทะเบียน / ปลายทาง" class="w-full md:w-80 bg-slate-800 border border-slate-600 rounded-md px-3 py-2 text-white" />
                     <span class="text-xs text-gray-400">แสดง ${Math.min(shown.length, LIMIT).toLocaleString()} จาก ${shown.length.toLocaleString()} เที่ยว${shown.length > LIMIT ? ' (Export Excel เพื่อดูครบ)' : ''} · คลาดเคลื่อนได้ ${tol} ลิตร · ไม่รวมรถร่วม</span>
@@ -2978,6 +3061,8 @@ const formatZeroAsEmpty = (value) => {
             });
             document.getElementById('audit-toggle-standards')?.addEventListener('click', () => { as.showStandards = !as.showStandards; rerenderAuditContent(); });
             document.getElementById('audit-carry-refresh')?.addEventListener('click', () => { refreshAuditPast(); rerenderAuditContent(); });
+            // the legend lives inside the redrawn part: remember open/closed so a search or filter does not close it
+            document.getElementById('audit-legend')?.addEventListener('toggle', (e) => { appState.auditLegendOpen = e.target.open; });
         };
         const attachAuditListeners = () => {
             const monthInput = document.getElementById('audit-month');
@@ -3001,6 +3086,27 @@ const formatZeroAsEmpty = (value) => {
             attachOriginExtrasListeners();
         };
 
+        // What each result / flag means and what to do (flagExplain.js) — one box under the cards.
+        const renderAuditLegend = () => {
+            const item = (badgeHtml, e) => `
+                <div class="border-t border-slate-700 pt-2">
+                    <div class="mb-1">${badgeHtml}</div>
+                    <div class="text-gray-200"><b>เกิดอะไร:</b> ${esc(e.what)}</div>
+                    <div class="text-gray-300"><b>ทำไมต้องสนใจ:</b> ${esc(e.why)}</div>
+                    <ol class="list-decimal ml-5 text-gray-300">${e.todo.map(t => `<li>${esc(t)}</li>`).join('')}</ol>
+                </div>`;
+            const statusBadge = (k) => `<span class="px-2 py-0.5 rounded text-xs text-white ${AUDIT_STATUS[k].cls}">${AUDIT_STATUS[k].label}</span>`;
+            const tag = (text, cls) => `<span class="px-2 py-0.5 rounded text-xs ${cls}">${esc(text)}</span>`;
+            return `<details id="audit-legend" class="mb-4 rounded-lg border border-slate-700 bg-slate-800/60 p-3 text-xs" ${appState.auditLegendOpen ? 'open' : ''}>
+                <summary class="cursor-pointer text-sky-300 font-semibold">คำอธิบายผลตรวจ — เกิดอะไร · ทำไมต้องสนใจ · ต้องทำอะไร (ชี้ที่ป้ายในตารางก็ดูได้)</summary>
+                <div class="grid gap-3 md:grid-cols-2 mt-2">
+                    ${Object.keys(AUDIT_STATUS).map(k => item(statusBadge(k), STATUS_EXPLAIN[k])).join('')}
+                    ${['over', 'under', 'missing'].map(k => item(tag(`ขาล่องไพศาล: ${DOWN_STATUS[k].label}`, `bg-slate-700 ${DOWN_STATUS[k].cls}`), DOWN_EXPLAIN[k])).join('')}
+                    ${FLAG_EXPLAIN.filter(f => f.key !== 'down-missing').map(f => item(tag(`หมายเหตุ: ${f.title}`, 'bg-slate-700 text-amber-200'), f)).join('')}
+                </div>
+                <p class="mt-2 text-gray-400">ข้อความเหล่านี้คือ "ข้อสงสัย" ให้ตรวจต่อ ไม่ได้แปลว่าคนขับผิดแน่ — ตัดสินจากใบเสร็จและสภาพจริง</p>
+            </details>`;
+        };
         const handleAuditExport = () => {
             if (!appState.rateStandards.length) { alert('ยังไม่มีอัตรามาตรฐาน'); return; }
             if (!appState.rateHistoryLoaded) { alert('ตารางอัตรายังโหลดไม่ครบ — รอสักครู่แล้วลอง Export อีกครั้ง'); return; }
@@ -3009,25 +3115,21 @@ const formatZeroAsEmpty = (value) => {
             // Never hand out a file with blank carry columns that look final.
             if (carryOn && !carryReady) { alert('ยอดยกลิตรยังคำนวณไม่เสร็จ (กำลังโหลดหรือโหลดเดือนก่อนหน้าไม่สำเร็จ) — รอสักครู่หรือกด "โหลดยอดยกใหม่" แล้วลอง Export อีกครั้ง'); return; }
             const pumps = [...new Set(all.flatMap(r => [...Object.keys(r.actual), ...Object.keys(r.expected || {})]))];
-            const wb = XLSX.utils.book_new();
-            const sheet = (name, headers, data, widths) => {
-                const ws = XLSX.utils.aoa_to_sheet([headers, ...data]);
-                ws['!cols'] = widths.map(w => ({ wch: w }));
-                ws['!autofilter'] = { ref: XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: data.length, c: headers.length - 1 } }) };
-                XLSX.utils.book_append_sheet(wb, ws, name);
-            };
+            const sheets = [];
+            const sheet = (name, headers, rows, widths) => sheets.push({ name, headers, rows, widths, filter: true });
             const n = (v) => (Number(v) ? Number(v) : '');
             sheet('ผลตรวจ',
                 ['วันที่', 'ทิศทาง', 'คนขับ', 'ชื่อในกระดานคิว', 'ทะเบียน', 'ประเภทรถ', 'รุ่น', 'ต้นทาง', 'ปลายทาง', 'ผล', 'เติมจริงรวม (ลิตร)', 'ตามอัตรารวม (ลิตร)', 'ต่าง (ลิตร)',
                     ...pumps.flatMap(p => [`${pumpName(p)} จริง`, `${pumpName(p)} อัตรา`]), 'เติมเป็นเงิน (บาท)',
-                    'ขาล่องไพศาล อัตรา', 'ขาล่องไพศาล บันทึก', 'ขาล่อง ผล', 'ลิตรยกมา', 'ควรเติม (หลังหักยกมา)', 'ลิตรยกไป', 'หมายเหตุ'],
+                    'ขาล่องไพศาล อัตรา', 'ขาล่องไพศาล บันทึก', 'ขาล่อง ผล', 'ลิตรยกมา', 'ควรเติม (หลังหักยกมา)', 'ลิตรยกไป', 'หมายเหตุ', 'ต้องทำอะไร'],
                 all.map(r => [xlDate(r.trip.date), r.leg === 'down' ? 'ขาล่อง' : 'ขาขึ้น', r.trip.driver, r.trip.driverBoard || '', r.trip.plate, r.cls ? AUDIT_CLASSES[r.cls] + (r.rateCls && r.rateCls !== r.cls ? ` (ตัดหาง คิด${AUDIT_CLASSES[r.rateCls]})` : '') : '', r.model, r.trip.origin, r.trip.destination,
                     AUDIT_STATUS[r.status].label, n(r.actualTotal), r.status === 'no-rate' ? '' : n(r.expectedTotal), r.status === 'no-rate' ? '' : r.diff,
                     ...pumps.flatMap(p => [n(r.actual[p]), r.status === 'no-rate' ? '' : n((r.expected || {})[p])]), n(r.bahtTotal),
                     n(r.down), r.downStatus && r.downStatus !== 'missing' ? r.downActual : '', r.downStatus ? DOWN_STATUS[r.downStatus].label : '',
                     carryReady && r.carryIn != null ? r.carryIn : '', carryReady && r.allot != null ? r.allot : '', carryReady && r.carryOut != null ? r.carryOut : '',
-                    fmtDateText([r.reason, ...r.flags].filter(Boolean).join(' | '))]),
-                [11, 8, 22, 14, 18, 8, 20, 18, 12, 12, 12, 10, ...pumps.flatMap(() => [12, 12]), 12, 12, 12, 12, 10, 14, 10, 60]);
+                    fmtDateText([r.reason, ...r.flags].filter(Boolean).join(' | ')),
+                    todoForRow(r).map((t, i) => `${i + 1}) ${t}`).join(' ')]),
+                [11, 8, 22, 14, 18, 8, 20, 18, 12, 12, 12, 10, ...pumps.flatMap(() => [12, 12]), 12, 12, 12, 12, 10, 14, 10, 60, 70]);
             sheet('สรุปคนขับ',
                 ['คนขับ', 'เที่ยว', 'ตรวจได้', 'ตรง', 'เกิน (เที่ยว)', 'เกิน (ลิตร)', 'ขาด (เที่ยว)', 'ขาด (ลิตร)', 'ผิดปั๊ม', 'ลิตรค้างยกไป (+ เกิน / − ขาด)'],
                 drivers.map(d => [d.driver, d.n, d.checked, d.ok, d.over, d.overL, d.under, d.underL, d.wrong, d.balance == null ? '' : d.balance]),
@@ -3037,7 +3139,7 @@ const formatZeroAsEmpty = (value) => {
                 rateVersionRanges().flatMap(({ v, label }) => v.standards.map(s => [label, v.meta?.fileName || '', s.sheet, s.row, AUDIT_CLASSES[s.cls], s.variant === 'sino' ? 'sino' : '', s.origin, s.destinationLabel,
                     Object.entries(s.up).map(([k, x]) => `${pumpName(k)} ${x}`).join(' + '), s.upTotal, n(s.down), n(s.downVictor), s.allowanceText, (s.flags || []).join(' | ')])),
                 [24, 30, 14, 6, 18, 8, 12, 24, 40, 10, 12, 12, 30, 50]);
-            XLSX.writeFile(wb, `ตรวจการเติมน้ำมัน_${appState.tripsMonth || localDateStr().slice(0, 7)}_คลาดเคลื่อน${tol}ลิตร.xlsx`);
+            return downloadStyledXlsx(`ตรวจการเติมน้ำมัน_${appState.tripsMonth || localDateStr().slice(0, 7)}_คลาดเคลื่อน${tol}ลิตร.xlsx`, sheets);
         };
 
         const attachReportsListeners = () => {
@@ -3602,16 +3704,12 @@ const formatZeroAsEmpty = (value) => {
                 textOrNum(r.crossingFee), textOrNum(r.waitingFee), num(r.totalLiters), num(r.totalBaht),
                 ...cols.map(c => num(c.unit === 'Liters' ? r.gasStationsLiters?.[c.key] : r.gasStationsBaht?.[c.key])),
             ]);
-            const ws = XLSX.utils.aoa_to_sheet([headers, ...data]);
-            ws['!cols'] = headers.map((h, i) => ({ wch: i < 3 ? 22 : Math.max(10, Math.min(h.length + 2, 26)) }));
-            ws['!autofilter'] = { ref: XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: data.length, c: headers.length - 1 } }) };
-            const wb = XLSX.utils.book_new();
-            XLSX.utils.book_append_sheet(wb, ws, 'เส้นทาง');
+            const widths = headers.map((h, i) => (i < 3 ? 22 : Math.max(10, Math.min(h.length + 4, 28))));
             // Any search (even spaces) filters the rows, so mark the file name; keep it file-name safe and short.
             const search = appState.dataManagementFilter;
             const safe = search.replace(/[\\/:*?"<>|]/g, '').trim().slice(0, 30);
             const suffix = search ? `_ค้นหา-${safe || 'กรองแล้ว'}` : '';
-            XLSX.writeFile(wb, `เส้นทาง-ฐานเดิม(ไม่ใช่ตารางอัตรา)_${localDateStr()}${suffix}.xlsx`);
+            return downloadStyledXlsx(`เส้นทาง-ฐานเดิม(ไม่ใช่ตารางอัตรา)_${localDateStr()}${suffix}.xlsx`, [{ name: 'เส้นทาง', headers, rows: data, widths, filter: true }]);
         };
 
          const attachVehicleManagementListeners = () => {
@@ -4233,11 +4331,8 @@ const handleFuelRecordEditFormSubmit = async (e) => {
                 ...stationKeys.map(key => t.gasStationsBaht?.[key] || ''),
                 t.notes || '',
             ]);
-            const ws = XLSX.utils.aoa_to_sheet([headers, ...data]);
-            const wb = XLSX.utils.book_new();
-            ws['!cols'] = [{ wch: 12 }]; // fits 19/11/2569
-            XLSX.utils.book_append_sheet(wb, ws, 'FuelByPump');
-            XLSX.writeFile(wb, `น้ำมันรายปั๊ม_${day || appState.tripsMonth || localDateStr().slice(0, 7)}.xlsx`);
+            return downloadStyledXlsx(`น้ำมันรายปั๊ม_${day || appState.tripsMonth || localDateStr().slice(0, 7)}.xlsx`,
+                [{ name: 'FuelByPump', headers, rows: data, widths: [13, 8, 12, 10, 22, 16, 16, 10, 12], filter: true }]); // 13 fits 19/11/2569 in Cordia
         };
         
         // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

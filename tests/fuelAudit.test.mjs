@@ -436,5 +436,17 @@ const lostList = ratesMissingFrom([...standards, { cls: 'EMPTY_TRAILER_KPP', ori
 eq('import preview names rates the file would drop (incl. the empty-trailer rule)', [lostList.length, lostList.some(x => x.includes('แพร่')), lostList.some(x => x.includes('+20'))], [2, true, true]);
 eq('older-queue column-L trip in between does not hide the next real double', [d26.flags.some(f => f.startsWith('อาจบันทึกขาล่องซ้ำ')), u24.flags.some(f => f.startsWith('อาจบันทึกขาล่องซ้ำ'))], [true, true]);
 
+// rate file diff (19 Nov 2026)
+{
+    const { rateDiff } = await import('../src/fuelAudit.js');
+    const r = (dest, up, extra = {}) => ({ cls: '18W', origin: 'กรุงเทพ', destination: dest, destinationLabel: dest, variant: 'standard', up, down: 180, downVictor: 190, allowanceText: 'เบี้ยขับ 2000', flags: [], ...extra });
+    const before = [r('เชียงใหม่', { jittamas_bangpain: 255, srinakorn_klongklung: 50 }), r('ตาก', { jittamas_bangpain: 130 }), r('แพร่', { jittamas_bangpain: 200 })];
+    const after = [r('เชียงใหม่', { jittamas_bangpain: 265, srinakorn_klongklung: 40 }), r('ตาก', { jittamas_bangpain: 130 }), r('พิจิตร', { jittamas_bangpain: 70 })];
+    const d = rateDiff(before, after);
+    eq('rate diff: changed figures old → new, added, removed, unchanged', [d.changed.map(c => c.fields.map(f => `${f.field}:${f.from}->${f.to}`).join(',')), d.added.map(a => a.label), d.removed.map(a => a.label), d.unchanged, d.isFirst],
+        [['up:jittamas_bangpain:255->265,up:srinakorn_klongklung:50->40'], ['พ่วง กรุงเทพ → พิจิตร'], ['พ่วง กรุงเทพ → แพร่'], 1, false]);
+    eq('rate diff: first upload / identical file', [rateDiff([], after).isFirst, rateDiff(after, after).changed.length], [true, 0]);
+}
+
 console.log(fail ? `FAILED ${fail}` : 'ALL PASS');
 process.exit(fail ? 1 : 0);
