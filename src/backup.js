@@ -37,11 +37,48 @@ export function buildBackup(root, exportedAt) {
 // Version 1 files (old button): { routes:[{id,…}], fuelRecords:[…], vehicles:[…] } → keyed objects.
 const arrayToKeyed = (list) => Object.fromEntries((list || []).filter(x => x && x.id).map(({ id, ...rest }) => [id, rest]));
 
+// A bare copy of THIS database (NAS nightly file / Firebase console export), not one of this app's wrapped files:
+// every top-level key a valid part name, trips stored by month (YYYY-MM → records, at least one month) and a
+// settings object — the shape the NAS script also checks. Anything else (another app's export, an empty "trips")
+// is refused instead of being offered as a restore.
+// Top-level keys must be parts this database really has (NODE_LABELS): a NEW database part must be added there,
+// or NAS / Firebase copies will be refused as "not this system's backup".
+const isObj = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
+export const isRawDatabase = (json) => isObj(json) && json.app === undefined
+    && Object.keys(json).every(k => Object.hasOwn(NODE_LABELS, k))
+    && isObj(json.trips) && Object.keys(json.trips).length > 0
+    && Object.entries(json.trips).every(([ym, m]) => /^\d{4}-\d{2}$/.test(ym) && m && typeof m === 'object')
+    && countNode('trips', json.trips) > 0
+    && isObj(json.settings);
+
+/** Parts the restore must not take from the file: empty there but holding records now (would wipe them). */
+export const emptyPartsOverData = (rows) => (rows || []).filter(r => r.selected && !r.inFile && r.now > 0).map(r => r.label);
+
+/** "fleet-fuel_2026-11-20_0200.json.gz" → "2026-11-20T02:00" (when the NAS took it); '' when the name has no stamp. */
+export function stampFromFileName(name) {
+    const m = String(name || '').match(/(\d{4}-\d{2}-\d{2})(?:[_T ](\d{2})(\d{2}))?/);
+    return m ? `${m[1]}${m[2] ? `T${m[2]}:${m[3]}` : ''}` : '';
+}
+
+/** The text of a picked file; .gz files (NAS copies) are unpacked in the browser (gzip magic bytes 1f 8b). */
+export async function fileToText(blob) {
+    const head = new Uint8Array(await blob.slice(0, 2).arrayBuffer());
+    if (head[0] !== 0x1f || head[1] !== 0x8b) return blob.text();
+    if (typeof DecompressionStream === 'undefined') throw new Error('เบราว์เซอร์นี้แตกไฟล์ .gz ไม่ได้ — ใช้ Chrome / Edge รุ่นใหม่');
+    return new Response(blob.stream().pipeThrough(new DecompressionStream('gzip'))).text();
+}
+
 /**
  * A parsed JSON backup → { ok, version, exportedAt, data:{ node: value }, counts, error }.
- * Accepts this app's version 2 (whole database) and the old version 1 (3 parts only).
+ * Accepts this app's version 2 (whole database), the old version 1 (3 parts only) and a bare database copy
+ * ('raw': NAS nightly file or Firebase export; fileName gives its date).
  */
-export function readBackup(json) {
+export function readBackup(json, fileName = '') {
+    if (isRawDatabase(json)) {
+        // The NAS nightly copy (scripts/nas-backup.sh) and Firebase's "Export JSON" are the bare database root: no
+        // counts inside to check against — the NAS script checked size / start / end / gzip before keeping the file.
+        return { ok: true, version: 'raw', exportedAt: stampFromFileName(fileName), data: json, counts: countAll(json) };
+    }
     if (!json || typeof json !== 'object' || json.app !== BACKUP_APP) return { ok: false, error: 'ไม่ใช่ไฟล์สำรองของระบบนี้' };
     if (json.version === BACKUP_VERSION) {
         if (!json.data || typeof json.data !== 'object') return { ok: false, error: 'ไฟล์สำรองไม่มีข้อมูล' };

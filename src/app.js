@@ -21,7 +21,7 @@ import { downloadBlob, downloadJson } from "./download.js";
 import { buildStyledWorkbook, XLSX_MIME } from "./excelStyle.js";
 import { STATUS_EXPLAIN, DOWN_EXPLAIN, FLAG_EXPLAIN, explainFlag, explainOneLine, todoForRow } from "./flagExplain.js";
 import { round2, sumMoney, roundFields } from "./money.js";
-import { buildBackup, readBackup, planRestore, countAll, NODE_LABELS } from "./backup.js";
+import { buildBackup, readBackup, planRestore, countAll, NODE_LABELS, fileToText, emptyPartsOverData } from "./backup.js";
 import { startThaiDateInputs } from "./dateInputs.js";
 import { TEMPLATE_SHEET, buildTemplateLists, generateTemplate, findTemplateHeader, parseTemplateRows, planTemplateSave, saveTemplateTrips } from "./tripTemplate.js";
 
@@ -675,7 +675,7 @@ const formatZeroAsEmpty = (value) => {
                         <div class="flex flex-wrap items-center gap-3">
                             <button id="full-backup-btn" class="bg-slate-600 hover:bg-slate-500 text-white font-bold py-2 px-4 rounded-lg">${ICONS.Download} ดาวน์โหลดสำรองทั้งระบบ</button>
                             <label class="text-sm text-gray-300">กู้คืนจากไฟล์สำรอง:
-                                <input type="file" id="restore-file" accept=".json,application/json" class="ml-2 text-sm text-gray-300 file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-slate-600 file:text-white file:font-bold" /></label>
+                                <input type="file" id="restore-file" accept=".json,.gz,application/json,application/gzip" class="ml-2 text-sm text-gray-300 file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-slate-600 file:text-white file:font-bold" /></label>
                         </div>
                         <div id="backup-msg" class="mt-3 text-sm"></div>
                         <div id="restore-out" class="mt-3 text-sm"></div>
@@ -1594,8 +1594,9 @@ const formatZeroAsEmpty = (value) => {
             out.innerHTML = '<p class="text-sky-400">กำลังอ่านไฟล์...</p>';
             try {
                 let json;
-                try { json = JSON.parse(await file.text()); } catch { throw new Error('ไฟล์นี้ไม่ใช่ JSON'); }
-                const backup = readBackup(json);
+                const text = await fileToText(file); // .json, or .json.gz from the NAS nightly backup
+                try { json = JSON.parse(text); } catch { throw new Error('ไฟล์นี้ไม่ใช่ JSON (หรือไฟล์ .gz เสีย)'); }
+                const backup = readBackup(json, file.name);
                 if (!backup.ok) throw new Error(backup.error);
                 const cur = { backup, fileName: file.name, current: null, backupDone: false, running: false };
                 restore = cur;
@@ -1631,7 +1632,7 @@ const formatZeroAsEmpty = (value) => {
                     <td class="p-2 text-right">${r.inFile.toLocaleString()}</td><td class="p-2 text-right">${current ? r.now.toLocaleString() : '<span class="text-gray-500">กดสำรองก่อน</span>'}</td>
                     <td class="p-2 text-xs ${current && r.now > r.inFile ? 'text-amber-300' : 'text-gray-400'}">${current && r.now > r.inFile ? `ข้อมูลปัจจุบันมากกว่าไฟล์ ${(r.now - r.inFile).toLocaleString()} รายการ — จะหายถ้ากู้คืนส่วนนี้` : ''}</td></tr>`).join('');
             return `
-                <p class="mb-2 text-gray-300">ไฟล์: <b>${esc(fileName)}</b> · สำรองเมื่อ ${esc(fmtDate(backup.exportedAt) || '-')}${backup.version === 1 ? ' · ไฟล์รุ่นเก่า (มีแค่ เส้นทาง / บันทึกน้ำมันเดิม / ทะเบียนรถ)' : ''}</p>
+                <p class="mb-2 text-gray-300">ไฟล์: <b>${esc(fileName)}</b> · สำรองเมื่อ ${esc(fmtDate(backup.exportedAt) || '-')}${backup.version === 1 ? ' · ไฟล์รุ่นเก่า (มีแค่ เส้นทาง / บันทึกน้ำมันเดิม / ทะเบียนรถ)' : ''}${backup.version === 'raw' ? ` · สำเนาฐานข้อมูลดิบ (จาก NAS ทุกคืน / Firebase)${backup.exportedAt.includes('T') ? ` เวลา ${esc(backup.exportedAt.slice(11))} น.` : ''} — ในไฟล์ไม่มีตัวเลขตรวจความครบ ดูจำนวนในตารางด้านล่างให้สมเหตุสมผลก่อนกู้คืน` : ''}</p>
                 <div class="overflow-x-auto rounded-lg border border-slate-700 mb-3"><table class="w-full text-sm">
                     <thead class="bg-slate-800 text-gray-400"><tr><th class="p-2 text-left">ส่วนข้อมูล (ติ๊กส่วนที่จะกู้คืน)</th><th class="p-2 text-right">ในไฟล์</th><th class="p-2 text-right">ตอนนี้</th><th class="p-2 text-left">หมายเหตุ</th></tr></thead>
                     <tbody>${rows}</tbody></table></div>
@@ -1660,6 +1661,8 @@ const formatZeroAsEmpty = (value) => {
             const nodes = chosenRestoreNodes();
             if (!cur || !cur.backupDone || cur.running || !nodes.length) return;
             const plan = planRestore(cur.backup, cur.current, nodes);
+            const wipes = emptyPartsOverData(plan.rows);
+            if (wipes.length) { alert(`ไม่กู้คืน: ในไฟล์ไม่มีข้อมูลของ ${wipes.join(', ')} แต่ตอนนี้มีอยู่ — กู้คืนจะลบทิ้งทั้งหมด\nเอาติ๊กส่วนนั้นออก หรือเลือกไฟล์สำรองอื่น`); return; }
             const lines = plan.rows.filter(r => r.selected).map(r => `• ${r.label}: ตอนนี้ ${r.now.toLocaleString()} → ในไฟล์ ${r.inFile.toLocaleString()}`).join('\n');
             if (!confirm(`กู้คืนจากไฟล์ "${cur.fileName}"?\n\n${lines}\n\nส่วนที่เลือกจะถูกแทนที่ทั้งส่วน ข้อมูลที่เพิ่มหลังวันที่สำรองในส่วนนั้นจะหาย\nสำรองข้อมูลปัจจุบันแล้วใช่ไหม?`)) return;
             cur.running = true; updateRestoreButton();
