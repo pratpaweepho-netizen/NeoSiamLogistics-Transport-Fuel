@@ -6,7 +6,13 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "node scripts/run-tests.mjs",
+    "check": "npm test && npm run build",
+    "check:live": "node scripts/check-live.mjs",
+    "emu": "firebase emulators:start --only database --project demo-fuel --config firebase.emulator.json",
+    "emu:seed": "node scripts/seed-emulator.mjs",
+    "dev:emu": "vite --mode emulator"
   },
   "dependencies": {
     "exceljs": "^4.4.0",

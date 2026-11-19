@@ -35,3 +35,9 @@ _*.mjs
 
 # Data backups (contain trip/driver data — keep out of the public repo)
 trips-backup-*.json
+
+# Full backups (whole database incl. driver bank accounts) and Firebase emulator logs
+NeoSiamFuel_*.json
+NeoSiamLogistics_backup_*.json
+*-debug.log
+.playwright-cli/

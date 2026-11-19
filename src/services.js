@@ -86,6 +86,9 @@ export let appState = {
             initialize: () => {
                 firebase.initializeApp(firebaseConfig);
                 database = firebase.database();
+                // `npm run dev:emu` (vite --mode emulator): everything reads/writes the LOCAL Firebase emulator, never
+                // production — for tests (a stubbed browser test once wrote to production, 17 Nov 2026).
+                if (import.meta.env.MODE === 'emulator') { database.useEmulator('127.0.0.1', 9000); appState.emulator = true; }
 
                 // Initial render to show UI immediately, so the app is responsive from the start.
                 ui.render();
@@ -1114,6 +1117,24 @@ export let appState = {
             // One-time date fix (dateFix.js): the whole trips node (also the backup), one month, and one atomic
             // multi-path update under trips/ per month.
             fetchAllTrips: () => database.ref('trips').once('value').then(s => s.val() || {}),
+            // Full backup: the whole database in one read. Restore replaces ONE top-level part (set), chosen by the user.
+            fetchWholeDb: () => database.ref().once('value').then(s => s.val() || {}),
+            // A part bigger than ~4 MB (trips, column-L liters) is written child by child (month by month): one SDK write
+            // is limited to 16 MB and trips alone is ~14 MB and growing. Children not in the file are then removed, so
+            // the part ends up exactly as in the file. onProgress(childKey) reports each step.
+            replaceDbNode: async (name, value, onProgress) => {
+                if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(name)) throw new Error(`ชื่อส่วนข้อมูลไม่ถูกต้อง: ${name}`);
+                const big = value && typeof value === 'object' && !Array.isArray(value) && JSON.stringify(value).length > 4e6;
+                if (!big) { await database.ref(name).set(value ?? null); return; }
+                const keys = Object.keys(value);
+                const bad = keys.find(k => !/^[A-Za-z0-9_-]+$/.test(k));
+                if (bad) throw new Error(`ชื่อข้อมูลย่อยไม่ถูกต้อง: ${bad}`);
+                for (const k of keys) { onProgress?.(k); await database.ref(`${name}/${k}`).set(value[k]); }
+                const now = (await database.ref(name).once('value')).val() || {};
+                const extra = Object.keys(now).filter(k => !(k in value));
+                if (extra.length) await database.ref(name).update(Object.fromEntries(extra.map(k => [k, null])));
+            },
+            logRestore: (entry) => database.ref('settings/restoreLog').push(entry),
             fetchTripsMonthRaw: (ym) => database.ref(`trips/${ym}`).once('value').then(s => s.val() || {}),
             applyTripsUpdate: (updates) => database.ref('trips').update(updates),
             logDateFix: (entry) => database.ref('settings/dateFixLog').push(entry),

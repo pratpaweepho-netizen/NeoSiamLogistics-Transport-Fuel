@@ -12,6 +12,8 @@ import { isUphillPayProposal, parseUphillPayProposal, planUphillPay, applyPayToT
 import { COLL_STATUS, downhillTripKeys, planDownhillFuel, withDownhillFuel, reconcileColumnL, createAllIfAbsent } from "./downhillFuel.js";
 import { planDateFix, buildDateFixBatches, recheckBatch, prevDay } from "./dateFix.js";
 import { fmtDate, fmtMonth, fmtDateText, xlDate } from "./thaiDate.js";
+import { downloadBlob, downloadJson } from "./download.js";
+import { buildBackup, readBackup, planRestore, countAll, NODE_LABELS } from "./backup.js";
 import { startThaiDateInputs } from "./dateInputs.js";
 import { TEMPLATE_SHEET, buildTemplateLists, generateTemplate, findTemplateHeader, parseTemplateRows, planTemplateSave, saveTemplateTrips } from "./tripTemplate.js";
 
@@ -112,6 +114,7 @@ const formatZeroAsEmpty = (value) => {
             if (appState.view === 'audit') viewHtml = renderAudit();
 
             appContainer.innerHTML = `
+                ${appState.emulator ? '<div class="bg-yellow-400 text-black text-center text-sm font-bold py-1">โหมดทดสอบ: ใช้ฐานข้อมูลจำลองบนเครื่องนี้ — ไม่ใช่ข้อมูลจริง</div>' : ''}
                 ${renderHeader()}
                 <main class="container mx-auto px-6 py-8">
                     ${viewHtml}
@@ -472,7 +475,7 @@ const formatZeroAsEmpty = (value) => {
                                 <button id="refresh-routes-btn" title="รีเฟรชข้อมูล" class="bg-sky-600 hover:bg-sky-700 text-white font-bold p-2 rounded-lg shadow-md transition-transform transform hover:scale-105">
                                     ${ICONS.Refresh}
                                 </button>
-                                <button id="backup-data-btn" title="สำรองข้อมูลทั้งหมด (เส้นทาง + บันทึกน้ำมัน + ทะเบียนรถ) เป็นไฟล์ JSON" class="flex items-center gap-2 bg-success hover:bg-green-600 text-white font-bold py-2 px-4 rounded-lg shadow-md transition-transform transform hover:scale-105">
+                                <button id="backup-data-btn" title="สำรองข้อมูลทั้งระบบ (เที่ยวรถ เรท คนขับ รถ เส้นทาง การตั้งค่า) เป็นไฟล์ JSON" class="flex items-center gap-2 bg-success hover:bg-green-600 text-white font-bold py-2 px-4 rounded-lg shadow-md transition-transform transform hover:scale-105">
                                     ${ICONS.Download} สำรองข้อมูล
                                 </button>
                                 <button id="routes-export-btn" title="Export เส้นทางที่แสดงอยู่ (ตามคำค้นหา) เป็นไฟล์ Excel" class="flex items-center gap-2 bg-emerald-700 hover:bg-emerald-800 text-white font-bold py-2 px-4 rounded-lg shadow-md transition-transform transform hover:scale-105 whitespace-nowrap">
@@ -631,6 +634,17 @@ const formatZeroAsEmpty = (value) => {
                             ? `ตั้งแต่เดือนนี้ เที่ยวรถมาจากแม่แบบเท่านั้น — ถ้านำเข้ากระดานคิว/ไฟล์ Transport ของเดือนนี้ขึ้นไป ระบบจะเตือนเพราะอาจนับเที่ยวซ้ำ`
                             : `⚠️ ยังไม่ได้ตั้งเดือนเริ่มใช้แม่แบบ — ต้องตั้งก่อนจึงจะนำเข้าแม่แบบได้`}</p>
                         <div id="tpl-msg" class="mt-2 text-sm"></div>
+                    `)}
+                    ${renderCard(`
+                        <h2 class="text-xl font-bold text-white mb-2">สำรอง / กู้คืนข้อมูลทั้งระบบ</h2>
+                        <p class="text-gray-400 text-sm mb-3">ไฟล์สำรองเก็บทุกส่วน: เที่ยวรถ ตารางอัตรา (ทุกฉบับ) ลิตรขาล่อง คนขับ ทะเบียนรถ เส้นทาง ตารางเบี้ยเลี้ยง การตั้งค่า · ไฟล์มีเลขบัญชีคนขับ เก็บในที่ปลอดภัย</p>
+                        <div class="flex flex-wrap items-center gap-3">
+                            <button id="full-backup-btn" class="bg-slate-600 hover:bg-slate-500 text-white font-bold py-2 px-4 rounded-lg">${ICONS.Download} ดาวน์โหลดสำรองทั้งระบบ</button>
+                            <label class="text-sm text-gray-300">กู้คืนจากไฟล์สำรอง:
+                                <input type="file" id="restore-file" accept=".json,application/json" class="ml-2 text-sm text-gray-300 file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-slate-600 file:text-white file:font-bold" /></label>
+                        </div>
+                        <div id="backup-msg" class="mt-3 text-sm"></div>
+                        <div id="restore-out" class="mt-3 text-sm"></div>
                     `)}
                     ${renderCard(`
                         <h2 class="text-xl font-bold text-white mb-2">แก้วันที่เที่ยวจากไฟล์ Transport (บันทึกไว้เร็วไป 1 วัน)</h2>
@@ -1035,11 +1049,7 @@ const formatZeroAsEmpty = (value) => {
                     routes: appState.routes, runTypes: logisticsService.getRateTable().map(r => r.runType),
                 });
                 const buf = await generateTemplate(ExcelJS, lists).xlsx.writeBuffer();
-                const url = URL.createObjectURL(new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
-                const a = document.createElement('a');
-                a.href = url; a.download = `แม่แบบนำเข้าเที่ยวรถ_${localDateStr()}.xlsx`;
-                document.body.appendChild(a); a.click(); a.remove();
-                setTimeout(() => URL.revokeObjectURL(url), 1000);
+                downloadBlob(new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), `แม่แบบนำเข้าเที่ยวรถ_${localDateStr()}.xlsx`);
                 tplMsg(`<span class="text-green-400">✓ ดาวน์โหลดแล้ว — รายการให้เลือก: คนขับ ${lists.drivers.length} · ทะเบียนหัว ${lists.heads.length} · หาง ${lists.trailers.length} · ปลายทาง ${lists.destinations.length}</span>`);
             } catch (err) {
                 console.error('Template download failed:', err);
@@ -1355,12 +1365,7 @@ const formatZeroAsEmpty = (value) => {
 
         const handleDateFixBackup = () => {
             if (!dfix) return;
-            const blob = new Blob([JSON.stringify(dfix.all)], { type: 'application/json' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url; a.download = `trips-backup-before-datefix-${localDateStr()}.json`;
-            document.body.appendChild(a); a.click(); a.remove();
-            setTimeout(() => URL.revokeObjectURL(url), 2000);
+            downloadJson(dfix.all, `trips-backup-before-datefix-${localDateStr()}.json`);
             dfix.backupDone = true;
             const btn = document.getElementById('dfix-apply-btn');
             if (btn && dfix.plan.moves.length) { btn.disabled = false; btn.classList.remove('opacity-60', 'cursor-not-allowed'); }
@@ -1463,12 +1468,7 @@ const formatZeroAsEmpty = (value) => {
         };
         const handleUphillPayBackup = () => {
             if (!upPay || upPay.errors.length || !upPay.plan.writes.length) return;
-            const blob = new Blob([JSON.stringify({ months: upPay.months, trips: upPay.before })], { type: 'application/json' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url; a.download = `trips-backup-before-uphill-pay-${localDateStr()}.json`;
-            document.body.appendChild(a); a.click(); a.remove();
-            setTimeout(() => URL.revokeObjectURL(url), 2000);
+            downloadJson({ months: upPay.months, trips: upPay.before }, `trips-backup-before-uphill-pay-${localDateStr()}.json`);
             upPay.backupDone = true;
             const btn = document.getElementById('uppay-apply-btn');
             if (btn) { btn.disabled = false; btn.classList.remove('opacity-60', 'cursor-not-allowed'); }
@@ -1530,6 +1530,122 @@ const formatZeroAsEmpty = (value) => {
             document.getElementById('tpl-download-btn')?.addEventListener('click', handleTemplateDownload);
             document.getElementById('dfix-check-btn')?.addEventListener('click', handleDateFixCheck);
             document.getElementById('tpl-start-save')?.addEventListener('click', handleTemplateStartSave);
+            document.getElementById('full-backup-btn')?.addEventListener('click', handleBackupData);
+            document.getElementById('restore-file')?.addEventListener('change', handleRestoreFile);
+        };
+
+        // ---- Restore from a full backup (19 Nov 2026) ----
+        // Read the file → show every part ("in the file") → the user backs up the CURRENT data first (that one read also
+        // gives the "now" counts) → ticks the parts to bring back → each ticked part is replaced whole (newer records
+        // in it are lost); big parts are written month by month. Every restore is logged in settings/restoreLog.
+        let restore = null; // { backup, fileName, current, backupDone, running }
+        const handleRestoreFile = async (e) => {
+            const out = document.getElementById('restore-out');
+            const input = e.target;
+            const file = input.files?.[0];
+            if (restore?.running) { input.value = ''; return; } // never swap the plan while a restore is writing
+            restore = null;
+            if (!file || !out) return;
+            out.innerHTML = '<p class="text-sky-400">กำลังอ่านไฟล์...</p>';
+            try {
+                let json;
+                try { json = JSON.parse(await file.text()); } catch { throw new Error('ไฟล์นี้ไม่ใช่ JSON'); }
+                const backup = readBackup(json);
+                if (!backup.ok) throw new Error(backup.error);
+                const cur = { backup, fileName: file.name, current: null, backupDone: false, running: false };
+                restore = cur;
+                renderRestore(cur);
+            } catch (err) {
+                out.innerHTML = '<p class="text-red-400"></p>';
+                out.firstChild.textContent = `อ่านไฟล์สำรองไม่ได้: ${err.message}`;
+            } finally {
+                input.value = ''; // the same file can be picked again (retry after a failure)
+            }
+        };
+        const renderRestore = (cur) => {
+            const out = document.getElementById('restore-out');
+            if (!out || restore !== cur) return;
+            const checked = new Set(chosenRestoreNodes());
+            out.innerHTML = renderRestorePreview(cur);
+            out.querySelectorAll('[data-restore-node]').forEach(cb => { cb.checked = checked.has(cb.dataset.restoreNode); cb.addEventListener('change', updateRestoreButton); });
+            document.getElementById('restore-backup-now')?.addEventListener('click', async () => {
+                const root = await handleBackupData();
+                if (!root || restore !== cur) return; // another file was picked meanwhile
+                cur.current = countAll(root); // "now" = exactly what was just backed up
+                cur.backupDone = true;
+                renderRestore(cur);
+                updateRestoreButton();
+            });
+            document.getElementById('restore-apply')?.addEventListener('click', handleRestoreApply);
+            updateRestoreButton();
+        };
+        const renderRestorePreview = ({ backup, fileName, current }) => {
+            const plan = planRestore(backup, current || {}, []);
+            const rows = plan.rows.map(r => `<tr class="border-b border-slate-700">
+                    <td class="p-2"><label class="flex items-center gap-2"><input type="checkbox" data-restore-node="${esc(r.name)}" class="w-4 h-4"> ${esc(r.label)}</label></td>
+                    <td class="p-2 text-right">${r.inFile.toLocaleString()}</td><td class="p-2 text-right">${current ? r.now.toLocaleString() : '<span class="text-gray-500">กดสำรองก่อน</span>'}</td>
+                    <td class="p-2 text-xs ${current && r.now > r.inFile ? 'text-amber-300' : 'text-gray-400'}">${current && r.now > r.inFile ? `ข้อมูลปัจจุบันมากกว่าไฟล์ ${(r.now - r.inFile).toLocaleString()} รายการ — จะหายถ้ากู้คืนส่วนนี้` : ''}</td></tr>`).join('');
+            return `
+                <p class="mb-2 text-gray-300">ไฟล์: <b>${esc(fileName)}</b> · สำรองเมื่อ ${esc(fmtDate(backup.exportedAt) || '-')}${backup.version === 1 ? ' · ไฟล์รุ่นเก่า (มีแค่ เส้นทาง / บันทึกน้ำมันเดิม / ทะเบียนรถ)' : ''}</p>
+                <div class="overflow-x-auto rounded-lg border border-slate-700 mb-3"><table class="w-full text-sm">
+                    <thead class="bg-slate-800 text-gray-400"><tr><th class="p-2 text-left">ส่วนข้อมูล (ติ๊กส่วนที่จะกู้คืน)</th><th class="p-2 text-right">ในไฟล์</th><th class="p-2 text-right">ตอนนี้</th><th class="p-2 text-left">หมายเหตุ</th></tr></thead>
+                    <tbody>${rows}</tbody></table></div>
+                <ol class="list-decimal ml-5 space-y-1 text-gray-300 mb-3">
+                    <li>กด "สำรองข้อมูลปัจจุบันก่อน" (บังคับ) เพื่อย้อนกลับได้ถ้ากู้ผิดไฟล์ — ช่อง "ตอนนี้" จะขึ้นหลังสำรอง</li>
+                    <li>ติ๊กเฉพาะส่วนที่ต้องการกู้คืน — ส่วนที่ติ๊กจะถูก<b>แทนที่ทั้งส่วน</b>ด้วยข้อมูลในไฟล์</li>
+                    <li>กด "กู้คืน" แล้วยืนยัน · ระหว่างนี้อย่าให้คนอื่นแก้ข้อมูล</li>
+                </ol>
+                <div class="flex flex-wrap gap-3">
+                    <button id="restore-backup-now" class="bg-slate-600 hover:bg-slate-500 text-white font-bold py-2 px-4 rounded-lg">${current ? '✓ สำรองแล้ว (สำรองใหม่)' : 'สำรองข้อมูลปัจจุบันก่อน'}</button>
+                    <button id="restore-apply" class="bg-error hover:bg-red-600 text-white font-bold py-2 px-4 rounded-lg opacity-60 cursor-not-allowed" disabled>กู้คืนส่วนที่เลือก</button>
+                </div>
+                <div id="restore-result" class="mt-3"></div>`;
+        };
+        const chosenRestoreNodes = () => [...document.querySelectorAll('[data-restore-node]:checked')].map(cb => cb.dataset.restoreNode);
+        const updateRestoreButton = () => {
+            const btn = document.getElementById('restore-apply');
+            if (!btn || !restore) return;
+            const ok = restore.backupDone && chosenRestoreNodes().length > 0 && !restore.running;
+            btn.disabled = !ok;
+            btn.classList.toggle('opacity-60', !ok);
+            btn.classList.toggle('cursor-not-allowed', !ok);
+        };
+        const handleRestoreApply = async () => {
+            const cur = restore;
+            const nodes = chosenRestoreNodes();
+            if (!cur || !cur.backupDone || cur.running || !nodes.length) return;
+            const plan = planRestore(cur.backup, cur.current, nodes);
+            const lines = plan.rows.filter(r => r.selected).map(r => `• ${r.label}: ตอนนี้ ${r.now.toLocaleString()} → ในไฟล์ ${r.inFile.toLocaleString()}`).join('\n');
+            if (!confirm(`กู้คืนจากไฟล์ "${cur.fileName}"?\n\n${lines}\n\nส่วนที่เลือกจะถูกแทนที่ทั้งส่วน ข้อมูลที่เพิ่มหลังวันที่สำรองในส่วนนั้นจะหาย\nสำรองข้อมูลปัจจุบันแล้วใช่ไหม?`)) return;
+            cur.running = true; updateRestoreButton();
+            const fileInput = document.getElementById('restore-file');
+            if (fileInput) fileInput.disabled = true;
+            const res = document.getElementById('restore-result');
+            const done = [];
+            let error = '';
+            try {
+                // settings last: the restore log lives under settings and must not be overwritten by a settings restore
+                const order = [...plan.chosen.filter(n => n !== 'settings'), ...plan.chosen.filter(n => n === 'settings')];
+                for (const name of order) {
+                    const label = NODE_LABELS[name] || name;
+                    if (res) res.innerHTML = `<p class="text-sky-400">กำลังกู้คืน ${esc(label)}...</p>`;
+                    await logisticsService.replaceDbNode(name, cur.backup.data[name], (part) => { if (res) res.innerHTML = `<p class="text-sky-400">กำลังกู้คืน ${esc(label)} · ${esc(fmtMonth(part))}...</p>`; });
+                    done.push(name);
+                }
+            } catch (err) {
+                console.error('Restore failed:', err);
+                error = err.message || String(err);
+            }
+            const entry = { at: new Date().toISOString(), file: cur.fileName, backupExportedAt: cur.backup.exportedAt || '', parts: done,
+                before: Object.fromEntries(done.map(n => [n, cur.current[n] || 0])), after: Object.fromEntries(done.map(n => [n, cur.backup.counts[n] || 0])), error };
+            let logNote = '';
+            try { await logisticsService.logRestore(entry); } catch (e) { logNote = ` · ⚠️ บันทึกประวัติการกู้คืนไม่สำเร็จ: ${esc(e.message)}`; }
+            const names = done.map(n => esc(NODE_LABELS[n] || n)).join(', ');
+            if (res) res.innerHTML = error
+                ? `<p class="text-red-400 font-bold">หยุด: ${esc(error)} · กู้คืนสำเร็จแล้ว: ${names || 'ไม่มี'} · ใช้ไฟล์สำรองที่เพิ่งดาวน์โหลดเพื่อย้อนกลับได้${logNote}</p>`
+                : `<p class="text-green-400 font-bold">✓ กู้คืนแล้ว: ${names} — โหลดหน้าใหม่ (F5) เพื่อดูข้อมูล${logNote}</p>`;
+            cur.running = false; cur.backupDone = false; updateRestoreButton(); // another restore needs a fresh backup
+            if (fileInput) fileInput.disabled = false;
         };
 
         // --- View: Queue / Dispatch (คิวรถ) — loads one month at a time ---
@@ -4070,26 +4186,27 @@ const handleFuelRecordEditFormSubmit = async (e) => {
             container.insertAdjacentHTML('beforeend', newItemHtml);
         };
         
-        const handleBackupData = () => {
-            // Full-fidelity backup of the entire dataset as a JSON file. Can be kept as a safety
-            // copy and re-imported manually if data is ever lost.
-            const backup = {
-                app: 'NeoSiamLogistics & Transport Fuel',
-                version: 1,
-                exportedAt: new Date().toISOString(),
-                routes: logisticsService.getRoutes(),
-                fuelRecords: logisticsService.getFuelRecords(),
-                vehicles: logisticsService.getVehicles(),
-            };
-            const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `NeoSiamLogistics_backup_${localDateStr()}.json`;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            URL.revokeObjectURL(url);
+        // Full backup (19 Nov 2026): the WHOLE database — the old button saved routes / fuel records / vehicles only.
+        const handleBackupData = async () => {
+            const btns = [...document.querySelectorAll('#backup-data-btn, #full-backup-btn')];
+            btns.forEach(b => { b.disabled = true; b.classList.add('opacity-60'); });
+            const out = document.getElementById('backup-msg');
+            if (out) out.innerHTML = '<p class="text-sky-400">กำลังอ่านข้อมูลทั้งระบบ...</p>';
+            try {
+                const root = await logisticsService.fetchWholeDb();
+                const file = buildBackup(root, new Date().toISOString());
+                downloadJson(file, `NeoSiamFuel_สำรองทั้งระบบ_${localDateStr()}.json`);
+                const parts = Object.entries(file.counts).map(([k, n]) => `${NODE_LABELS[k] || k} ${n.toLocaleString()}`).join(' · ');
+                if (out) { out.innerHTML = '<p class="text-green-400"></p>'; out.firstChild.textContent = `✓ ดาวน์โหลดไฟล์สำรองแล้ว — ${parts} · เก็บไฟล์ไว้ในที่ปลอดภัย (มีเลขบัญชีคนขับ)`; }
+                else alert(`ดาวน์โหลดไฟล์สำรองแล้ว\n${parts}`);
+                return root; // the restore uses it for the "now" counts
+            } catch (err) {
+                console.error('Backup failed:', err);
+                if (out) { out.innerHTML = '<p class="text-red-400"></p>'; out.firstChild.textContent = `สำรองไม่สำเร็จ: ${err.message}`; } else alert(`สำรองไม่สำเร็จ: ${err.message}`);
+                return null;
+            } finally {
+                btns.forEach(b => { b.disabled = false; b.classList.remove('opacity-60'); });
+            }
         };
 
         const handleExportToExcel = () => {
