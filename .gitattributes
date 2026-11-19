@@ -1,0 +1,2 @@
+# Shell scripts run on the Synology NAS: always LF, even on Windows checkouts (CRLF breaks bash).
+*.sh text eol=lf
