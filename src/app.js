@@ -11,6 +11,8 @@ import { calcTripMoney, describeTripMoney, moneySaveProblem, storedAdvance, MONE
 import { isUphillPayProposal, parseUphillPayProposal, planUphillPay, applyPayToTrip, makeSameDriver, PAY_FIELDS, PAY_FIELD_LABELS } from "./uphillPay.js";
 import { COLL_STATUS, downhillTripKeys, planDownhillFuel, withDownhillFuel, reconcileColumnL, createAllIfAbsent } from "./downhillFuel.js";
 import { planDateFix, buildDateFixBatches, recheckBatch, prevDay } from "./dateFix.js";
+import { fmtDate, fmtMonth, fmtDateText, xlDate } from "./thaiDate.js";
+import { startThaiDateInputs } from "./dateInputs.js";
 import { TEMPLATE_SHEET, buildTemplateLists, generateTemplate, findTemplateHeader, parseTemplateRows, planTemplateSave, saveTemplateTrips } from "./tripTemplate.js";
 
 const formatZeroAsEmpty = (value) => {
@@ -297,7 +299,7 @@ const formatZeroAsEmpty = (value) => {
                     const aL = t.gasStationsLiters?.[key] || 0, aB = t.gasStationsBaht?.[key] || 0;
                     const txt = [aL > 0 ? `${aL.toLocaleString()} ลิตร` : '', aB > 0 ? `${aB.toLocaleString()} บาท` : ''].filter(Boolean).join('<br>');
                     return `<tr class="border-b border-slate-700 hover:bg-slate-700/20">
-                        <td class="p-2 whitespace-nowrap">${t.date || ''}</td>
+                        <td class="p-2 whitespace-nowrap">${fmtDate(t.date || '')}</td>
                         <td class="p-2 font-mono whitespace-nowrap">${t.plate || ''}</td>
                         <td class="p-2 whitespace-nowrap">${t.origin || ''} → ${t.destination || ''}</td>
                         <td class="p-2 text-right font-semibold text-accent whitespace-nowrap">${txt}</td></tr>`;
@@ -315,7 +317,7 @@ const formatZeroAsEmpty = (value) => {
                     </div>`);
             }).join('');
 
-            const period = day ? `วันที่ ${day}` : `เดือน ${appState.tripsMonth || '(เลือกเดือน)'}`;
+            const period = day ? `วันที่ ${fmtDate(day)}` : `เดือน ${appState.tripsMonth ? fmtMonth(appState.tripsMonth) : '(เลือกเดือน)'}`;
             return `
                 <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
                     ${renderCard(`<h3 class="text-lg text-gray-400">จำนวนคิว</h3><p class="text-4xl font-bold text-accent">${trips.length.toLocaleString()}</p>`, 'text-center')}
@@ -500,6 +502,8 @@ const formatZeroAsEmpty = (value) => {
 
         // Escape text taken from Excel/Firebase before putting it into innerHTML.
         const esc = (v) => String(v ?? '').replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+        // free text from the audit / importers (notes, reasons, errors): ISO dates inside it shown as dd/mm/yyyy พ.ศ.
+        const escD = (v) => esc(fmtDateText(v));
         const pumpName = (key) => GAS_STATION_FRIENDLY_NAMES[key] || key;
         const fmtPumps = (obj) => Object.entries(obj || {}).filter(([, v]) => Number(v)).map(([k, v]) => `${esc(pumpName(k))} ${Number(v).toLocaleString()}`).join(' + ') || '-';
         // A rate's uphill liters; trailer-drop rates have parts (แม่/ลูก) and a total but no pump.
@@ -520,7 +524,7 @@ const formatZeroAsEmpty = (value) => {
                     <td class="p-2 whitespace-nowrap">${esc(s.origin)} → ${esc(s.destinationLabel)}</td>
                     <td class="p-2">${fmtRateUp(s)}</td>
                     <td class="p-2 text-right">${s.down || '-'}${s.downVictor !== s.down ? ` <span class="text-xs text-gray-400">(victor ${s.downVictor})</span>` : ''}</td>
-                    <td class="p-2 text-xs text-amber-300">${s.flags.map(esc).join('<br>')}</td>
+                    <td class="p-2 text-xs text-amber-300">${s.flags.map(escD).join('<br>')}</td>
                 </tr>`).join('');
             return `
                 <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
@@ -529,7 +533,7 @@ const formatZeroAsEmpty = (value) => {
                     ${importStatCard('ชีตที่ไม่ใช่ตารางอัตรา', skippedSheets.length)}
                     ${importStatCard('อัตราในระบบตอนนี้', appState.rateStandards.length)}
                 </div>
-                ${warnings.length ? `<p class="text-yellow-400 mb-3">⚠️ ${warnings.map(esc).join(', ')}</p>` : ''}
+                ${warnings.length ? `<p class="text-yellow-400 mb-3">⚠️ ${warnings.map(escD).join(', ')}</p>` : ''}
                 ${lost.length ? `<div class="bg-red-900/30 border border-red-700 rounded-lg p-3 mb-3 text-sm text-red-200"><b>⚠️ อัตราในระบบตอนนี้ที่ไฟล์นี้ไม่มี (${lost.length} รายการ) — ถ้าบันทึก เที่ยวตั้งแต่วันที่เริ่มใช้จะไม่มีอัตราเหล่านี้ (ถ้าติ๊ก "ใช้กับทุกเดือน" จะหายจากทุกเดือน):</b><br>${lost.map(esc).join(' · ')}</div>` : ''}
                 ${skippedSheets.length ? `<p class="text-xs text-gray-400 mb-3">ไม่ได้อ่าน: ${skippedSheets.map(esc).join(', ')} (ไม่มีหัวคอลัมน์ "รวมยอดขาขึ้น/ลิตร")</p>` : ''}
                 ${cur ? `<p class="text-xs text-gray-400 mb-3">ฉบับในระบบตอนนี้: ${esc(cur.fileName)} · บันทึกเมื่อ ${esc(cur.importedAt)}</p>` : ''}
@@ -547,7 +551,7 @@ const formatZeroAsEmpty = (value) => {
                             <input type="date" id="rate-effective-from" class="bg-slate-800 border border-slate-600 rounded-md px-3 py-2 text-white" /></div>
                         <label class="flex items-center gap-2 text-sm"><input type="checkbox" id="rate-effective-all" class="w-4 h-4"> ใช้กับทุกเดือน (ไม่ใช้ฉบับเดิมอีก)</label>
                     </div>
-                    ${cur ? `<p class="text-xs text-gray-400 mt-2">ฉบับที่ใช้อยู่: ${esc(cur.fileName)}${cur.effectiveFrom ? ` (เริ่มใช้ ${esc(thaiDate(cur.effectiveFrom))})` : ' (ใช้กับทุกเที่ยว)'}</p>` : ''}
+                    ${cur ? `<p class="text-xs text-gray-400 mt-2">ฉบับที่ใช้อยู่: ${esc(cur.fileName)}${cur.effectiveFrom ? ` (เริ่มใช้ ${esc(fmtDate(cur.effectiveFrom))})` : ' (ใช้กับทุกเที่ยว)'}</p>` : ''}
                 </div>
                 <button id="import-rates-save-btn" class="bg-primary hover:bg-secondary text-white font-bold py-2 px-5 rounded-lg shadow-md">บันทึกเป็นอัตรามาตรฐาน (${standards.length} อัตรา)</button>
                 <div id="import-result" class="mt-4"></div>`;
@@ -570,8 +574,8 @@ const formatZeroAsEmpty = (value) => {
             const list = [...rateVersions()].sort((a, b) => (a.effectiveFrom || '').localeCompare(b.effectiveFrom || ''));
             return list.map((v, i) => {
                 const next = list[i + 1]?.effectiveFrom;
-                const from = v.effectiveFrom ? `ตั้งแต่ ${thaiDate(v.effectiveFrom)}` : '';
-                const to = next ? `ก่อน ${thaiDate(next)}` : '';
+                const from = v.effectiveFrom ? `ตั้งแต่ ${fmtDate(v.effectiveFrom)}` : '';
+                const to = next ? `ก่อน ${fmtDate(next)}` : '';
                 return { v, label: [from, to].filter(Boolean).join(' ') || 'ทุกเที่ยว' };
             });
         };
@@ -590,8 +594,8 @@ const formatZeroAsEmpty = (value) => {
             const curEff = curMeta?.effectiveFrom || '';
             const what = firstSet ? 'ใช้กับทุกเที่ยว (ยังไม่มีอัตราฉบับก่อนหน้า)'
                 : allMonths ? `ใช้กับทุกเดือน — "${curName}" และฉบับก่อนหน้าทั้งหมดจะไม่ถูกใช้อีก (เก็บไว้เป็นสำรอง)`
-                : effectiveFrom <= curEff ? `เที่ยวตั้งแต่ ${thaiDate(effectiveFrom)} ใช้ไฟล์นี้ — แทน "${curName}" (ซึ่งเริ่มใช้ ${thaiDate(curEff)})`
-                : `เที่ยวตั้งแต่ ${thaiDate(effectiveFrom)} ใช้ไฟล์นี้ · เที่ยวก่อนหน้านั้นยังใช้ "${curName}"`;
+                : effectiveFrom <= curEff ? `เที่ยวตั้งแต่ ${fmtDate(effectiveFrom)} ใช้ไฟล์นี้ — แทน "${curName}" (ซึ่งเริ่มใช้ ${fmtDate(curEff)})`
+                : `เที่ยวตั้งแต่ ${fmtDate(effectiveFrom)} ใช้ไฟล์นี้ · เที่ยวก่อนหน้านั้นยังใช้ "${curName}"`;
             if (!confirm(`บันทึก ${standards.length} อัตราจาก "${fileName}" เป็นอัตรามาตรฐาน?\n\n${what}`)) return;
             const btn = document.getElementById('import-rates-save-btn');
             const resultDiv = document.getElementById('import-result');
@@ -662,7 +666,7 @@ const formatZeroAsEmpty = (value) => {
         const renderImportPreview = (result) => {
             const { routes, stats, warnings } = result;
             if (!routes.length) {
-                return `<div class="text-red-400">ไม่พบเส้นทางที่นำเข้าได้${warnings.length ? ' — ' + warnings.join(', ') : ''}</div>`;
+                return `<div class="text-red-400">ไม่พบเส้นทางที่นำเข้าได้${warnings.length ? ' — ' + fmtDateText(warnings.join(', ')) : ''}</div>`;
             }
             const sample = routes.slice(0, 12).map(r => `
                 <tr class="border-b border-slate-700">
@@ -681,7 +685,7 @@ const formatZeroAsEmpty = (value) => {
                     ${importStatCard('ค่าน้ำมันต่างกัน→เลือก mode', stats.variedRoutes)}
                 </div>
                 <p class="text-xs text-gray-500 mb-3">จาก ${(stats.rowsUsed || 0).toLocaleString()} แถวดิบ · ข้ามแถวไม่ครบ ${stats.skipped} แถว · พบคอลัมน์ปั๊ม ${stats.stationColumns} คอลัมน์</p>
-                ${warnings.length ? `<p class="text-yellow-400 mb-3">⚠️ ${warnings.join(', ')}</p>` : ''}
+                ${warnings.length ? `<p class="text-yellow-400 mb-3">⚠️ ${fmtDateText(warnings.join(', '))}</p>` : ''}
                 <div class="overflow-x-auto rounded-lg border border-slate-700 mb-2">
                     <table class="w-full text-sm">
                         <thead class="bg-slate-800 text-gray-400"><tr>
@@ -823,10 +827,10 @@ const formatZeroAsEmpty = (value) => {
         const renderTripsImportPreview = (result, kind) => {
             const { trips, stats, warnings } = result;
             const label = kind === 'uphill' ? 'คิวขาขึ้น' : kind === 'downhill' ? 'คิวขาล่อง' : kind === 'daily' ? 'คิวรายวัน (มีน้ำมัน)' : 'คิวรถร่วม';
-            if (!trips.length) return `<div class="text-red-400">ไม่พบคิวรถที่นำเข้าได้${warnings.length ? ' — ' + warnings.join(', ') : ''}</div>`;
+            if (!trips.length) return `<div class="text-red-400">ไม่พบคิวรถที่นำเข้าได้${warnings.length ? ' — ' + fmtDateText(warnings.join(', ')) : ''}</div>`;
             const sample = trips.slice(0, 12).map(t => `
                 <tr class="border-b border-slate-700">
-                    <td class="p-2 whitespace-nowrap">${t.date}</td>
+                    <td class="p-2 whitespace-nowrap">${fmtDate(t.date)}</td>
                     <td class="p-2 whitespace-nowrap">${t.driver}</td>
                     <td class="p-2 font-mono whitespace-nowrap">${t.plate}</td>
                     <td class="p-2 whitespace-nowrap">${t.origin} → ${t.destination}</td>
@@ -842,8 +846,8 @@ const formatZeroAsEmpty = (value) => {
                     ${importStatCard('จำนวนเดือน', stats.months)}
                     ${importStatCard('ข้ามแถวไม่ครบ', stats.skipped)}
                 </div>
-                <p class="text-xs text-gray-500 mb-3">ช่วงวันที่: ${stats.minDate} ถึง ${stats.maxDate} · เก็บแยกตามเดือน (trips/YYYY-MM)</p>
-                ${warnings.length ? `<p class="text-yellow-400 mb-3">⚠️ ${warnings.join(', ')}</p>` : ''}
+                <p class="text-xs text-gray-500 mb-3">ช่วงวันที่: ${fmtDate(stats.minDate)} ถึง ${fmtDate(stats.maxDate)} · เก็บแยกตามเดือน</p>
+                ${warnings.length ? `<p class="text-yellow-400 mb-3">⚠️ ${fmtDateText(warnings.join(', '))}</p>` : ''}
                 ${templateOverlapNote(trips) ? `<p class="text-red-300 bg-red-900/30 border border-red-700 rounded-lg p-3 mb-3">⚠️ ${esc(templateOverlapNote(trips))}</p>` : ''}
                 <div class="overflow-x-auto rounded-lg border border-slate-700 mb-2">
                     <table class="w-full text-sm"><thead class="bg-slate-800 text-gray-400"><tr>
@@ -908,7 +912,7 @@ const formatZeroAsEmpty = (value) => {
         const renderMasterImportPreview = (result, kind) => {
             const label = kind === 'drivers' ? 'คนขับ' : kind === 'vehicles' ? 'ทะเบียนรถ' : 'ตารางเบี้ยเลี้ยง';
             const items = kind === 'drivers' ? result.drivers : kind === 'vehicles' ? result.vehicles : result.rates;
-            if (!items.length) return `<div class="text-red-400">ไม่พบข้อมูล${result.warnings.length ? ' — ' + result.warnings.join(', ') : ''}</div>`;
+            if (!items.length) return `<div class="text-red-400">ไม่พบข้อมูล${result.warnings.length ? ' — ' + fmtDateText(result.warnings.join(', ')) : ''}</div>`;
             let head, sample, statCards, allowMerge = true;
             if (kind === 'drivers') {
                 head = '<tr><th class="p-2 text-left">ชื่อ</th><th class="p-2 text-left">เลขบัญชี</th></tr>';
@@ -1046,21 +1050,17 @@ const formatZeroAsEmpty = (value) => {
         const handleTemplateStartSave = async () => {
             const v = (document.getElementById('tpl-start-month')?.value || '').trim();
             if (!/^\d{4}-\d{2}$/.test(v)) { tplMsg('<span class="text-red-400">เลือกเดือนก่อน</span>'); return; }
-            const [y, m] = v.split('-').map(Number);
-            if (!confirm(`ตั้งให้ใช้แม่แบบตั้งแต่เดือน ${m}/${y + 543}?\n\nตั้งแต่เดือนนี้ เที่ยวรถควรมาจากแม่แบบเท่านั้น และแม่แบบจะไม่รับเที่ยวที่ก่อนเดือนนี้`)) return;
+            if (!confirm(`ตั้งให้ใช้แม่แบบตั้งแต่เดือน ${fmtMonth(v)}?\n\nตั้งแต่เดือนนี้ เที่ยวรถควรมาจากแม่แบบเท่านั้น และแม่แบบจะไม่รับเที่ยวที่ก่อนเดือนนี้`)) return;
             try {
                 await logisticsService.saveTemplateSettings({ startMonth: v });
                 appState.templateStartMonth = v;
-                tplMsg(`<span class="text-green-400">✓ บันทึกแล้ว: ใช้แม่แบบตั้งแต่เดือน ${m}/${y + 543}</span>`);
+                tplMsg(`<span class="text-green-400">✓ บันทึกแล้ว: ใช้แม่แบบตั้งแต่เดือน ${fmtMonth(v)}</span>`);
             } catch (err) {
                 tplMsg(`<span class="text-red-400">บันทึกไม่สำเร็จ: ${esc(err.message)}</span>`);
             }
         };
 
         const templateDupSource = (d) => d?.source === 'file' ? `แถว ${d.row} ในไฟล์นี้` : d?.source === 'template' ? 'แม่แบบที่นำเข้าไปแล้ว' : d?.source === 'transport' ? 'ไฟล์ Transport' : d?.source === 'daily' ? 'กระดานคิว' : 'ระบบ';
-        const TH_MONTHS = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'];
-        // '2026-11-17' → '17 พ.ย. 2569' — so a day/month swapped by the PC's date setting is easy to spot.
-        const thaiDate = (d) => { const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(d || ''); return m ? `${+m[3]} ${TH_MONTHS[+m[2] - 1]} ${+m[1] + 543}` : ''; };
 
         const renderTemplatePreview = ({ rows }, ctxFor) => {
             const tol = appState.auditState.tolerance || 0;
@@ -1078,16 +1078,16 @@ const formatZeroAsEmpty = (value) => {
                 if (p.status === 'error' || !p.trip.totalLiters && !p.trip.totalBaht) return '<span class="text-gray-600">—</span>';
                 const r = auditTrip(p.trip, ctxFor(p.trip.date), tol);
                 if (!r) return '<span class="text-gray-600">—</span>';
-                const why = [r.reason, ...(r.flags || [])].filter(Boolean).join(' · ');
+                const why = fmtDateText([r.reason, ...(r.flags || [])].filter(Boolean).join(' · '));
                 const diff = r.status === 'no-rate' ? '' : ` ${r.diff > 0 ? '+' : ''}${r.diff}`;
                 return `<span title="${esc(why)}" class="px-2 py-0.5 rounded text-xs text-white whitespace-nowrap ${AUDIT_STATUS[r.status].cls}">${AUDIT_STATUS[r.status].label}${diff}</span>`;
             };
             const body = rows.slice(0, 3000).map(p => {
                 const t = p.trip;
-                const msgs = [...p.errors.map(e => `<div class="text-red-400">✗ ${esc(e)}</div>`), ...p.warnings.map(w => `<div class="text-yellow-300">⚠ ${esc(w)}</div>`)].join('');
+                const msgs = [...p.errors.map(e => `<div class="text-red-400">✗ ${escD(e)}</div>`), ...p.warnings.map(w => `<div class="text-yellow-300">⚠ ${escD(w)}</div>`)].join('');
                 return `<tr class="border-b border-slate-700 align-top">
                     <td class="p-2 text-gray-400">${p.excelRow}</td>
-                    <td class="p-2 whitespace-nowrap">${esc(thaiDate(t.date))}</td>
+                    <td class="p-2 whitespace-nowrap">${esc(fmtDate(t.date))}</td>
                     <td class="p-2 whitespace-nowrap">${esc(t.direction)}</td>
                     <td class="p-2 font-mono whitespace-nowrap">${esc(t.plate)}${t.trailerDrop && t.trailerDrop !== 'ไม่ตัด' ? `<div class="text-xs text-sky-300 font-sans">ตัดหาง ${esc(t.trailerDrop)}</div>` : ''}</td>
                     <td class="p-2 whitespace-nowrap">${esc(t.driver)}</td>
@@ -1260,7 +1260,7 @@ const formatZeroAsEmpty = (value) => {
                     ${plan.unfixed ? `<p class="text-red-300 bg-red-900/30 border border-red-700 rounded-lg p-3 text-sm mb-3">⚠️ เที่ยวขาล่องในระบบ ${plan.unfixed.toLocaleString()} เที่ยวยังบันทึกวันที่เร็วไป 1 วัน — ยังผูกลิตรให้ไม่ได้ ให้กด "แก้วันที่" ในการ์ดด้านบนก่อน แล้วอ่านไฟล์นี้ใหม่</p>` : ''}
                     ${plan.changed ? `<p class="text-amber-300 text-sm mb-3">⚠️ ${plan.changed} รายการเคยบันทึกแล้วแต่ข้อความในไฟล์เปลี่ยนไป — ระบบไม่ทับของเดิม</p>` : ''}
                     ${statusRows ? `<table class="text-sm mb-3"><tbody>${statusRows}</tbody></table>` : ''}
-                    ${unparsed.length ? `<details class="mb-3 text-sm"><summary class="cursor-pointer text-yellow-300">อ่านไม่ได้ ${unparsed.length} รายการ — ตรวจเอง</summary><ul class="mt-2 space-y-1 text-gray-300">${unparsed.slice(0, 100).map(e => `<li>${esc(e.record.date)} ${esc(e.record.plate)} · ${esc(e.record.raw)}</li>`).join('')}</ul></details>` : ''}
+                    ${unparsed.length ? `<details class="mb-3 text-sm"><summary class="cursor-pointer text-yellow-300">อ่านไม่ได้ ${unparsed.length} รายการ — ตรวจเอง</summary><ul class="mt-2 space-y-1 text-gray-300">${unparsed.slice(0, 100).map(e => `<li>${esc(fmtDate(e.record.date))} ${esc(e.record.plate)} · ${esc(e.record.raw)}</li>`).join('')}</ul></details>` : ''}
                     <p class="text-xs text-yellow-300 mb-3">ถ้าเที่ยวขาล่องมีในระบบอยู่แล้ว ใช้ปุ่มนี้อย่างเดียว — ไม่ต้องกด "เพิ่มเข้าไป" ด้านล่าง (จะทำให้เที่ยวซ้ำ)</p>
                     <button id="coll-save-btn" class="bg-success hover:bg-green-600 text-white font-bold py-2 px-5 rounded-lg shadow-md ${n ? '' : 'opacity-60 cursor-not-allowed'}" ${n ? '' : 'disabled'}>บันทึกลิตรขาล่อง (${n.toLocaleString()} รายการ)</button>
                     <div id="coll-result" class="mt-3"></div>
@@ -1325,10 +1325,10 @@ const formatZeroAsEmpty = (value) => {
             const c = plan.counts;
             const byMonth = {};
             for (const m of plan.moves) { const b = byMonth[m.fromYm] ||= { n: 0, out: 0, net: 0 }; b.n++; if (m.toYm !== m.fromYm) { b.out++; b.net += Number(m.trip.netTransfer) || 0; } }
-            const monthRows = Object.keys(byMonth).sort().map(ym => `<tr class="border-b border-slate-700"><td class="p-2">${esc(ym)}</td><td class="p-2 text-right">${byMonth[ym].n.toLocaleString()}</td><td class="p-2 text-right">${byMonth[ym].out ? `${byMonth[ym].out} เที่ยว → เดือนถัดไป` : '-'}</td><td class="p-2 text-right">${byMonth[ym].out ? thMoney(byMonth[ym].net) : '-'}</td></tr>`).join('');
+            const monthRows = Object.keys(byMonth).sort().map(ym => `<tr class="border-b border-slate-700"><td class="p-2">${esc(fmtMonth(ym))}</td><td class="p-2 text-right">${byMonth[ym].n.toLocaleString()}</td><td class="p-2 text-right">${byMonth[ym].out ? `${byMonth[ym].out} เที่ยว → เดือนถัดไป` : '-'}</td><td class="p-2 text-right">${byMonth[ym].out ? thMoney(byMonth[ym].net) : '-'}</td></tr>`).join('');
             const moved = plan.moves.filter(m => m.toYm !== m.fromYm);
             const movedNet = moved.reduce((s, m) => s + (Number(m.trip.netTransfer) || 0), 0);
-            const amb = plan.ambiguous.slice(0, 200).map(a => `<li>${esc(a.date)} ${esc(a.direction)} ${esc(a.plate)} ${esc(a.driver)} — ${esc(a.reason)}</li>`).join('');
+            const amb = plan.ambiguous.slice(0, 200).map(a => `<li>${esc(fmtDate(a.date))} ${esc(a.direction)} ${esc(a.plate)} ${esc(a.driver)} — ${escD(a.reason)}</li>`).join('');
             return `
                 <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
                     ${importStatCard('จะแก้วันที่ (+1 วัน)', c.shift)}
@@ -1381,7 +1381,7 @@ const formatZeroAsEmpty = (value) => {
             const batches = buildDateFixBatches(plan.moves);
             let done = 0, dropped = 0, failedAt = '';
             for (const b0 of batches) {
-                if (out) out.innerHTML = `<p class="text-sky-400">กำลังแก้เดือน ${esc(b0.month)} (${done.toLocaleString()} / ${plan.counts.shift.toLocaleString()} เที่ยว)...</p>`;
+                if (out) out.innerHTML = `<p class="text-sky-400">กำลังแก้เดือน ${esc(fmtMonth(b0.month))} (${done.toLocaleString()} / ${plan.counts.shift.toLocaleString()} เที่ยว)...</p>`;
                 try {
                     // Re-read the months this batch touches; skip trips changed since the preview.
                     const months = [...new Set(b0.moves.flatMap(m => [m.fromYm, m.toYm]))];
@@ -1392,7 +1392,7 @@ const formatZeroAsEmpty = (value) => {
                     done += b.moves.length; dropped += b.dropped.length;
                 } catch (err) {
                     console.error('Date fix batch failed:', b0.month, err);
-                    failedAt = `${b0.month}: ${err.message}`;
+                    failedAt = `${fmtMonth(b0.month)}: ${err.message}`;
                     break;
                 }
             }
@@ -1436,8 +1436,8 @@ const formatZeroAsEmpty = (value) => {
         };
         const renderUphillPayPreview = ({ plan, errors }) => {
             const t = plan.totals;
-            const monthRows = Object.keys(t.byMonth).sort().map(ym => `<tr class="border-b border-slate-700"><td class="p-2">${esc(ym)}</td><td class="p-2 text-right">${t.byMonth[ym].trips.toLocaleString()}</td><td class="p-2 text-right">${thMoney(t.byMonth[ym].net)}</td></tr>`).join('');
-            const skipped = plan.skipped.slice(0, 300).map(s => `<li>${esc(s.item.sheet)} แถว ${s.item.row} · ${esc(s.item.date)} ${esc(s.item.plate)} ${esc(s.item.driver)} — ${esc(s.reason)}</li>`).join('');
+            const monthRows = Object.keys(t.byMonth).sort().map(ym => `<tr class="border-b border-slate-700"><td class="p-2">${esc(fmtMonth(ym))}</td><td class="p-2 text-right">${t.byMonth[ym].trips.toLocaleString()}</td><td class="p-2 text-right">${thMoney(t.byMonth[ym].net)}</td></tr>`).join('');
+            const skipped = plan.skipped.slice(0, 300).map(s => `<li>${esc(s.item.sheet)} แถว ${s.item.row} · ${esc(fmtDate(s.item.date))} ${esc(s.item.plate)} ${esc(s.item.driver)} — ${escD(s.reason)}</li>`).join('');
             const blocked = errors.length > 0;
             return `
                 <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
@@ -1448,7 +1448,7 @@ const formatZeroAsEmpty = (value) => {
                 </div>
                 <p class="mb-2 text-sky-200">รวมที่จะแนบ: ${PAY_FIELDS.map(f => f === 'netTransfer' ? `<b>${PAY_FIELD_LABELS[f]} ${thMoney(t.money[f])} บาท</b>` : `${PAY_FIELD_LABELS[f]} ${thMoney(t.money[f])}`).join(' · ')}</p>
                 <p class="mb-3 text-xs text-gray-400">แนบเฉพาะเที่ยวขาขึ้นในกระดานคิวที่ยังไม่มียอดเงิน และวันที่ + ทะเบียนหัว + คนขับตรงกับไฟล์ · ไม่สร้างเที่ยวใหม่ (ชีต C ไม่ถูกใช้) · ไม่เขียนทับยอดที่มีอยู่ · แต่ละเที่ยวเก็บที่มาไว้ในช่อง payFrom</p>
-                ${blocked ? `<div class="bg-red-900/30 border border-red-700 rounded-lg p-3 mb-3 text-sm text-red-200"><b>แก้ไฟล์ก่อน — ยังบันทึกไม่ได้ (${errors.length} แถว):</b><br>${errors.slice(0, 50).map(esc).join('<br>')}</div>` : ''}
+                ${blocked ? `<div class="bg-red-900/30 border border-red-700 rounded-lg p-3 mb-3 text-sm text-red-200"><b>แก้ไฟล์ก่อน — ยังบันทึกไม่ได้ (${errors.length} แถว):</b><br>${errors.slice(0, 50).map(escD).join('<br>')}</div>` : ''}
                 <div class="overflow-x-auto rounded-lg border border-slate-700 mb-3"><table class="w-full text-sm"><thead class="bg-slate-800 text-gray-400"><tr><th class="p-2 text-left">เดือน</th><th class="p-2 text-right">เที่ยว</th><th class="p-2 text-right">สุทธิโอน (บาท)</th></tr></thead><tbody>${monthRows}</tbody></table></div>
                 ${skipped ? `<details class="mb-3"><summary class="cursor-pointer text-yellow-300">แถวที่ข้าม ${plan.skipped.length} แถว</summary><ul class="mt-2 space-y-1 text-gray-300 text-sm">${skipped}</ul></details>` : ''}
                 <ol class="list-decimal ml-5 space-y-1 text-gray-300 mb-3">
@@ -1521,8 +1521,7 @@ const formatZeroAsEmpty = (value) => {
             if (!start) return '';
             const months = [...new Set((trips || []).map(t => t.yearMonth).filter(ym => ym && ym >= start))].sort();
             if (!months.length) return '';
-            const [y, m] = start.split('-').map(Number);
-            return `เดือน ${months.join(', ')} อยู่ในช่วงที่ใช้แม่แบบแล้ว (ตั้งแต่ ${m}/${y + 543}) — นำเข้าไฟล์นี้อาจนับเที่ยวซ้ำกับที่คนจัดรถกรอก`;
+            return `เดือน ${months.map(fmtMonth).join(', ')} อยู่ในช่วงที่ใช้แม่แบบแล้ว (ตั้งแต่ ${fmtMonth(start)}) — นำเข้าไฟล์นี้อาจนับเที่ยวซ้ำกับที่คนจัดรถกรอก`;
         };
 
         const attachImportListeners = () => {
@@ -1574,7 +1573,7 @@ const formatZeroAsEmpty = (value) => {
 
             const rows = trips.map(t => `
                 <tr class="border-b border-slate-700 hover:bg-slate-700/20">
-                    <td class="px-2 py-2 whitespace-nowrap">${t.date || ''}</td>
+                    <td class="px-2 py-2 whitespace-nowrap">${fmtDate(t.date || '')}</td>
                     <td class="px-2 py-2 text-center whitespace-nowrap"><span class="px-2 py-0.5 rounded text-xs ${t.direction === 'ขาขึ้น' ? 'bg-sky-700' : 'bg-amber-700'} text-white">${t.direction || ''}</span></td>
                     <td class="px-2 py-2 whitespace-nowrap">${t.driver || ''}</td>
                     <td class="px-2 py-2 font-mono whitespace-nowrap">${t.plate || ''}</td>
@@ -1605,7 +1604,7 @@ const formatZeroAsEmpty = (value) => {
                         </tr></thead>
                         <tbody>${rows}</tbody>
                     </table>
-                    ${trips.length === 0 ? `<p class="text-center py-8 text-gray-500">ไม่มีคิวรถในเดือน ${appState.tripsMonth || '(ยังไม่เลือก)'} — เลือกเดือนอื่น หรือกด "เพิ่มคิว"</p>` : ''}
+                    ${trips.length === 0 ? `<p class="text-center py-8 text-gray-500">ไม่มีคิวรถในเดือน ${appState.tripsMonth ? fmtMonth(appState.tripsMonth) : '(ยังไม่เลือก)'} — เลือกเดือนอื่น หรือกด "เพิ่มคิว"</p>` : ''}
                 </div>
             `;
         };
@@ -2031,7 +2030,7 @@ const formatZeroAsEmpty = (value) => {
                 </tr>`).join('');
             const tot = list.reduce((a, g) => ({ count: a.count + g.count, revenue: a.revenue + g.revenue, allowance: a.allowance + g.allowance, deduction: a.deduction + g.deduction, net: a.net + g.net }), { count: 0, revenue: 0, allowance: 0, deduction: 0, net: 0 });
             return `
-                <p class="text-xs text-gray-500 mb-3">เดือน ${appState.tripsMonth || '(เลือกเดือน)'} · ${list.length} คนขับ · คำนวณจากคิวรถของเดือนนั้น</p>
+                <p class="text-xs text-gray-500 mb-3">เดือน ${appState.tripsMonth ? fmtMonth(appState.tripsMonth) : '(เลือกเดือน)'} · ${list.length} คนขับ · คำนวณจากคิวรถของเดือนนั้น</p>
                 <div class="overflow-x-auto"><table class="w-full text-left text-sm">
                     <thead class="bg-slate-800 text-gray-400 uppercase sticky top-0 z-10"><tr><th class="p-2">คนขับ</th><th class="p-2">เลขบัญชี</th><th class="p-2 text-right">คิว</th><th class="p-2 text-right">รายรับ</th><th class="p-2 text-right">เบี้ยขับ</th><th class="p-2 text-right">หักเงิน</th><th class="p-2 text-right">สุทธิโอน</th></tr></thead>
                     <tbody>${rows}</tbody>
@@ -2149,7 +2148,7 @@ const formatZeroAsEmpty = (value) => {
 
             const dailyRows = computeReportDailyRows(trips);
             const dailyTable = reportTable('daily', [
-                { label: 'วันที่', key: 'date', fmt: r => r.date },
+                { label: 'วันที่', key: 'date', fmt: r => fmtDate(r.date) },
                 { label: 'คิว', key: 'count' },
                 { label: 'ลิตร', key: 'liters', cls: 'text-accent' },
                 { label: 'บาท', key: 'baht' },
@@ -2202,7 +2201,7 @@ const formatZeroAsEmpty = (value) => {
 
             return `
                 ${filterBar}
-                <p class="text-xs text-gray-500 mb-3">เดือน ${appState.tripsMonth || '(เลือกเดือน)'} · แสดง ${trips.length.toLocaleString()} จาก ${allTrips.length.toLocaleString()} คิว · ลิตรรวมขาล่องจากไฟล์ Transport (คอลัมน์ L) · ชื่อคนขับรวมชื่อในกระดานกับชื่อเต็มแล้ว · 💡 คลิกหัวคอลัมน์เพื่อเรียงลำดับ</p>${columnLWarning()}
+                <p class="text-xs text-gray-500 mb-3">เดือน ${appState.tripsMonth ? fmtMonth(appState.tripsMonth) : '(เลือกเดือน)'} · แสดง ${trips.length.toLocaleString()} จาก ${allTrips.length.toLocaleString()} คิว · ลิตรรวมขาล่องจากไฟล์ Transport (คอลัมน์ L) · ชื่อคนขับรวมชื่อในกระดานกับชื่อเต็มแล้ว · 💡 คลิกหัวคอลัมน์เพื่อเรียงลำดับ</p>${columnLWarning()}
                 <div class="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
                     ${importStatCard('จำนวนคิว', trips.length)}
                     ${importStatCard('น้ำมัน (ลิตร)', totLiters)}
@@ -2224,8 +2223,8 @@ const formatZeroAsEmpty = (value) => {
             const pts = rows.map((r, i) => [pad + i * stepX, H - pad - (r.liters / max) * (H - pad * 2)]);
             const line = pts.map((p, i) => (i ? 'L' : 'M') + p[0].toFixed(1) + ' ' + p[1].toFixed(1)).join(' ');
             const area = `M${pad} ${H - pad} ` + pts.map(p => 'L' + p[0].toFixed(1) + ' ' + p[1].toFixed(1)).join(' ') + ` L${(pad + (rows.length - 1) * stepX).toFixed(1)} ${H - pad} Z`;
-            const dots = pts.map((p, i) => `<circle cx="${p[0].toFixed(1)}" cy="${p[1].toFixed(1)}" r="2.5" fill="#f97316"><title>${rows[i].date}: ${rows[i].liters.toLocaleString()} ลิตร (${rows[i].count} คิว)</title></circle>`).join('');
-            const xlabels = [0, Math.floor((rows.length - 1) / 2), rows.length - 1].map(i => `<text x="${(pad + i * stepX).toFixed(1)}" y="${H - 8}" fill="#94a3b8" font-size="11" text-anchor="middle">${(rows[i].date || '').slice(5)}</text>`).join('');
+            const dots = pts.map((p, i) => `<circle cx="${p[0].toFixed(1)}" cy="${p[1].toFixed(1)}" r="2.5" fill="#f97316"><title>${fmtDate(rows[i].date)}: ${rows[i].liters.toLocaleString()} ลิตร (${rows[i].count} คิว)</title></circle>`).join('');
+            const xlabels = [0, Math.floor((rows.length - 1) / 2), rows.length - 1].map(i => `<text x="${(pad + i * stepX).toFixed(1)}" y="${H - 8}" fill="#94a3b8" font-size="11" text-anchor="middle">${fmtDate(rows[i].date || '').slice(0, 5)}</text>`).join('');
             return `<svg viewBox="0 0 ${W} ${H}" class="w-full" style="min-width:640px" preserveAspectRatio="xMidYMid meet">
                 <text x="${pad}" y="16" fill="#94a3b8" font-size="11">สูงสุด ${max.toLocaleString()} ล.</text>
                 <path d="${area}" fill="#f9731622" /><path d="${line}" fill="none" stroke="#f97316" stroke-width="2" />${dots}${xlabels}
@@ -2249,12 +2248,12 @@ const formatZeroAsEmpty = (value) => {
                 const maxL = Math.max(1, ...c.data.map(d => d.liters));
                 const barsHtml = c.data.map(d => `
                     <div class="flex items-center gap-3">
-                        <span class="w-20 shrink-0 text-sm text-gray-300">${d.month}</span>
+                        <span class="w-20 shrink-0 text-sm text-gray-300">${fmtMonth(d.month)}</span>
                         <div class="flex-1 bg-slate-800 rounded-full h-5 overflow-hidden"><div class="bg-accent h-full rounded-full" style="width:${Math.max(2, Math.round(d.liters / maxL * 100))}%"></div></div>
                         <span class="w-24 shrink-0 text-right text-sm text-accent font-mono">${d.liters.toLocaleString()} ล.</span>
                     </div>`).join('');
                 const tbl = reportTable('cmp', [
-                    { label: 'เดือน', key: 'month', fmt: r => r.month },
+                    { label: 'เดือน', key: 'month', fmt: r => fmtMonth(r.month) },
                     { label: 'คิว', key: 'count' },
                     { label: 'ลิตร', key: 'liters', cls: 'text-accent' },
                     { label: 'บาท', key: 'baht' },
@@ -2370,7 +2369,7 @@ const formatZeroAsEmpty = (value) => {
             const daily = computeReportDailyRows(trips);
             addSheet('สรุปรายวัน',
                 ['วันที่', 'จำนวนคิว', 'น้ำมัน (ลิตร)', 'น้ำมัน (บาท)', 'รายรับ', 'สุทธิโอน'],
-                daily.map(r => [r.date, r.count, r.liters, r.baht, r.revenue, r.net]),
+                daily.map(r => [xlDate(r.date), r.count, r.liters, r.baht, r.revenue, r.net]),
                 [{ wch: 14 }, { wch: 10 }, { wch: 13 }, { wch: 13 }, { wch: 12 }, { wch: 12 }],
                 ['รวม', trips.length, total(daily, 'liters'), total(daily, 'baht'), total(daily, 'revenue'), total(daily, 'net')]);
 
@@ -2524,7 +2523,7 @@ const formatZeroAsEmpty = (value) => {
         const tripsAsAudited = () => tripsWithColumnL(logisticsService.getTrips()).map(t => applyDriverAlias(t, appState.auditState.driverAliases));
         const columnLWarning = () => {
             const months = [...new Set(logisticsService.getTrips().map(t => t.yearMonth).filter(Boolean))].filter(m => dfuelFailed.has(m));
-            return months.length ? `<p class="text-xs text-red-400 mb-2">⚠️ โหลดลิตรขาล่องจากไฟล์ Transport (คอลัมน์ L) ของเดือน ${esc(months.join(', '))} ไม่สำเร็จ — ลิตรรวมยังไม่รวมส่วนนี้ (รีเฟรชหน้าเพื่อลองใหม่)</p>` : '';
+            return months.length ? `<p class="text-xs text-red-400 mb-2">⚠️ โหลดลิตรขาล่องจากไฟล์ Transport (คอลัมน์ L) ของเดือน ${esc(months.map(fmtMonth).join(', '))} ไม่สำเร็จ — ลิตรรวมยังไม่รวมส่วนนี้ (รีเฟรชหน้าเพื่อลองใหม่)</p>` : '';
         };
         // Trip order inside a day: board row number when present, else the record id.
         const tripOrder = (a, b) => (a.trip.date || '').localeCompare(b.trip.date || '') || ((a.leg === 'down') - (b.leg === 'down')) || ((a.trip.sourceRow || 0) - (b.trip.sourceRow || 0)) || String(a.trip.id || '').localeCompare(String(b.trip.id || ''));
@@ -2624,7 +2623,7 @@ const formatZeroAsEmpty = (value) => {
                             </div>
                         </div>
                         <p class="text-xs text-gray-400">${meta
-                            ? `อัตรามาตรฐาน: ${esc(meta.fileName)} · ${appState.rateStandards.length} อัตรา${meta.effectiveFrom ? ` · ใช้กับเที่ยวตั้งแต่ ${esc(thaiDate(meta.effectiveFrom))}` : ''} · บันทึกเมื่อ ${esc(meta.importedAt)}${meta.flagged ? ` · <span class="text-amber-300">${meta.flagged} แถวในไฟล์อัตรามีข้อสังเกต</span>` : ''}${rateVersionRanges().filter(x => x.v.id !== 'current').map(x => `<br>ฉบับก่อนหน้า: ${esc(x.v.meta?.fileName || '-')} · ${x.v.standards.length} อัตรา · ใช้กับเที่ยว${esc(x.label)}`).join('')}`
+                            ? `อัตรามาตรฐาน: ${esc(meta.fileName)} · ${appState.rateStandards.length} อัตรา${meta.effectiveFrom ? ` · ใช้กับเที่ยวตั้งแต่ ${esc(fmtDate(meta.effectiveFrom))}` : ''} · บันทึกเมื่อ ${esc(meta.importedAt)}${meta.flagged ? ` · <span class="text-amber-300">${meta.flagged} แถวในไฟล์อัตรามีข้อสังเกต</span>` : ''}${rateVersionRanges().filter(x => x.v.id !== 'current').map(x => `<br>ฉบับก่อนหน้า: ${esc(x.v.meta?.fileName || '-')} · ${x.v.standards.length} อัตรา · ใช้กับเที่ยว${esc(x.label)}`).join('')}`
                             : '<span class="text-amber-300">⚠️ ยังไม่มีอัตรามาตรฐาน — นำเข้าไฟล์ "อัตราเติมน้ำมันประจำ ปั๊ม ต่างๆ" ที่แท็บ นำเข้า Excel ก่อน</span>'}</p>
                         <div id="audit-content" class="mt-4">${renderAuditContent()}</div>
                         <div id="audit-ox" class="mt-2">${renderOriginExtrasEditor()}</div>
@@ -2643,9 +2642,9 @@ const formatZeroAsEmpty = (value) => {
             const carryNote = !carryOn
                 ? 'ไม่ได้ยกยอดลิตร (ตั้ง "ยกยอดลิตรเริ่มเดือน" เพื่อเปิดใช้)'
                 : carryTooLong ? `<span class="text-red-400">ยกยอดย้อนหลังได้ไม่เกิน ${MAX_CARRY_MONTHS} เดือน — เลื่อน "ยกยอดลิตรเริ่มเดือน" ให้ใกล้ขึ้น</span>`
-                : carryFailed.length ? `<span class="text-red-400">โหลดคิวเดือน ${carryFailed.join(', ')} ไม่สำเร็จ — ยังคำนวณยอดยกไม่ได้</span>${refreshBtn}`
+                : carryFailed.length ? `<span class="text-red-400">โหลดคิวเดือน ${carryFailed.map(fmtMonth).join(', ')} ไม่สำเร็จ — ยังคำนวณยอดยกไม่ได้</span>${refreshBtn}`
                 : carryPending ? `กำลังโหลดคิว ${pastMonths.length} เดือนก่อนหน้าเพื่อคำนวณยอดยก…`
-                : `ยกยอดลิตรตั้งแต่ ${esc(appState.auditState.carryStart)} (${pastMonths.length ? `รวม ${pastMonths.length} เดือนก่อนหน้า` : 'เริ่มเดือนนี้'}) · + = เติมเกินค้างไว้ หักจากเที่ยวถัดไป · − = เติมขาด ได้เพิ่มเที่ยวถัดไป · ไม่ยกยอดเที่ยวที่ไม่มีชื่อคนขับ${refreshBtn}`;
+                : `ยกยอดลิตรตั้งแต่ ${esc(fmtMonth(appState.auditState.carryStart))} (${pastMonths.length ? `รวม ${pastMonths.length} เดือนก่อนหน้า` : 'เริ่มเดือนนี้'}) · + = เติมเกินค้างไว้ หักจากเที่ยวถัดไป · − = เติมขาด ได้เพิ่มเที่ยวถัดไป · ไม่ยกยอดเที่ยวที่ไม่มีชื่อคนขับ${refreshBtn}`;
             const downCell = (r) => !r.downStatus ? '' :
                 `<span class="${DOWN_STATUS[r.downStatus].cls}">${r.downStatus === 'missing' ? `อัตรา ${r.down} · ${DOWN_STATUS.missing.label}` : `${r.downActual}/${r.down} ${DOWN_STATUS[r.downStatus].label}`}</span>`;
             const carryCell = (r) => !carryReady ? '' : r.carryIn == null ? '<span class="text-gray-500">ไม่มีชื่อคนขับ</span>' :
@@ -2660,7 +2659,7 @@ const formatZeroAsEmpty = (value) => {
             const LIMIT = 500;
             const rows = shown.slice(0, LIMIT).map(r => `
                 <tr class="border-b border-slate-700 align-top">
-                    <td class="p-2 whitespace-nowrap">${esc(r.trip.date)}</td>
+                    <td class="p-2 whitespace-nowrap">${esc(fmtDate(r.trip.date))}</td>
                     <td class="p-2 whitespace-nowrap">${esc(r.trip.driver)}${r.trip.driverBoard ? `<div class="text-xs text-gray-500">กระดาน: ${esc(r.trip.driverBoard)}</div>` : ""}</td>
                     <td class="p-2 whitespace-nowrap font-mono text-xs">${esc(r.trip.plate)}</td>
                     <td class="p-2 whitespace-nowrap">${r.cls ? esc(AUDIT_CLASSES[r.cls]) : '-'}${r.rateCls && r.rateCls !== r.cls ? `<div class="text-xs text-sky-300">ตัดหาง → คิด${esc(AUDIT_CLASSES[r.rateCls])}</div>` : ''}${r.model ? ` <span class="text-xs text-indigo-300">${esc(r.model)}</span>` : ''}</td>
@@ -2671,7 +2670,7 @@ const formatZeroAsEmpty = (value) => {
                     <td class="p-2">${badge(r.status)}</td>
                     <td class="p-2 text-xs">${downCell(r)}</td>
                     <td class="p-2 text-xs">${carryCell(r)}</td>
-                    <td class="p-2 text-xs text-gray-300">${[r.reason, ...r.flags].filter(Boolean).map(esc).join('<br>')}</td>
+                    <td class="p-2 text-xs text-gray-300">${[r.reason, ...r.flags].filter(Boolean).map(escD).join('<br>')}</td>
                 </tr>`).join('');
             const driverRows = drivers.map(d => `
                 <tr class="border-b border-slate-700">
@@ -2688,7 +2687,7 @@ const formatZeroAsEmpty = (value) => {
                     <td class="p-2">${fmtRateUp(s)}</td>
                     <td class="p-2 text-right">${s.down || '-'}${s.downVictor !== s.down ? ` (victor ${s.downVictor})` : ''}</td>
                     <td class="p-2 text-xs">${esc(s.allowanceText)}</td>
-                    <td class="p-2 text-xs text-amber-300">${(s.flags || []).map(esc).join('<br>')}${s.duplicateOf ? '<br>(ไม่ใช้ตรวจ — ใช้แถวแรก)' : ''}</td>
+                    <td class="p-2 text-xs text-amber-300">${(s.flags || []).map(escD).join('<br>')}${s.duplicateOf ? '<br>(ไม่ใช้ตรวจ — ใช้แถวแรก)' : ''}</td>
                 </tr>`).join('');
             return `
                 <div class="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-3 mb-3">
@@ -2727,7 +2726,7 @@ const formatZeroAsEmpty = (value) => {
                     </table>
                 </div>
                 <div class="mt-6">
-                    <button id="audit-toggle-standards" class="text-sky-300 hover:text-sky-200 text-sm font-bold">${as.showStandards ? '▼' : '▶'} ตารางอัตรามาตรฐาน (${appState.rateStandards.length} อัตรา${appState.rateStandardsMeta?.effectiveFrom ? ` · ฉบับที่ใช้กับเที่ยวตั้งแต่ ${esc(thaiDate(appState.rateStandardsMeta.effectiveFrom))} — ฉบับก่อนหน้าดูได้ใน Export Excel` : ''})</button>
+                    <button id="audit-toggle-standards" class="text-sky-300 hover:text-sky-200 text-sm font-bold">${as.showStandards ? '▼' : '▶'} ตารางอัตรามาตรฐาน (${appState.rateStandards.length} อัตรา${appState.rateStandardsMeta?.effectiveFrom ? ` · ฉบับที่ใช้กับเที่ยวตั้งแต่ ${esc(fmtDate(appState.rateStandardsMeta.effectiveFrom))} — ฉบับก่อนหน้าดูได้ใน Export Excel` : ''})</button>
                     ${as.showStandards ? `
                     <div class="overflow-x-auto rounded-lg border border-slate-700 mt-2">
                         <table class="w-full text-sm text-left">
@@ -2906,12 +2905,12 @@ const formatZeroAsEmpty = (value) => {
                 ['วันที่', 'ทิศทาง', 'คนขับ', 'ชื่อในกระดานคิว', 'ทะเบียน', 'ประเภทรถ', 'รุ่น', 'ต้นทาง', 'ปลายทาง', 'ผล', 'เติมจริงรวม (ลิตร)', 'ตามอัตรารวม (ลิตร)', 'ต่าง (ลิตร)',
                     ...pumps.flatMap(p => [`${pumpName(p)} จริง`, `${pumpName(p)} อัตรา`]), 'เติมเป็นเงิน (บาท)',
                     'ขาล่องไพศาล อัตรา', 'ขาล่องไพศาล บันทึก', 'ขาล่อง ผล', 'ลิตรยกมา', 'ควรเติม (หลังหักยกมา)', 'ลิตรยกไป', 'หมายเหตุ'],
-                all.map(r => [r.trip.date, r.leg === 'down' ? 'ขาล่อง' : 'ขาขึ้น', r.trip.driver, r.trip.driverBoard || '', r.trip.plate, r.cls ? AUDIT_CLASSES[r.cls] + (r.rateCls && r.rateCls !== r.cls ? ` (ตัดหาง คิด${AUDIT_CLASSES[r.rateCls]})` : '') : '', r.model, r.trip.origin, r.trip.destination,
+                all.map(r => [xlDate(r.trip.date), r.leg === 'down' ? 'ขาล่อง' : 'ขาขึ้น', r.trip.driver, r.trip.driverBoard || '', r.trip.plate, r.cls ? AUDIT_CLASSES[r.cls] + (r.rateCls && r.rateCls !== r.cls ? ` (ตัดหาง คิด${AUDIT_CLASSES[r.rateCls]})` : '') : '', r.model, r.trip.origin, r.trip.destination,
                     AUDIT_STATUS[r.status].label, n(r.actualTotal), r.status === 'no-rate' ? '' : n(r.expectedTotal), r.status === 'no-rate' ? '' : r.diff,
                     ...pumps.flatMap(p => [n(r.actual[p]), r.status === 'no-rate' ? '' : n((r.expected || {})[p])]), n(r.bahtTotal),
                     n(r.down), r.downStatus && r.downStatus !== 'missing' ? r.downActual : '', r.downStatus ? DOWN_STATUS[r.downStatus].label : '',
                     carryReady && r.carryIn != null ? r.carryIn : '', carryReady && r.allot != null ? r.allot : '', carryReady && r.carryOut != null ? r.carryOut : '',
-                    [r.reason, ...r.flags].filter(Boolean).join(' | ')]),
+                    fmtDateText([r.reason, ...r.flags].filter(Boolean).join(' | '))]),
                 [11, 8, 22, 14, 18, 8, 20, 18, 12, 12, 12, 10, ...pumps.flatMap(() => [12, 12]), 12, 12, 12, 12, 10, 14, 10, 60]);
             sheet('สรุปคนขับ',
                 ['คนขับ', 'เที่ยว', 'ตรวจได้', 'ตรง', 'เกิน (เที่ยว)', 'เกิน (ลิตร)', 'ขาด (เที่ยว)', 'ขาด (ลิตร)', 'ผิดปั๊ม', 'ลิตรค้างยกไป (+ เกิน / − ขาด)'],
@@ -3653,11 +3652,11 @@ const formatZeroAsEmpty = (value) => {
             const oldNote = oldRoute && (!sug.ok || !sameLiters(oldRoute.gasStationsLiters, sug.fillWithDown) || oldBaht)
                 ? `<div class="mt-3 text-xs text-gray-500 border-t border-slate-600 pt-2">ฐานเส้นทางเดิม (ไม่ใช่ตารางอัตรา — ใช้อ้างอิงเท่านั้น): ${list(oldRoute.gasStationsLiters) || 'ไม่มีลิตร'}${oldBaht ? ` · บาท: ${list(oldRoute.gasStationsBaht)} (กรอกช่องบาทเองถ้าใช้)` : ''}</div>`
                 : '';
-            const notes = (sug.notes || []).map(n => `<p class="text-xs text-sky-300">${esc(n)}</p>`).join('');
+            const notes = (sug.notes || []).map(n => `<p class="text-xs text-sky-300">${escD(n)}</p>`).join('');
             if (!sug.ok) {
                 cardContent.innerHTML = `
                     <h3 class="text-xl font-bold text-white mb-4">ข้อมูลเส้นทาง (ตามตารางอัตรา)</h3>
-                    <p class="text-gray-400">${esc(sug.reason)}</p>
+                    <p class="text-gray-400">${escD(sug.reason)}</p>
                     <p class="text-sm text-gray-500 mt-2">กรอก ทะเบียน/ประเภทรถ, ต้นทาง, ปลายทาง ให้ครบ</p>${notes}${oldNote}`;
                 return;
             }
@@ -3805,7 +3804,7 @@ const formatZeroAsEmpty = (value) => {
             try {
                 await logisticsService.addTrip(trip.yearMonth, trip);
                 resetFuelForm();
-                statusDiv.innerHTML = `<p class="text-green-400">บันทึกคิวรถสำเร็จ! (${trip.date})</p>`;
+                statusDiv.innerHTML = `<p class="text-green-400">บันทึกคิวรถสำเร็จ! (${fmtDate(trip.date)})</p>`;
                 setTimeout(() => statusDiv.innerHTML = '', 3000);
             } catch (error) {
                 console.error('Error saving trip:', error);
@@ -4111,7 +4110,7 @@ const handleFuelRecordEditFormSubmit = async (e) => {
                 'หมายเหตุ',
             ];
             const data = trips.map(t => [
-                t.date, t.direction || '', t.plate || '', t.vehicleType || '', t.driver || '', t.origin || '', t.destination || '',
+                xlDate(t.date), t.direction || '', t.plate || '', t.vehicleType || '', t.driver || '', t.origin || '', t.destination || '',
                 t.totalLiters || '', t.totalBaht || '',
                 ...stationKeys.map(key => t.gasStationsLiters?.[key] || ''),
                 ...stationKeys.map(key => t.gasStationsBaht?.[key] || ''),
@@ -4119,6 +4118,7 @@ const handleFuelRecordEditFormSubmit = async (e) => {
             ]);
             const ws = XLSX.utils.aoa_to_sheet([headers, ...data]);
             const wb = XLSX.utils.book_new();
+            ws['!cols'] = [{ wch: 12 }]; // fits 19/11/2569
             XLSX.utils.book_append_sheet(wb, ws, 'FuelByPump');
             XLSX.writeFile(wb, `น้ำมันรายปั๊ม_${day || appState.tripsMonth || localDateStr().slice(0, 7)}.xlsx`);
         };
@@ -4129,4 +4129,6 @@ const handleFuelRecordEditFormSubmit = async (e) => {
         
         // Wire the UI callbacks into the data layer, then start the app.
         bindUI({ render: renderApp, hideLoading: hideLoadingOverlay });
+        // every date / month box on every page: typed dd/mm/yyyy (พ.ศ.) + calendar button (user decision 19 Nov 2026)
+        startThaiDateInputs();
         logisticsService.initialize();

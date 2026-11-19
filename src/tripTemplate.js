@@ -8,6 +8,7 @@ import { GAS_STATION_FRIENDLY_NAMES, ROUTE_STATION_COLUMNS } from './constants.j
 import { textDropPlace, normPlate, plateKey, EMPTY_KPP_DROP } from './fuelAudit.js';
 import { createAllIfAbsent } from './dbUtils.js';
 import { ymd } from './importerTrips.js';
+import { fmtMonth } from './thaiDate.js';
 
 export const TEMPLATE_SHEET = 'นำเข้าเที่ยวรถ';
 export const LIST_SHEET = 'รายการ';
@@ -122,6 +123,7 @@ export function generateTemplate(ExcelJS, lists) {
         const col = colLetter(i + 1);
         const range = `${col}2:${col}${TEMPLATE_ROWS + 1}`;
         if (c.type === 'date') {
+            // shows the year as typed: dispatchers type พ.ศ. (19/11/2569) — 'bbbb' would add 543 again (3112)
             ws.getColumn(i + 1).numFmt = 'dd/mm/yyyy';
         } else if (c.type === 'num') {
             ws.getColumn(i + 1).numFmt = '#,##0.##';
@@ -186,7 +188,7 @@ const parseStrictNum = (v) => {
     return /^\d+(\.\d+)?$/.test(s) ? parseFloat(s) : NaN;
 };
 
-const thMonth = (ym) => { const [y, m] = ym.split('-').map(Number); return `${m}/${y + 543}`; };
+const thMonth = (ym) => fmtMonth(ym); // 11/2569
 
 /**
  * Parse template rows into trips with per-row errors (block saving) and warnings (saved, shown).
